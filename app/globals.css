@@ -18,23 +18,36 @@ html {
 
 body {
   min-height: 100vh;
-  background:
-    radial-gradient(circle at 18% 8%, rgba(14, 165, 233, 0.16), transparent 28%),
-    radial-gradient(circle at 88% 12%, rgba(37, 99, 235, 0.10), transparent 26%),
-    linear-gradient(180deg, #fbfdff 0%, #f4f8ff 48%, #eef4ff 100%);
+  background: #ffffff;
   color: var(--foreground);
 }
 
 body::before {
   position: fixed;
-  inset: 0;
+  inset: auto 0 0 0;
   z-index: -2;
+  height: 44vh;
   content: "";
-  background-image:
-    linear-gradient(rgba(37, 99, 235, 0.045) 1px, transparent 1px),
-    linear-gradient(90deg, rgba(37, 99, 235, 0.045) 1px, transparent 1px);
-  background-size: 64px 64px;
-  mask-image: linear-gradient(to bottom, black, transparent 76%);
+  pointer-events: none;
+  background:
+    linear-gradient(to top, rgba(30, 144, 255, 0.34), rgba(77, 162, 255, 0.16) 46%, transparent 100%),
+    url("data:image/svg+xml,%3Csvg width='1440' height='240' viewBox='0 0 1440 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 94 C90 34 270 34 360 94 S630 154 720 94 S990 34 1080 94 S1350 154 1440 94' fill='none' stroke='%231E90FF' stroke-width='3' stroke-linecap='round' opacity='.44'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg width='1440' height='240' viewBox='0 0 1440 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 132 C90 80 270 80 360 132 S630 184 720 132 S990 80 1080 132 S1350 184 1440 132' fill='none' stroke='%234DA2FF' stroke-width='2.5' stroke-linecap='round' opacity='.30'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg width='1440' height='240' viewBox='0 0 1440 240' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M0 170 C90 124 270 124 360 170 S630 216 720 170 S990 124 1080 170 S1350 216 1440 170' fill='none' stroke='%2387C8FF' stroke-width='2' stroke-linecap='round' opacity='.24'/%3E%3C/svg%3E");
+  background-position:
+    0 0,
+    0 10px,
+    180px 34px,
+    -240px 62px;
+  background-repeat: repeat;
+  background-size:
+    auto,
+    1440px 240px,
+    1440px 240px,
+    1440px 240px;
+  opacity: 0.78;
+  animation: oceanDrift 18s ease-in-out infinite;
+  mask-image: linear-gradient(to top, black 0%, black 58%, transparent 100%);
 }
 
 body::after {
@@ -43,8 +56,37 @@ body::after {
   z-index: -1;
   height: 58vh;
   content: "";
-  background: radial-gradient(ellipse at center, rgba(14, 165, 233, 0.18), transparent 60%);
+  background: rgba(30, 144, 255, 0.12);
   filter: blur(28px);
+}
+
+@keyframes oceanDrift {
+  0% {
+    background-position:
+      0 0,
+      0 10px,
+      180px 34px,
+      -240px 62px;
+    opacity: 0.78;
+  }
+
+  50% {
+    background-position:
+      0 0,
+      120px 34px,
+      80px 18px,
+      -80px 76px;
+    opacity: 0.52;
+  }
+
+  100% {
+    background-position:
+      0 0,
+      240px 10px,
+      -20px 34px,
+      90px 62px;
+    opacity: 0.78;
+  }
 }
 
 ::selection {
@@ -54,17 +96,14 @@ body::after {
 .glass {
   border: 1px solid rgba(226, 232, 255, 0.9);
   background: rgba(255, 255, 255, 0.86);
-  box-shadow: 0 24px 80px rgba(30, 64, 175, 0.10);
+  box-shadow: 0 24px 80px rgba(77, 162, 255, 0.12);
   backdrop-filter: blur(20px);
 }
 
 .route-line {
-  background-image: linear-gradient(90deg, transparent 0, rgba(37, 99, 235, 0.55) 45%, transparent 100%);
+  background: #4da2ff;
 }
 
 .blue-gradient {
-  background:
-    radial-gradient(circle at 20% 20%, rgba(125, 211, 252, 0.72), transparent 34%),
-    radial-gradient(circle at 86% 26%, rgba(59, 130, 246, 0.70), transparent 32%),
-    linear-gradient(135deg, #0ea5e9 0%, #2563eb 52%, #0f3b8f 100%);
+  background: #4da2ff;
 }

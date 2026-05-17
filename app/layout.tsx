@@ -1,7 +1,9 @@
 import type { Metadata } from "next";
 import "./globals.css";
 import { Providers } from "@/components/providers";
+import { RoleProvider } from "@/components/role-context";
 import { Shell } from "@/components/shell";
+import { ShipmentsProvider } from "@/lib/shipments-store";
 
 export const metadata: Metadata = {
   title: "SuiShip | Shipment Passport Infrastructure",
@@ -13,7 +15,11 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
     <html lang="en">
       <body className="font-sans antialiased">
         <Providers>
-          <Shell>{children}</Shell>
+          <RoleProvider>
+            <ShipmentsProvider>
+              <Shell>{children}</Shell>
+            </ShipmentsProvider>
+          </RoleProvider>
         </Providers>
       </body>
     </html>

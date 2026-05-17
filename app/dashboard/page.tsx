@@ -1,34 +1,101 @@
 "use client";
 
-import { ArrowUpRight, CalendarDays, FileCheck2, Filter, Globe2, Plus, Search, ShieldCheck, Ship, WalletCards } from "lucide-react";
+import { AlertTriangle, BadgeCheck, CalendarDays, FileCheck2, PackageCheck, Plus, Ship } from "lucide-react";
 import Link from "next/link";
-import { useMemo, useState } from "react";
-import { Panel, RiskBadge, StatusBadge, LinkButton } from "@/components/ui";
-import { demoShipments } from "@/lib/demo-data";
+import { useMemo } from "react";
+import { useRole } from "@/components/role-context";
+import { LinkButton, Panel } from "@/components/ui";
+import { useShipments } from "@/lib/shipments-store";
+import { cn } from "@/lib/utils";
 
-const filters = ["All", "Customs Ready", "Needs Review", "Documents Uploaded", "Customs Cleared"];
+const fallbackIssues = {
+  Importer: [
+    { id: "SS-MY-US-0001", exporter: "Penang Micro Systems", importer: "Northstar Components", route: "MY -> US", issue: "Packing list mismatch", risk: "Medium Risk", action: "Review" },
+    { id: "SS-SG-DE-0002", exporter: "Crescent MedTech", importer: "Helios Klinik", route: "SG -> DE", issue: "HS code not detected", risk: "High Risk", action: "Fix HS code" },
+    { id: "SS-CN-AE-0003", exporter: "Shenzhen Alto", importer: "Emirates Retail", route: "CN -> UAE", issue: "Missing commercial invoice", risk: "High Risk", action: "Request docs" }
+  ],
+  Exporter: [
+    { id: "SS-MY-US-0001", exporter: "Penang Micro Systems", importer: "Northstar Components", route: "MY -> US", issue: "Importer approval pending", risk: "Medium Risk", action: "Follow up" },
+    { id: "SS-MY-GB-0007", exporter: "Penang Micro Systems", importer: "Bristol Circuit Labs", route: "MY -> GB", issue: "Certificate of origin missing", risk: "High Risk", action: "Upload cert" },
+    { id: "SS-SG-US-0008", exporter: "Crescent MedTech", importer: "Bay Health Supply", route: "SG -> US", issue: "Invoice quantity needs review", risk: "Medium Risk", action: "Review" }
+  ]
+};
+
+const intelligenceByRole = {
+  Importer: [
+    { label: "Delay risk", value: "+2.4 days", detail: "Malaysia to US shipments via Singapore are trending slower this week." },
+    { label: "Approval queue", value: "3 waiting", detail: "Three shipments need importer approval before final proof can be anchored." },
+    { label: "Document risk", value: "2 repeat issues", detail: "Packing list mismatches are recurring on semiconductor shipments." }
+  ],
+  Exporter: [
+    { label: "Document readiness", value: "86%", detail: "Commercial invoice and packing list quality is improving across active shipments." },
+    { label: "Importer response", value: "1.8 days", detail: "Average importer review time is under two days for recent shipments." },
+    { label: "Route signal", value: "MY -> US", detail: "Malaysia to US air shipments show strong carrier performance this week." }
+  ]
+};
 
 export default function DashboardPage() {
-  const [query, setQuery] = useState("");
-  const [filter, setFilter] = useState("All");
+  const { role, profile } = useRole();
+  const { shipments } = useShipments();
+  const mySide = role === "Importer" ? "importer" : "exporter";
 
-  const shipments = useMemo(() => {
-    return demoShipments.filter((shipment) => {
-      const matchesFilter = filter === "All" || shipment.status === filter;
-      const haystack = `${shipment.id} ${shipment.shipper} ${shipment.consignee} ${shipment.origin} ${shipment.destination}`.toLowerCase();
-      return matchesFilter && haystack.includes(query.toLowerCase());
+  const myShipments = useMemo(() => {
+    return shipments.filter((shipment) => {
+      return (
+        shipment.workflow === mySide ||
+        shipment.createdBy === mySide ||
+        (mySide === "importer" && (shipment.importer.email === profile.email || shipment.importer.company === profile.company)) ||
+        (mySide === "exporter" && (shipment.exporter.email === profile.email || shipment.exporter.company === profile.company))
+      );
     });
-  }, [filter, query]);
+  }, [shipments, mySide, profile.email, profile.company]);
 
-  const primary = demoShipments[0];
+  const requiredDocsTotal = myShipments.reduce((total, shipment) => total + shipment.documents.filter((doc) => doc.required).length, 0);
+  const uploadedDocsTotal = myShipments.reduce((total, shipment) => total + shipment.documents.filter((doc) => doc.required && doc.uploaded).length, 0);
+  const pendingDocs = Math.max(requiredDocsTotal - uploadedDocsTotal, myShipments.length === 0 ? 17 : 0);
+  const verifiedCount = myShipments.filter((shipment) => shipment.ai && shipment.ai.score >= 85).length || (myShipments.length === 0 ? 94 : 0);
+  const readyCount = myShipments.filter((shipment) => shipment.status === "AI Verified" || shipment.status === "Customs Package Generated").length || (myShipments.length === 0 ? 42 : 0);
+  const atRiskCount = myShipments.filter((shipment) => shipment.ai?.riskLevel === "High" || shipment.ai?.riskLevel === "Medium").length || (myShipments.length === 0 ? 9 : 0);
+  const arrivingThisWeek = myShipments.filter((shipment) => {
+    const eta = new Date(shipment.shipment.eta);
+    const now = new Date();
+    const diff = eta.getTime() - now.getTime();
+    return diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000;
+  }).length || (myShipments.length === 0 ? 23 : 0);
+
+  const summary = [
+    { label: "Total Active Shipments", value: String(myShipments.length || 128), tone: "blue", icon: Ship },
+    { label: "Documents Pending", value: String(pendingDocs), tone: "orange", icon: FileCheck2 },
+    { label: "AI Verified Shipments", value: String(verifiedCount), tone: "plain", icon: BadgeCheck },
+    { label: role === "Importer" ? "Ready for Approval" : "Ready for Importer Review", value: String(readyCount), tone: "plain", icon: PackageCheck },
+    { label: "Delayed / At Risk", value: String(atRiskCount), tone: "red", icon: AlertTriangle },
+    { label: "Arriving This Week", value: String(arrivingThisWeek), tone: "plain", icon: CalendarDays }
+  ];
+
+  const issuesFromShipments = myShipments
+    .filter((shipment) => shipment.status !== "Customs Package Generated" || shipment.ai?.riskLevel === "High" || shipment.ai?.riskLevel === "Medium")
+    .slice(0, 3)
+    .map((shipment) => ({
+      id: shipment.id,
+      exporter: shipment.exporter.company,
+      importer: shipment.importer.company,
+      route: `${shipment.shipment.origin.slice(0, 2).toUpperCase()} -> ${shipment.shipment.destination.slice(0, 2).toUpperCase()}`,
+      issue: shipment.ai?.checks.find((check) => check.status === "mismatch" || check.status === "missing")?.detail || (role === "Importer" ? "Needs approval or document review" : "Importer review pending"),
+      risk: `${shipment.ai?.riskLevel || "Medium"} Risk`,
+      action: role === "Importer" ? "Review" : "Update"
+    }));
+  const priorityIssues = issuesFromShipments.length > 0 ? issuesFromShipments : fallbackIssues[role];
+  const intelligence = intelligenceByRole[role];
+  const recentShipments = myShipments.slice(0, 6);
 
   return (
     <div className="mx-auto max-w-[1600px] px-5 py-8 lg:px-10">
-      <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end lg:hidden">
+      <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
         <div>
-          <p className="text-sm font-bold text-sui">Dashboards / Default</p>
-          <h1 className="mt-3 text-4xl font-extrabold text-pearl">Main Dashboard</h1>
-          <p className="mt-3 max-w-2xl text-steel">Monitor AI verification, risk, document hashes, and Sui object references across active shipments.</p>
+          <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Dashboard</h1>
+          <p className="mt-3 max-w-2xl text-steel">
+            Shipment workspace for {profile.company} as {role}.
+          </p>
         </div>
         <LinkButton href="/create">
           <Plus className="h-4 w-4" />
@@ -36,189 +103,146 @@ export default function DashboardPage() {
         </LinkButton>
       </div>
 
-      <div className="hidden items-end justify-between lg:flex">
-        <div>
-          <p className="text-sm font-bold text-sui">Dashboards / Default</p>
-          <h1 className="mt-2 text-4xl font-extrabold tracking-tight text-pearl">Main Dashboard</h1>
-        </div>
-        <LinkButton href="/create">
-          <Plus className="h-4 w-4" />
-          Create shipment
-        </LinkButton>
+      <div className="mt-8 grid gap-3 sm:grid-cols-2 md:grid-cols-3 min-[1180px]:grid-cols-6">
+        {summary.map((item) => {
+          const highlighted = item.tone !== "plain";
+          const Icon = item.icon;
+          return (
+            <Panel
+              key={item.label}
+              className={cn(
+                "relative aspect-square overflow-hidden !p-4",
+                item.tone === "blue" && "!border-transparent !bg-[#4DA2FF] shadow-glow",
+                item.tone === "orange" && "!border-transparent ![background:linear-gradient(135deg,#FFB454_0%,#FF8A3D_100%)] shadow-[0_18px_60px_rgba(255,138,61,0.22)]",
+                item.tone === "red" && "!border-transparent ![background:linear-gradient(135deg,#FF6B6B_0%,#E94343_100%)] shadow-[0_18px_60px_rgba(233,67,67,0.22)]"
+              )}
+            >
+              <div className="relative z-10 flex h-full flex-col">
+                <p className={cn("min-h-11 max-w-[8.5rem] text-xs font-bold leading-tight min-[1360px]:text-sm", highlighted ? "text-white/85" : "text-steel")}>{item.label}</p>
+                <p className={cn("mt-4 text-4xl font-extrabold tracking-tight min-[1360px]:mt-5 min-[1360px]:text-5xl", highlighted ? "text-white" : "text-pearl")}>{item.value}</p>
+              </div>
+              {item.tone === "blue" ? (
+                <svg aria-hidden="true" viewBox="0 0 160 120" className="absolute bottom-1 right-0 h-20 w-24 text-white/35 min-[1360px]:bottom-2 min-[1360px]:right-2 min-[1360px]:h-28 min-[1360px]:w-32" fill="none" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="3">
+                  <path d="M66 20c24 20 42 38 55 60l-48 11c5-24 3-47-7-71Z" />
+                  <path d="M64 23c8 31 3 55-17 72" />
+                  <path d="M28 78h100l-14 22H49L28 78Z" />
+                  <path d="M17 104c8-8 17-8 26 0s18 8 27 0 18-8 27 0 18 8 27 0" />
+                </svg>
+              ) : (
+                <Icon aria-hidden="true" className={cn("absolute bottom-3 right-3 h-20 w-20 stroke-[1.25] min-[1360px]:h-24 min-[1360px]:w-24", highlighted ? "text-white/25" : "text-[#4DA2FF]/15")} />
+              )}
+            </Panel>
+          );
+        })}
       </div>
 
-      <div className="mt-8 grid gap-6 xl:grid-cols-[1fr_400px]">
-        <div className="grid gap-6">
-          <div className="grid gap-6 lg:grid-cols-3">
-            <Panel className="blue-gradient text-white">
-              <div className="flex items-start justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-white/80">Verified Passports</p>
-                  <p className="mt-3 text-4xl font-extrabold">{demoShipments.length}</p>
-                </div>
-                <ShieldCheck className="h-7 w-7 text-white/90" />
-              </div>
-              <div className="mt-8 h-20 rounded-2xl border border-white/20 bg-white/10 p-3">
-                <div className="flex h-full items-end gap-3">
-                  {[54, 72, 48, 88, 64, 96, 42].map((height, index) => (
-                    <span key={index} className="w-full rounded-t-full bg-white/75" style={{ height: `${height}%` }} />
-                  ))}
-                </div>
-              </div>
-            </Panel>
-
-            <Panel>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-steel">Customs ready</p>
-                  <p className="mt-3 text-4xl font-extrabold text-pearl">1</p>
-                </div>
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-blue-50">
-                  <FileCheck2 className="h-6 w-6 text-sui" />
-                </span>
-              </div>
-              <div className="mt-8 h-2 rounded-full bg-blue-50">
-                <div className="h-2 w-[71%] rounded-full bg-sui" />
-              </div>
-              <p className="mt-4 text-sm text-steel">71% operational readiness across demo shipments</p>
-            </Panel>
-
-            <Panel>
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="text-sm font-semibold text-steel">Risk estimate</p>
-                  <p className="mt-3 text-4xl font-extrabold text-pearl">Low</p>
-                </div>
-                <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-emerald-50">
-                  <Globe2 className="h-6 w-6 text-emerald-500" />
-                </span>
-              </div>
-              <div className="mt-8 grid grid-cols-2 gap-3">
-                <div className="rounded-2xl bg-blue-50 p-4">
-                  <p className="text-sm text-steel">AI avg</p>
-                  <p className="mt-1 text-xl font-extrabold text-pearl">88.6%</p>
-                </div>
-                <div className="rounded-2xl bg-blue-50 p-4">
-                  <p className="text-sm text-steel">Docs</p>
-                  <p className="mt-1 text-xl font-extrabold text-pearl">8</p>
-                </div>
-              </div>
-            </Panel>
-          </div>
-
+      <div className="mt-8 grid gap-6">
+        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.55fr)]">
           <Panel>
-            <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
-              <label className="relative flex-1">
-                <Search className="absolute left-4 top-1/2 h-4 w-4 -translate-y-1/2 text-sui" />
-                <input
-                  value={query}
-                  onChange={(event) => setQuery(event.target.value)}
-                  placeholder="Search by shipment ID, route, shipper, or consignee"
-                  className="min-h-12 w-full rounded-2xl border border-blue-100 bg-ink pl-11 pr-3 text-pearl outline-none focus:border-sui/70"
-                />
-              </label>
-              <div className="flex items-center gap-2 overflow-x-auto">
-                <Filter className="h-4 w-4 text-steel" />
-                {filters.map((item) => (
-                  <button
-                    key={item}
-                    onClick={() => setFilter(item)}
-                    className={`min-w-fit rounded-2xl px-3 py-2 text-sm font-semibold transition ${filter === item ? "blue-gradient text-white shadow-glow" : "bg-blue-50 text-steel hover:text-sui"}`}
-                  >
-                    {item}
-                  </button>
-                ))}
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+              <div>
+                <p className="text-sm font-bold text-[#4DA2FF]">Attention Required</p>
+                <h2 className="mt-1 text-2xl font-extrabold text-pearl">Shipments with problems</h2>
               </div>
-            </div>
-          </Panel>
-
-          <div className="grid gap-4 lg:grid-cols-2">
-            {shipments.map((shipment) => (
-              <Link key={shipment.id} href={`/shipments/${shipment.id}`} className="group rounded-[1.6rem] border border-blue-100 bg-white p-6 shadow-panel transition hover:-translate-y-0.5 hover:border-sui/35">
-                <div className="flex items-start justify-between gap-4">
-                  <div>
-                    <p className="text-sm font-semibold text-steel">{shipment.origin} to {shipment.destination}</p>
-                    <h2 className="mt-2 text-xl font-extrabold text-pearl">{shipment.id}</h2>
-                  </div>
-                  <RiskBadge value={shipment.riskLevel} />
-                </div>
-                <p className="mt-5 text-sm text-steel">{shipment.cargo}</p>
-                <div className="mt-5 flex flex-wrap gap-2">
-                  <StatusBadge value={shipment.status} />
-                  <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-medium text-steel">{shipment.aiScore}% AI score</span>
-                  <span className="rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-medium text-steel">{shipment.documents.length} docs</span>
-                </div>
-                <div className="mt-5 border-t border-blue-50 pt-4 text-sm text-steel">
-                  <p>Object: <span className="text-pearl">{shipment.objectId}</span></p>
-                  <p className="mt-1">Carrier: <span className="text-pearl">{shipment.carrier}</span></p>
-                </div>
+              <Link href="/shipments?filter=attention" className="w-fit rounded-full bg-red-50 px-3 py-1 text-sm font-bold text-red-500 transition hover:bg-red-100">
+                View more
               </Link>
-            ))}
-          </div>
-        </div>
-
-        <aside className="grid h-fit gap-6">
-          <Panel>
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-extrabold text-pearl">Featured Passport</h2>
-              <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-blue-50">
-                <Plus className="h-5 w-5 text-sui" />
-              </span>
             </div>
-            <div className="blue-gradient mt-7 rounded-[1.4rem] p-6 text-white shadow-glow">
-              <p className="text-sm font-semibold text-white/80">Shipment Passport</p>
-              <p className="mt-5 text-2xl font-extrabold">{primary.id}</p>
-              <div className="mt-8 grid grid-cols-2 gap-5 text-sm">
-                <div>
-                  <p className="text-white/70">Origin</p>
-                  <p className="font-bold">{primary.origin}</p>
-                </div>
-                <div>
-                  <p className="text-white/70">Destination</p>
-                  <p className="font-bold">{primary.destination}</p>
-                </div>
-              </div>
-            </div>
-            <div className="mt-6 rounded-2xl bg-blue-50 p-5">
-              <p className="font-bold text-sui">Blockchain proof online</p>
-              <p className="mt-2 text-sm leading-6 text-steel">Document hashes and Walrus-style references are visible for judges without turning the UI into a crypto terminal.</p>
-            </div>
-          </Panel>
-
-          <Panel>
-            <h2 className="text-xl font-extrabold text-pearl">Recent activity</h2>
-            <div className="mt-5 grid gap-4">
-              {demoShipments.map((shipment) => (
-                <Link href={`/shipments/${shipment.id}`} key={shipment.id} className="flex items-center gap-4 rounded-2xl bg-ink p-3 transition hover:bg-blue-50">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
-                    <Ship className="h-5 w-5 text-sui" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <p className="truncate font-bold text-pearl">{shipment.cargo}</p>
-                    <p className="text-sm text-steel">{shipment.updatedAt}</p>
+            <div className="mt-6 grid gap-3">
+              {priorityIssues.map((item) => (
+                <div key={item.id} className="rounded-2xl bg-ink p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-extrabold text-pearl">{item.id}</p>
+                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-bold", item.risk === "High Risk" && "bg-red-50 text-red-500", item.risk === "Medium Risk" && "bg-orange-50 text-orange-500", item.risk === "Low Risk" && "bg-emerald-50 text-emerald-500")}>{item.risk}</span>
+                      </div>
+                      <p className="mt-2 text-sm font-semibold text-pearl">{item.exporter} {"->"} {item.importer}</p>
+                      <p className="mt-1 text-sm text-steel">{item.route} · {item.issue}</p>
+                    </div>
+                    <button className="w-fit rounded-full bg-[#4DA2FF] px-4 py-2 text-xs font-extrabold text-white shadow-glow transition hover:bg-[#2F8FFF]">
+                      {item.action}
+                    </button>
                   </div>
-                  <ArrowUpRight className="h-4 w-4 text-steel" />
-                </Link>
+                </div>
               ))}
             </div>
           </Panel>
 
           <Panel>
-            <div className="flex items-center justify-between">
-              <h2 className="text-xl font-extrabold text-pearl">Demo network</h2>
-              <CalendarDays className="h-5 w-5 text-sui" />
+            <div>
+              <p className="text-sm font-bold text-[#4DA2FF]">Shipment Intelligence</p>
+              <h2 className="mt-1 text-2xl font-extrabold text-pearl">{role} signals</h2>
             </div>
-            <div className="mt-5 flex items-center gap-4 rounded-2xl bg-ink p-4">
-              <span className="flex h-12 w-12 items-center justify-center rounded-2xl bg-white shadow-sm">
-                <WalletCards className="h-5 w-5 text-sui" />
-              </span>
-              <div>
-                <p className="font-bold text-pearl">Sui testnet ready</p>
-                <p className="text-sm text-steel">Publish package to enable live minting</p>
-              </div>
+            <div className="mt-6 grid gap-3">
+              {intelligence.map((insight) => (
+                <div key={insight.label} className="rounded-2xl bg-ink p-4 shadow-sm">
+                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                    <div className="min-w-0">
+                      <div className="flex flex-wrap items-center gap-2">
+                        <p className="font-extrabold text-pearl">{insight.label}</p>
+                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-extrabold text-[#4DA2FF]">{insight.value}</span>
+                      </div>
+                      <p className="mt-2 text-sm leading-6 text-steel">{insight.detail}</p>
+                    </div>
+                  </div>
+                </div>
+              ))}
             </div>
           </Panel>
-        </aside>
+        </div>
+
+        <Panel>
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
+            <div>
+              <p className="text-sm font-bold text-[#4DA2FF]">Recent Shipments</p>
+              <h2 className="mt-1 text-2xl font-extrabold text-pearl">Latest created and updated passports</h2>
+            </div>
+            <Link href="/create" className="flex w-fit items-center gap-2 rounded-full bg-blue-50 px-4 py-2 text-sm font-bold text-[#4DA2FF] transition hover:bg-[#4DA2FF] hover:text-white">
+              New shipment
+            </Link>
+          </div>
+          {recentShipments.length === 0 ? (
+            <div className="mt-6 rounded-2xl bg-ink p-6 text-sm text-steel">
+              No local shipments yet. Create a shipment to replace the demo counters with live workspace data.
+            </div>
+          ) : (
+            <div className="mt-6 overflow-x-auto">
+              <table className="w-full min-w-[940px] text-left text-sm">
+                <thead>
+                  <tr className="border-b border-blue-50 text-xs font-bold uppercase text-steel">
+                    <th className="pb-3">Shipment ID</th>
+                    <th className="pb-3">Exporter</th>
+                    <th className="pb-3">Importer</th>
+                    <th className="pb-3">Origin</th>
+                    <th className="pb-3">Destination</th>
+                    <th className="pb-3">Mode</th>
+                    <th className="pb-3">Status</th>
+                    <th className="pb-3">ETA</th>
+                    <th className="pb-3 text-right">AI Score</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-blue-50">
+                  {recentShipments.map((shipment) => (
+                    <tr key={shipment.id}>
+                      <td className="py-4 font-extrabold text-pearl">
+                        <Link href={`/shipments/${encodeURIComponent(shipment.id)}`} className="hover:text-[#4DA2FF]">{shipment.id}</Link>
+                      </td>
+                      <td className="py-4 font-semibold text-pearl">{shipment.exporter.company}</td>
+                      <td className="py-4 font-semibold text-pearl">{shipment.importer.company}</td>
+                      <td className="py-4 text-steel">{shipment.shipment.origin}</td>
+                      <td className="py-4 text-steel">{shipment.shipment.destination}</td>
+                      <td className="py-4 text-steel">{shipment.shipment.transportMode}</td>
+                      <td className="py-4"><span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-steel">{shipment.status}</span></td>
+                      <td className="py-4 text-steel">{shipment.shipment.eta}</td>
+                      <td className="py-4 text-right font-extrabold text-pearl">{shipment.ai?.score || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </Panel>
       </div>
     </div>
   );

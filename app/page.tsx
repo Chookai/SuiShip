@@ -1,12 +1,11 @@
-import { ArrowRight, BrainCircuit, CheckCircle2, Database, FileCheck2, Globe2, LockKeyhole, Route } from "lucide-react";
+import { ArrowRight, CheckCircle2, Database, FileCheck2, Globe2, LockKeyhole, Route } from "lucide-react";
 import { LinkButton, Panel, RiskBadge, StatusBadge } from "@/components/ui";
 import { demoShipments } from "@/lib/demo-data";
 
 const modules = [
   { icon: FileCheck2, title: "AI document intake", body: "Extracts invoice, packing, HS, origin, value, and consignee fields from trade documents." },
   { icon: LockKeyhole, title: "Sui passport anchor", body: "Mints a shared shipment object with immutable hashes, storage URIs, risk score, and status." },
-  { icon: Database, title: "Walrus-ready storage", body: "Keeps PDFs off-chain while anchoring verifiable document references on Sui." },
-  { icon: BrainCircuit, title: "memWal learning loop", body: "Shows how corrections, templates, routes, and fraud patterns become reusable memory." }
+  { icon: Database, title: "Walrus-ready storage", body: "Keeps PDFs off-chain while anchoring verifiable document references on Sui." }
 ];
 
 export default function LandingPage() {

@@ -129,34 +129,6 @@ export const extractionResults: ExtractionResult[] = [
   { label: "Consignee", value: "Northstar Components Inc.", confidence: 95 }
 ];
 
-export const memorySignals = [
-  {
-    title: "Good extraction examples",
-    detail: "93 validated invoice and packing-list pairs for semiconductor routes.",
-    score: "+14% confidence"
-  },
-  {
-    title: "Human correction history",
-    detail: "Repeated consignee address correction learned for Northstar Components.",
-    score: "12 corrections"
-  },
-  {
-    title: "Route-specific rules",
-    detail: "Malaysia to United States shipments require AWB, origin proof, invoice, and packing list.",
-    score: "4 active rules"
-  },
-  {
-    title: "Supplier templates",
-    detail: "Penang Micro Systems invoice layouts mapped to canonical SuiShip fields.",
-    score: "2 templates"
-  },
-  {
-    title: "Fraud pattern memory",
-    detail: "Flags mismatched HS code and undervaluation combinations before customs review.",
-    score: "Low risk"
-  }
-];
-
 export function findShipment(id: string) {
   return demoShipments.find(
     (shipment) =>

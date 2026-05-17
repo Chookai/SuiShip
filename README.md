@@ -10,7 +10,6 @@ The app demonstrates the end-to-end flow:
 4. Mint a Sui `ShipmentPassport` object.
 5. View object IDs, hashes, Walrus-style URIs, QR links, and customs status.
 6. Search a customs viewer.
-7. Explore the conceptual memWal memory layer.
 
 ## Setup
 
@@ -57,7 +56,6 @@ NEXT_PUBLIC_SUISHIP_PACKAGE_ID=0xYOUR_PACKAGE_ID npm run dev
 
 - AI extraction and verification are simulated with deterministic demo fields.
 - Walrus storage is represented as `walrus://demo-*` placeholder URIs.
-- memWal is a visible concept demo showing future memory categories.
 - Demo shipments use shortened object IDs until you publish the package and mint real objects.
 
 ## Pages
@@ -67,4 +65,3 @@ NEXT_PUBLIC_SUISHIP_PACKAGE_ID=0xYOUR_PACKAGE_ID npm run dev
 - `/create` create and mint flow.
 - `/shipments/SS-MY-US-0001` shipment passport detail.
 - `/customs` customs viewer.
-- `/memory` memory layer demo.
