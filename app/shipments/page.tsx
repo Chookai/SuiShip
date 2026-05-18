@@ -1,6 +1,6 @@
 "use client";
 
-import { ArrowUpDown, FilePlus2, Search, Ship, SlidersHorizontal, Trash2 } from "lucide-react";
+import { ArrowUpDown, FilePlus2, Loader2, Search, Ship, SlidersHorizontal, Trash2 } from "lucide-react";
 import Link from "next/link";
 import { useMemo, useState } from "react";
 import { Button, Panel, StatusBadge } from "@/components/ui";
@@ -24,7 +24,7 @@ export default function ShipmentsPage() {
 
   const visibleShipments = useMemo(() => {
     const filtered = shipments.filter((shipment) => {
-      const haystack = `${shipment.id} ${shipment.importer.company} ${shipment.exporter.company} ${shipment.shipment.origin} ${shipment.shipment.destination} ${shipment.status}`.toLowerCase();
+      const haystack = `${shipment.id} ${shipment.extractedRef ?? ""} ${shipment.importer.company} ${shipment.exporter.company} ${shipment.shipment.origin} ${shipment.shipment.destination} ${shipment.status}`.toLowerCase();
       const matchesQuery = haystack.includes(query.toLowerCase());
       const matchesStatus = statusFilter === "All" || shipment.status === statusFilter;
       return matchesQuery && matchesStatus;
@@ -174,6 +174,15 @@ export default function ShipmentsPage() {
                         <Link href={`/shipments/${encodeURIComponent(shipment.id)}`} className="hover:text-[#4DA2FF]">
                           {shipment.id}
                         </Link>
+                        {shipment.extractedRef && (
+                          <p className="mt-0.5 text-xs font-semibold text-steel">{shipment.extractedRef}</p>
+                        )}
+                        {shipment.extractionStatus === "extracting" && (
+                          <span className="mt-1 inline-flex items-center gap-1 rounded-full bg-blue-50 px-2 py-0.5 text-xs font-bold text-[#4DA2FF]">
+                            <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                            AI extracting...
+                          </span>
+                        )}
                       </td>
                       <td className="py-4 pr-4 text-steel">{shipment.exporter.company}</td>
                       <td className="py-4 pr-4 text-steel">{shipment.importer.company}</td>

@@ -1,0 +1,207 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e98]:
+      - navigation [ref=e99]:
+        - link "Dashboard" [ref=e100] [cursor=pointer]:
+          - /url: /dashboard
+          - generic [ref=e101]:
+            - img [ref=e103]
+            - generic [ref=e108]: Dashboard
+        - link "Shipments" [ref=e109] [cursor=pointer]:
+          - /url: /shipments
+          - generic [ref=e110]:
+            - img [ref=e112]
+            - generic [ref=e116]: Shipments
+        - link "Create" [ref=e117] [cursor=pointer]:
+          - /url: /create
+          - generic [ref=e118]:
+            - img [ref=e120]
+            - generic [ref=e123]: Create
+        - link "Customs" [ref=e124] [cursor=pointer]:
+          - /url: /customs
+          - generic [ref=e125]:
+            - img [ref=e127]
+            - generic [ref=e132]: Customs
+      - button "Importer Trade operator" [ref=e134] [cursor=pointer]:
+        - generic [ref=e136]:
+          - paragraph [ref=e137]: Importer
+          - paragraph [ref=e138]: Trade operator
+    - generic [ref=e3]:
+      - banner [ref=e4]:
+        - generic [ref=e5]:
+          - link "SuiShip home" [ref=e140] [cursor=pointer]:
+            - /url: /
+            - img "SuiShip" [ref=e141]
+          - generic [ref=e9]:
+            - generic [ref=e10]:
+              - img [ref=e11]
+              - textbox [ref=e14]:
+                - /placeholder: Search
+            - button "Notifications" [ref=e16] [cursor=pointer]:
+              - img [ref=e17]
+            - button "Theme" [ref=e20] [cursor=pointer]:
+              - img [ref=e21]
+            - generic [ref=e142]:
+              - img [ref=e143]
+              - generic [ref=e153]: Testnet
+              - generic [ref=e154]: Not connected
+            - button "Connect Wallet" [ref=e23] [cursor=pointer]
+      - main [ref=e46]:
+        - generic [ref=e47]:
+          - generic [ref=e48]:
+            - generic [ref=e49]:
+              - heading "Create Shipment" [level=1] [ref=e50]
+              - paragraph [ref=e51]: Start as an importer. Auto-fill your own company, invite the counterparty, and upload only the documents your side owns.
+            - generic [ref=e52]:
+              - generic [ref=e53]: Importer
+              - generic [ref=e54]: Awaiting Counterparty
+          - generic [ref=e55]:
+            - generic [ref=e57]:
+              - button "Workflow" [ref=e155] [cursor=pointer]:
+                - img [ref=e156]
+                - text: Workflow
+              - button "Trade parties" [ref=e60] [cursor=pointer]:
+                - img [ref=e62]
+                - text: Trade parties
+              - button "3 Document upload" [ref=e65] [cursor=pointer]:
+                - generic [ref=e66]: "3"
+                - text: Document upload
+            - generic [ref=e67]:
+              - generic [ref=e68]:
+                - generic [ref=e69]:
+                  - img [ref=e70]
+                  - heading "Document upload" [level=2] [ref=e159]
+                - generic [ref=e160]:
+                  - generic [ref=e161]: Stage your shipment documents in the box below, then click Extract documents to run AI analysis. You can add more files and extract again if some are missing — results accumulate automatically.
+                  - generic [ref=e162] [cursor=pointer]:
+                    - img [ref=e330]
+                    - heading "Drop PDFs here or click to add" [level=3] [ref=e333]
+                    - paragraph [ref=e334]: Drop more files above to add missing documents, then click Extract.
+                  - generic [ref=e335]:
+                    - img [ref=e336]
+                    - generic [ref=e339]:
+                      - paragraph [ref=e340]: AI extraction complete
+                      - paragraph [ref=e341]: Drop more files above and click Extract to add missing documents.
+                  - generic [ref=e342]:
+                    - generic [ref=e343]:
+                      - img [ref=e344]
+                      - text: Commercial Invoice
+                      - paragraph [ref=e346]: Missing
+                    - generic [ref=e347]:
+                      - img [ref=e348]
+                      - text: Packing List
+                      - paragraph [ref=e351]: 1 detected
+                    - generic [ref=e352]:
+                      - img [ref=e353]
+                      - text: Bill of Lading
+                      - paragraph [ref=e356]: 1 detected
+                    - generic [ref=e357]:
+                      - img [ref=e358]
+                      - text: Certificate of Origin
+                      - paragraph [ref=e360]: Missing
+                  - generic [ref=e361]:
+                    - button "Packing List packing_list_DHL.pdf Show details" [ref=e363] [cursor=pointer]:
+                      - generic [ref=e364]:
+                        - img [ref=e365]
+                        - generic [ref=e368]:
+                          - paragraph [ref=e369]: Packing List
+                          - paragraph [ref=e370]: packing_list_DHL.pdf
+                      - generic [ref=e371]: Show details
+                    - button "Bill of Lading bill_of_lading_DHL.pdf Show details" [ref=e373] [cursor=pointer]:
+                      - generic [ref=e374]:
+                        - img [ref=e375]
+                        - generic [ref=e378]:
+                          - paragraph [ref=e379]: Bill of Lading
+                          - paragraph [ref=e380]: bill_of_lading_DHL.pdf
+                      - generic [ref=e381]: Show details
+                    - generic [ref=e382]:
+                      - paragraph [ref=e383]: "Extraction errors:"
+                      - list [ref=e384]:
+                        - listitem [ref=e385]: "commercial_invoice_DHL.pdf: Zod validation failed: [ { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"line_items\", 0, \"unit_value\" ], \"message\": \"Expected number, received object\" }, { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"line_items\", 0, \"subtotal\" ], \"message\": \"Expected number, received object\" }, { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"line_items\", 1, \"unit_value\" ], \"message\": \"Expected number, received object\" }, { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"line_items\", 1, \"subtotal\" ], \"message\": \"Expected number, received object\" }, { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"totals\", \"declared_value\" ], \"message\": \"Expected number, received object\" }, { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"totals\", \"freight_insurance\" ], \"message\": \"Expected number, received object\" }, { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"totals\", \"other_charges\" ], \"message\": \"Expected number, received object\" }, { \"code\": \"invalid_type\", \"expected\": \"number\", \"received\": \"object\", \"path\": [ \"data\", \"totals\", \"total_invoice_amount\" ], \"message\": \"Expected number, received object\" } ]"
+                  - generic [ref=e386]:
+                    - img [ref=e387]
+                    - generic [ref=e390]:
+                      - paragraph [ref=e391]: Extracted reference number
+                      - paragraph [ref=e392]: BL-COF-7781
+                  - table [ref=e170]:
+                    - rowgroup [ref=e171]:
+                      - row "Document type Responsible Required AI detected file Status" [ref=e172]:
+                        - columnheader "Document type" [ref=e173]
+                        - columnheader "Responsible" [ref=e174]
+                        - columnheader "Required" [ref=e175]
+                        - columnheader "AI detected file" [ref=e176]
+                        - columnheader "Status" [ref=e177]
+                    - rowgroup [ref=e178]:
+                      - row "Commercial Invoice Exporter Required commercial_invoice_DHL.pdf Detected" [ref=e272]:
+                        - cell "Commercial Invoice" [ref=e180]
+                        - cell "Exporter" [ref=e181]
+                        - cell "Required" [ref=e182]
+                        - cell "commercial_invoice_DHL.pdf" [ref=e273]
+                        - cell "Detected" [ref=e274]:
+                          - generic [ref=e185]:
+                            - img [ref=e275]
+                            - text: Detected
+                      - row "Packing List Exporter Required packing_list_DHL.pdf Detected" [ref=e278]:
+                        - cell "Packing List" [ref=e187]
+                        - cell "Exporter" [ref=e188]
+                        - cell "Required" [ref=e189]
+                        - cell "packing_list_DHL.pdf" [ref=e279]
+                        - cell "Detected" [ref=e280]:
+                          - generic [ref=e192]:
+                            - img [ref=e281]
+                            - text: Detected
+                      - row "Air Waybill / Bill of Lading Exporter Required bill_of_lading_DHL.pdf Detected" [ref=e284]:
+                        - cell "Air Waybill / Bill of Lading" [ref=e194]
+                        - cell "Exporter" [ref=e195]
+                        - cell "Required" [ref=e196]
+                        - cell "bill_of_lading_DHL.pdf" [ref=e285]
+                        - cell "Detected" [ref=e286]:
+                          - generic [ref=e199]:
+                            - img [ref=e287]
+                            - text: Detected
+                      - row "Certificate of Origin Exporter Required — Missing" [ref=e393]:
+                        - cell "Certificate of Origin" [ref=e201]
+                        - cell "Exporter" [ref=e202]
+                        - cell "Required" [ref=e203]
+                        - cell "—" [ref=e394]
+                        - cell "Missing" [ref=e395]:
+                          - generic [ref=e206]: Missing
+                      - row "Customs Declaration Importer Required — Missing" [ref=e396]:
+                        - cell "Customs Declaration" [ref=e208]
+                        - cell "Importer" [ref=e209]
+                        - cell "Required" [ref=e210]
+                        - cell "—" [ref=e397]
+                        - cell "Missing" [ref=e398]:
+                          - generic [ref=e213]: Missing
+                      - row "Insurance Certificate Importer Optional — Optional" [ref=e399]:
+                        - cell "Insurance Certificate" [ref=e215]
+                        - cell "Importer" [ref=e216]
+                        - cell "Optional" [ref=e217]
+                        - cell "—" [ref=e400]
+                        - cell "Optional" [ref=e401]:
+                          - generic [ref=e220]: Optional
+                      - row "Import / Export Permit Importer Optional — Optional" [ref=e402]:
+                        - cell "Import / Export Permit" [ref=e222]
+                        - cell "Importer" [ref=e223]
+                        - cell "Optional" [ref=e224]
+                        - cell "—" [ref=e403]
+                        - cell "Optional" [ref=e404]:
+                          - generic [ref=e227]: Optional
+                      - row "Dangerous Goods Declaration Exporter Optional — Optional" [ref=e405]:
+                        - cell "Dangerous Goods Declaration" [ref=e229]
+                        - cell "Exporter" [ref=e230]
+                        - cell "Optional" [ref=e231]
+                        - cell "—" [ref=e406]
+                        - cell "Optional" [ref=e407]:
+                          - generic [ref=e234]: Optional
+                  - generic [ref=e235]:
+                    - heading "Ready to create" [level=3] [ref=e236]
+                    - paragraph [ref=e237]: Once all required documents are detected, click Create shipment below to save and open it in your shipments list. Draft already saved — creating again updates it.
+              - generic [ref=e85]:
+                - button "Back" [ref=e86] [cursor=pointer]
+                - button "Create shipment" [ref=e238] [cursor=pointer]:
+                  - img [ref=e239]
+                  - text: Create shipment
+  - button "Open Next.js Dev Tools" [ref=e93] [cursor=pointer]:
+    - img [ref=e94]
+  - alert [ref=e97]

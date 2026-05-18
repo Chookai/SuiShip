@@ -1,0 +1,141 @@
+- generic [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - navigation [ref=e4]:
+        - link "Dashboard" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - generic [ref=e6]:
+            - img [ref=e8]
+            - generic [ref=e13]: Dashboard
+        - link "Shipments" [ref=e14] [cursor=pointer]:
+          - /url: /shipments
+          - generic [ref=e15]:
+            - img [ref=e17]
+            - generic [ref=e21]: Shipments
+        - link "Create" [ref=e22] [cursor=pointer]:
+          - /url: /create
+          - generic [ref=e23]:
+            - img [ref=e25]
+            - generic [ref=e28]: Create
+        - link "Customs" [ref=e29] [cursor=pointer]:
+          - /url: /customs
+          - generic [ref=e30]:
+            - img [ref=e32]
+            - generic [ref=e37]: Customs
+      - button "Importer Trade operator" [ref=e39] [cursor=pointer]:
+        - generic [ref=e41]:
+          - paragraph [ref=e42]: Importer
+          - paragraph [ref=e43]: Trade operator
+    - generic [ref=e44]:
+      - banner [ref=e45]:
+        - generic [ref=e46]:
+          - link "SuiShip home" [ref=e48] [cursor=pointer]:
+            - /url: /
+            - img "SuiShip" [ref=e49]
+          - generic [ref=e50]:
+            - generic [ref=e51]:
+              - img [ref=e52]
+              - textbox [ref=e55]:
+                - /placeholder: Search
+            - button "Notifications" [ref=e57] [cursor=pointer]:
+              - img [ref=e58]
+            - button "Theme" [ref=e61] [cursor=pointer]:
+              - img [ref=e62]
+            - generic [ref=e64]:
+              - img [ref=e65]
+              - generic [ref=e75]: Testnet
+              - generic [ref=e76]: Not connected
+            - button "Connect Wallet" [ref=e77] [cursor=pointer]
+      - main [ref=e78]:
+        - generic [ref=e79]:
+          - generic [ref=e80]:
+            - generic [ref=e81]:
+              - heading "Create Shipment" [level=1] [ref=e82]
+              - paragraph [ref=e83]: Start as an importer. Auto-fill your own company, invite the counterparty, and upload only the documents your side owns.
+            - generic [ref=e84]:
+              - generic [ref=e85]: Importer
+              - generic [ref=e86]: Draft
+          - generic [ref=e87]:
+            - generic [ref=e88]:
+              - paragraph [ref=e89]: Progress
+              - generic [ref=e90]:
+                - generic [ref=e91]:
+                  - button "Workflow" [ref=e93] [cursor=pointer]:
+                    - img [ref=e156]
+                  - button "Workflow" [ref=e159] [cursor=pointer]
+                - generic [ref=e97]:
+                  - button "Trade parties" [ref=e99] [cursor=pointer]:
+                    - img [ref=e244]
+                  - button "Trade parties" [ref=e247] [cursor=pointer]
+                - generic [ref=e105]:
+                  - button "Shipment details" [ref=e107] [cursor=pointer]: "3"
+                  - button "Shipment details Current" [ref=e248] [cursor=pointer]:
+                    - text: Shipment details
+                    - generic [ref=e249]: Current
+                - generic [ref=e113]:
+                  - button "Cargo details" [ref=e115] [cursor=pointer]:
+                    - img [ref=e116]
+                  - button "Cargo details" [ref=e120] [cursor=pointer]
+                - generic [ref=e121]:
+                  - button "Document upload" [ref=e123] [cursor=pointer]: "5"
+                  - button "Document upload" [ref=e124] [cursor=pointer]
+            - generic [ref=e125]:
+              - generic [ref=e126]:
+                - generic [ref=e127]:
+                  - img [ref=e128]
+                  - heading "Shipment details" [level=2] [ref=e250]
+                - generic [ref=e251]:
+                  - generic [ref=e252]:
+                    - generic [ref=e253]: Shipment ID / Reference No.
+                    - textbox "Shipment ID / Reference No." [ref=e254]: SS-IMP-660003
+                  - generic [ref=e255]:
+                    - generic [ref=e256]: Carrier booking reference
+                    - textbox "Carrier booking reference" [ref=e257]:
+                      - /placeholder: e.g. HLCU1234567
+                  - generic [ref=e258]:
+                    - generic [ref=e259]: Transport mode
+                    - textbox "Transport mode" [ref=e260]: Air
+                  - generic [ref=e261]:
+                    - generic [ref=e262]: Incoterm
+                    - textbox "Incoterm" [ref=e263]: DAP
+                  - generic [ref=e264]:
+                    - generic [ref=e265]: Origin country
+                    - textbox "Origin country" [ref=e266]: Malaysia
+                  - generic [ref=e267]:
+                    - generic [ref=e268]: Origin port / airport
+                    - textbox "Origin port / airport" [ref=e269]: KUL Airport
+                  - generic [ref=e270]:
+                    - generic [ref=e271]: Destination country
+                    - textbox "Destination country" [ref=e272]: United States
+                  - generic [ref=e273]:
+                    - generic [ref=e274]: Destination port / airport
+                    - textbox "Destination port / airport" [ref=e275]: LAX Airport
+                  - generic [ref=e276]:
+                    - generic [ref=e277]: Carrier
+                    - textbox "Carrier" [ref=e278]: DHL Global Forwarding
+                  - generic [ref=e279]:
+                    - generic [ref=e280]: B/L type
+                    - textbox "B/L type" [ref=e281]:
+                      - /placeholder: e.g. Original / Telex Release / Seaway Bill
+                  - generic [ref=e282]:
+                    - generic [ref=e283]: ETD
+                    - textbox "ETD" [ref=e284]: 2026-06-14
+                  - generic [ref=e285]:
+                    - generic [ref=e286]: ETA
+                    - textbox "ETA" [ref=e287]: 2026-06-18
+                  - generic [ref=e288]:
+                    - generic [ref=e289]: Declared value
+                    - textbox "Declared value" [ref=e290]: "148200"
+                  - generic [ref=e291]:
+                    - generic [ref=e292]: Currency
+                    - textbox "Currency" [ref=e293]: USD
+                  - generic [ref=e294]:
+                    - generic [ref=e295]: Payment terms
+                    - textbox "Payment terms" [ref=e296]:
+                      - /placeholder: e.g. 30 days net / Letter of Credit / TT
+              - generic [ref=e143]:
+                - button "Back" [ref=e144] [cursor=pointer]
+                - button "Next step" [active] [ref=e145] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=e151] [cursor=pointer]:
+    - img [ref=e152]
+  - alert [ref=e155]

@@ -20,6 +20,7 @@ export type PartyInfo = {
   contact: string;
   email: string;
   phone: string;
+  taxId?: string;
 };
 
 export type AiCheckStatus = "matched" | "mismatch" | "missing" | "info";
@@ -65,7 +66,9 @@ export type ShipmentRecord = {
     | "Customs Package Generated";
   importer: PartyInfo;
   exporter: PartyInfo;
+  notifyParty?: PartyInfo;
   broker?: string;
+  freightForwarder?: string;
   shipment: {
     origin: string;
     originPort: string;
@@ -78,6 +81,9 @@ export type ShipmentRecord = {
     eta: string;
     declaredValue: string;
     currency: string;
+    bookingRef?: string;
+    paymentTerms?: string;
+    blType?: string;
   };
   cargo: {
     description: string;
@@ -97,6 +103,8 @@ export type ShipmentRecord = {
   inviteToken?: string;
   ai?: AiResult;
   walrus?: WalrusUpload;
+  extractedRef?: string;
+  extractionStatus?: "extracting" | "complete" | "failed";
 };
 
 type ShipmentsContextValue = {

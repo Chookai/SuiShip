@@ -1,0 +1,120 @@
+- generic [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "SuiShip home" [ref=e7] [cursor=pointer]:
+          - /url: /
+          - img "SuiShip" [ref=e8]
+        - generic [ref=e9]:
+          - button "Notifications" [ref=e11] [cursor=pointer]:
+            - img [ref=e12]
+          - button "Theme" [ref=e15] [cursor=pointer]:
+            - img [ref=e16]
+          - button "Connect Wallet" [ref=e18] [cursor=pointer]
+      - navigation [ref=e19]:
+        - link "Dashboard" [ref=e20] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e21]
+          - text: Dashboard
+        - link "Shipments" [ref=e26] [cursor=pointer]:
+          - /url: /shipments
+          - img [ref=e27]
+          - text: Shipments
+        - link "Create" [ref=e31] [cursor=pointer]:
+          - /url: /create
+          - img [ref=e32]
+          - text: Create
+        - link "Customs" [ref=e35] [cursor=pointer]:
+          - /url: /customs
+          - img [ref=e36]
+          - text: Customs
+    - main [ref=e41]:
+      - generic [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - heading "Create Shipment" [level=1] [ref=e45]
+            - paragraph [ref=e46]: Start as an importer. Auto-fill your own company, invite the counterparty, and upload only the documents your side owns.
+          - generic [ref=e47]:
+            - generic [ref=e48]: Importer
+            - generic [ref=e49]: Draft
+        - generic [ref=e51]:
+          - generic [ref=e84]: Trade parties
+          - generic [ref=e64]:
+            - generic [ref=e65]:
+              - img [ref=e66]
+              - heading "Trade parties" [level=2] [ref=e85]
+            - generic [ref=e86]:
+              - generic [ref=e87]:
+                - generic [ref=e89]:
+                  - img [ref=e91]
+                  - generic [ref=e94]:
+                    - paragraph [ref=e95]: Auto-filled
+                    - heading "Importer (you)" [level=3] [ref=e96]
+                - generic [ref=e97]:
+                  - generic [ref=e98]:
+                    - generic [ref=e99]: Company
+                    - textbox "Company" [ref=e100]: Northstar Components Inc.
+                  - generic [ref=e101]:
+                    - generic [ref=e102]: Contact person
+                    - textbox "Contact person" [ref=e103]: Nathan Cole
+                  - generic [ref=e104]:
+                    - generic [ref=e105]: Email
+                    - textbox "Email" [ref=e106]: nathan.cole@northstar.example
+                  - generic [ref=e107]:
+                    - generic [ref=e108]: Phone
+                    - textbox "Phone" [ref=e109]: +1 415 800 2190
+                  - generic [ref=e110]:
+                    - generic [ref=e111]: EORI / Tax ID (optional)
+                    - textbox "EORI / Tax ID (optional)" [ref=e112]:
+                      - /placeholder: e.g. GB123456789000
+                - paragraph [ref=e113]: Loaded from your SuiShip profile. Edits here only affect this shipment.
+              - generic [ref=e114]:
+                - generic [ref=e116]:
+                  - img [ref=e118]
+                  - generic [ref=e122]:
+                    - paragraph [ref=e123]: Counterparty
+                    - heading "Exporter" [level=3] [ref=e124]
+                - generic [ref=e125]:
+                  - generic [ref=e126]:
+                    - generic [ref=e127]: Company
+                    - textbox "Company" [ref=e128]: Penang Micro Systems Sdn Bhd
+                  - generic [ref=e129]:
+                    - generic [ref=e130]: Contact person
+                    - textbox "Contact person" [ref=e131]: Amanda Lee
+                  - generic [ref=e132]:
+                    - generic [ref=e133]: Email
+                    - textbox "Email" [ref=e134]: amanda.lee@penangmicro.example
+                  - generic [ref=e135]:
+                    - generic [ref=e136]: Phone
+                    - textbox "Phone" [ref=e137]: +60 4 228 9011
+                  - generic [ref=e138]:
+                    - generic [ref=e139]: EORI / Tax ID (optional)
+                    - textbox "EORI / Tax ID (optional)" [ref=e140]:
+                      - /placeholder: e.g. GB123456789000
+              - button "Add notify party (B/L third party)" [ref=e141] [cursor=pointer]:
+                - img [ref=e142]
+                - text: Add notify party (B/L third party)
+              - generic [ref=e143]:
+                - generic [ref=e144]:
+                  - generic [ref=e145]: Customs broker (optional)
+                  - textbox "Customs broker (optional)" [ref=e146]:
+                    - /placeholder: If applicable
+                - generic [ref=e147]:
+                  - generic [ref=e148]: Freight forwarder (optional)
+                  - textbox "Freight forwarder (optional)" [ref=e149]:
+                    - /placeholder: If applicable
+              - generic [ref=e151]:
+                - generic [ref=e152]:
+                  - img [ref=e154]
+                  - generic [ref=e160]:
+                    - paragraph [ref=e161]: Invite the exporter
+                    - paragraph [ref=e162]: Send this link so Penang Micro Systems Sdn Bhd can join SuiShip and upload their required documents.
+                - button "Generate invite link" [ref=e163] [cursor=pointer]:
+                  - img [ref=e164]
+                  - text: Generate invite link
+          - generic [ref=e81]:
+            - button "Back" [ref=e82] [cursor=pointer]
+            - button "Next step" [active] [ref=e83] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=e172] [cursor=pointer]:
+    - img [ref=e173]
+  - alert [ref=e176]
