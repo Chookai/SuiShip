@@ -9,7 +9,6 @@ import {
   Link2,
   Loader2,
   Lock,
-  PartyPopper,
   Plus,
   Share2,
   Ship,
@@ -27,6 +26,7 @@ import {
   useShipments,
   type DocumentOwner,
   type DocumentRequirement,
+  type MintStorageResult,
   type ShipmentRecord,
   type WorkflowKey
 } from "@/lib/shipments-store";
@@ -100,6 +100,7 @@ export default function CreateShipmentPage() {
   const [createdInProgress, setCreatedInProgress] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
+  const [mintResult, setMintResult] = useState<MintStorageResult | null>(null);
 
   // Async extraction state
   const [extractionStatus, setExtractionStatus] = useState<"idle" | "extracting" | "complete" | "failed">("idle");
@@ -225,23 +226,44 @@ export default function CreateShipmentPage() {
     }
   }
 
-  function attachFiles(files: File[]) {
+  function docsWithAttachedFiles(current: DocumentRequirement[], files: File[]) {
     const now = new Date().toISOString();
-    setDocs((current) => {
-      const next = current.map((doc) => ({ ...doc }));
-      files.forEach((file) => {
-        const detectedIndex = detectDocumentIndex(file.name, next);
-        if (detectedIndex >= 0) {
-          const target = next[detectedIndex];
-          next[detectedIndex] = {
-            ...target,
-            uploaded: true,
-            fileName: file.name,
-            uploadedAt: now
-          };
-        }
-      });
-      return next;
+    const next = current.map((doc) => ({ ...doc }));
+    files.forEach((file) => {
+      const detectedIndex = detectDocumentIndex(file.name, next);
+      if (detectedIndex >= 0) {
+        const target = next[detectedIndex];
+        next[detectedIndex] = {
+          ...target,
+          uploaded: true,
+          fileName: file.name,
+          uploadedAt: now
+        };
+      }
+    });
+    return next;
+  }
+
+  function docsWithExtractionResult(
+    current: DocumentRequirement[],
+    result: AggregateResult
+  ): DocumentRequirement[] {
+    const now = new Date().toISOString();
+    return current.map((doc) => {
+      const docLower = doc.name.toLowerCase();
+      if (docLower.includes("commercial invoice") && result.detected.commercial_invoice.length > 0) {
+        return { ...doc, uploaded: true, fileName: result.detected.commercial_invoice[0].file_name, uploadedAt: now };
+      }
+      if (docLower.includes("packing list") && result.detected.packing_list.length > 0) {
+        return { ...doc, uploaded: true, fileName: result.detected.packing_list[0].file_name, uploadedAt: now };
+      }
+      if ((docLower.includes("bill of lading") || docLower.includes("air waybill")) && result.detected.bill_of_lading.length > 0) {
+        return { ...doc, uploaded: true, fileName: result.detected.bill_of_lading[0].file_name, uploadedAt: now };
+      }
+      if (docLower.includes("certificate of origin") && result.detected.certificate_of_origin.length > 0) {
+        return { ...doc, uploaded: true, fileName: result.detected.certificate_of_origin[0].file_name, uploadedAt: now };
+      }
+      return doc;
     });
   }
 
@@ -250,7 +272,11 @@ export default function CreateShipmentPage() {
 
   const allCreatorDocsUploaded = creatorRequiredDocs.every((doc) => doc.uploaded);
 
-  function persistDraft(status: ShipmentRecord["status"], exStatus?: "extracting" | "complete" | "failed") {
+  function persistDraft(
+    status: ShipmentRecord["status"],
+    exStatus?: "extracting" | "complete" | "failed",
+    docsOverride?: DocumentRequirement[]
+  ) {
     const patch: Partial<ShipmentRecord> = {
       status,
       importer,
@@ -260,7 +286,7 @@ export default function CreateShipmentPage() {
       freightForwarder: freightForwarder || undefined,
       shipment: { ...details },
       cargo: { ...cargo },
-      documents: docs,
+      documents: docsOverride ?? docs,
       inviteToken: inviteToken || undefined,
       extractedRef: extractResult?.extractedRef,
       extractionStatus: exStatus
@@ -270,17 +296,57 @@ export default function CreateShipmentPage() {
       return shipmentRecordId;
     }
     const record = buildShipmentRecord(status);
+    if (docsOverride) record.documents = docsOverride;
     if (exStatus) record.extractionStatus = exStatus;
     addShipment(record);
     setShipmentRecordId(record.id);
     return record.id;
   }
 
+  async function saveShipmentSnapshot(
+    id: string,
+    status: ShipmentRecord["status"],
+    exStatus: "extracting" | "complete" | "failed",
+    docsOverride: DocumentRequirement[]
+  ) {
+    const record = buildShipmentRecord(status);
+    record.id = id;
+    record.status = status;
+    record.documents = docsOverride;
+    record.extractionStatus = exStatus;
+    record.updatedAt = new Date().toISOString();
+
+    const response = await fetch("/api/shipments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    });
+    if (!response.ok) {
+      throw new Error(`Failed to save shipment before processing: HTTP ${response.status}`);
+    }
+  }
+
+  async function parseJsonOrThrow(response: Response): Promise<unknown> {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.includes("application/json")) {
+      return response.json();
+    }
+
+    const text = await response.text();
+    if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
+      throw new Error(`Route returned HTML (${response.status}). Restart the Next dev server and try again.`);
+    }
+
+    throw new Error(text || `Unexpected non-JSON response (${response.status})`);
+  }
+
   // Fire-and-forget extraction; merges new results into existing ones for accumulation
-  async function startExtractionAsync(files: File[], shipmentId: string) {
+  async function startExtractionAsync(files: File[], shipmentId: string, baseDocs: DocumentRequirement[]) {
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
+    formData.append("shipmentId", shipmentId);
     try {
+      await saveShipmentSnapshot(shipmentId, "In Progress", "extracting", baseDocs);
       const res = await fetch("/api/documents/extract", { method: "POST", body: formData });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
       const incoming: AggregateResult = await res.json();
@@ -290,29 +356,13 @@ export default function CreateShipmentPage() {
         return merged;
       });
       setExtractionStatus("complete");
+      const updatedDocs = docsWithExtractionResult(baseDocs, merged);
+      setDocs(updatedDocs);
       updateShipment(shipmentId, {
         extractionStatus: "complete",
-        extractedRef: merged.extractedRef
+        extractedRef: merged.extractedRef,
+        documents: updatedDocs
       });
-      const now = new Date().toISOString();
-      setDocs((current) =>
-        current.map((doc) => {
-          const docLower = doc.name.toLowerCase();
-          if (docLower.includes("commercial invoice") && merged.detected.commercial_invoice.length > 0) {
-            return { ...doc, uploaded: true, fileName: merged.detected.commercial_invoice[0].file_name, uploadedAt: now };
-          }
-          if (docLower.includes("packing list") && merged.detected.packing_list.length > 0) {
-            return { ...doc, uploaded: true, fileName: merged.detected.packing_list[0].file_name, uploadedAt: now };
-          }
-          if ((docLower.includes("bill of lading") || docLower.includes("air waybill")) && merged.detected.bill_of_lading.length > 0) {
-            return { ...doc, uploaded: true, fileName: merged.detected.bill_of_lading[0].file_name, uploadedAt: now };
-          }
-          if (docLower.includes("certificate of origin") && merged.detected.certificate_of_origin.length > 0) {
-            return { ...doc, uploaded: true, fileName: merged.detected.certificate_of_origin[0].file_name, uploadedAt: now };
-          }
-          return doc;
-        })
-      );
     } catch {
       setExtractionStatus("failed");
       updateShipment(shipmentId, { extractionStatus: "failed" });
@@ -321,19 +371,28 @@ export default function CreateShipmentPage() {
 
   function handleFilesSelected(files: File[]) {
     if (files.length === 0) return;
-    attachFiles(files); // immediate filename display
+    const nextDocs = docsWithAttachedFiles(docs, files);
+    setDocs(nextDocs); // immediate filename display
     setExtractionStatus("extracting");
-    const id = persistDraft("In Progress", "extracting");
-    startExtractionAsync(files, id); // fire and forget
+    const id = persistDraft("In Progress", "extracting", nextDocs);
+    startExtractionAsync(files, id, nextDocs); // fire and forget
   }
 
   const hasValidationErrors = (extractResult?.cross_validation ?? []).some(
     (v) => v.severity === "error"
   );
 
-  function createShipmentNow() {
+  async function createShipmentNow() {
     if (!allCreatorDocsUploaded && extractionStatus !== "extracting") {
       setError("Upload all required documents before creating the shipment.");
+      return;
+    }
+    if (extractionStatus === "extracting") {
+      setError("Document extraction is still running. Wait for validation to complete, then create the shipment.");
+      return;
+    }
+    if (extractionStatus === "failed" || !extractResult) {
+      setError("Document extraction failed or has not completed. Re-upload the files and try again.");
       return;
     }
     if (hasValidationErrors) {
@@ -341,12 +400,48 @@ export default function CreateShipmentPage() {
       return;
     }
     setError(null);
-    const status: ShipmentRecord["status"] = counterpartyRequiredDocs.length > 0 ? "In Progress" : "Documents Uploaded";
-    persistDraft(status, extractionStatus === "extracting" ? "extracting" : extractionStatus === "complete" ? "complete" : undefined);
     setCreatedInProgress(true);
-    window.setTimeout(() => {
-      router.push("/shipments");
-    }, 900);
+    const status: ShipmentRecord["status"] = counterpartyRequiredDocs.length > 0 ? "In Progress" : "Documents Uploaded";
+    const id = persistDraft(status, "complete");
+
+    try {
+      await saveShipmentSnapshot(id, status, "complete", docs);
+      const response = await fetch("/api/shipments/mint", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          shipmentId: id,
+          ownerAddress: "0xmock_owner_address",
+        }),
+      });
+      const payload = await parseJsonOrThrow(response);
+      if (!response.ok) {
+        const errorMessage =
+          typeof payload === "object" && payload && "error" in payload && typeof payload.error === "string"
+            ? payload.error
+            : `Mint failed with HTTP ${response.status}`;
+        throw new Error(errorMessage);
+      }
+
+      const result = payload as MintStorageResult;
+      setMintResult(result);
+      updateShipment(id, {
+        status: "Passport Minted",
+        passportId: result.passportId,
+        txDigest: result.txDigest,
+        mintedAt: result.mintedAt,
+        walrusBlobIds: result.walrusBlobIds,
+        walrusManifestBlobId: result.walrusBlobIds[0],
+        memWalSpaceId: result.memWalSpaceId,
+        manifestHash: result.manifestHash,
+      });
+      window.setTimeout(() => {
+        router.push(`/shipments/${encodeURIComponent(id)}`);
+      }, 1200);
+    } catch (err) {
+      setCreatedInProgress(false);
+      setError(err instanceof Error ? err.message : "Shipment storage failed");
+    }
   }
 
   function goBack() {
@@ -469,7 +564,7 @@ export default function CreateShipmentPage() {
         <div className="grid gap-6">
           {/* Mobile step progress bar — hidden on xl where sidebar shows */}
           <div className="flex items-center gap-1 xl:hidden">
-            {visibleStepIndexes.map((stepIndex, visibleIndex) => {
+            {visibleStepIndexes.map((stepIndex) => {
               const complete = isStepComplete(stepIndex);
               const isActive = activeStep === stepIndex;
               return (
@@ -698,6 +793,8 @@ export default function CreateShipmentPage() {
             </p>
           )}
 
+          {mintResult && <MintResultPanel result={mintResult} />}
+
           <div className="flex items-center justify-between gap-3">
             <Button variant="secondary" disabled={activeStep === visibleStepIndexes[0]} onClick={goBack}>
               Back
@@ -708,10 +805,10 @@ export default function CreateShipmentPage() {
               <div className="flex flex-col items-end gap-1">
                 <Button
                   onClick={createShipmentNow}
-                  disabled={(!allCreatorDocsUploaded && extractionStatus === "idle") || createdInProgress || hasValidationErrors}
+                  disabled={(!allCreatorDocsUploaded && extractionStatus === "idle") || extractionStatus === "extracting" || createdInProgress || hasValidationErrors}
                 >
-                  {createdInProgress ? <PartyPopper className="h-4 w-4" /> : <FilePlus2 className="h-4 w-4" />}
-                  {createdInProgress ? "Shipment created — opening list" : "Create shipment"}
+                  {createdInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
+                  {createdInProgress ? "Storing and minting..." : "Create shipment"}
                 </Button>
                 {hasValidationErrors && (
                   <span className="flex items-center gap-1 text-xs font-bold text-red-500">
@@ -793,6 +890,52 @@ function PartyCard({
           Loaded from your SuiShip profile. Edits here only affect this shipment.
         </p>
       )}
+    </div>
+  );
+}
+
+function MintResultPanel({ result }: { result: MintStorageResult }) {
+  return (
+    <Panel className="border-emerald-200 bg-emerald-50">
+      <div className="flex items-start gap-3">
+        <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
+        <div className="min-w-0 flex-1">
+          <p className="font-extrabold text-emerald-800">Shipment stored and passport minted</p>
+          <div className="mt-3 grid gap-2 text-xs font-semibold text-emerald-900">
+            <StorageLine label="Passport" value={result.passportId} />
+            <StorageLine label="Tx digest" value={result.txDigest} />
+            <StorageLine label="MemWal" value={result.memWalSpaceId} />
+            <StorageLine label="Manifest hash" value={result.manifestHash} />
+          </div>
+          {result.walrusBlobIds.length > 0 && (
+            <div className="mt-3 grid gap-2">
+              <p className="text-xs font-extrabold uppercase tracking-widest text-emerald-700">Walrus blobs</p>
+              {result.walrusBlobIds.map((blobId, index) => (
+                <a
+                  key={`${blobId}-${index}`}
+                  href={`https://aggregator.walrus-testnet.walrus.space/v1/blobs/${blobId}`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="flex min-w-0 items-center gap-2 rounded-lg bg-white/80 px-3 py-2 text-xs font-bold text-pearl hover:text-[#4DA2FF]"
+                >
+                  <Link2 className="h-3.5 w-3.5 shrink-0" />
+                  <span className="shrink-0">{index === 0 ? "Manifest" : `Document ${index}`}</span>
+                  <span className="min-w-0 truncate font-mono">{blobId}</span>
+                </a>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </Panel>
+  );
+}
+
+function StorageLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="grid gap-1 sm:grid-cols-[120px_minmax(0,1fr)]">
+      <span className="text-emerald-700">{label}</span>
+      <span className="min-w-0 break-all font-mono text-pearl">{value}</span>
     </div>
   );
 }
@@ -1010,7 +1153,7 @@ function DocumentUploadStep({
             <XCircle className="h-5 w-5 shrink-0 text-red-500" />
             <div>
               <p className="font-bold text-red-700">Extraction failed</p>
-              <p className="text-sm text-red-600">Drop your files above and click Extract to retry. Check that ANTHROPIC_API_KEY is set.</p>
+              <p className="text-sm text-red-600">Drop your files above and click Extract to retry.</p>
             </div>
           </div>
         );

@@ -26,8 +26,8 @@ import {
   XCircle
 } from "lucide-react";
 import Link from "next/link";
-import { notFound, useParams } from "next/navigation";
-import { useMemo, useRef, useState } from "react";
+import { useParams } from "next/navigation";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { PassportActions } from "@/components/passport-actions";
 import { QrCard } from "@/components/qr-card";
 import { useRole } from "@/components/role-context";
@@ -48,14 +48,47 @@ import { aggregatorUrl, storeBlob, WALRUS_AGGREGATOR, WALRUS_PUBLISHER } from "@
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
-  const { shipments, ready, updateShipment } = useShipments();
+  const { shipments, ready, addShipment, updateShipment } = useShipments();
   const { role } = useRole();
   const rawId = decodeURIComponent(params?.id || "");
+  const [serverShipment, setServerShipment] = useState<ShipmentRecord | null>(null);
+  const [lookupComplete, setLookupComplete] = useState(false);
 
   const stored = useMemo(() => shipments.find((shipment) => shipment.id === rawId), [shipments, rawId]);
   const demo = useMemo(() => (stored ? null : findShipment(rawId)), [rawId, stored]);
 
-  if (!ready) {
+  useEffect(() => {
+    if (!ready || !rawId || stored || demo) {
+      setLookupComplete(false);
+      return;
+    }
+
+    let cancelled = false;
+    setLookupComplete(false);
+
+    fetch(`/api/shipments/${encodeURIComponent(rawId)}`)
+      .then(async (res) => {
+        if (!res.ok) return null;
+        return (await res.json()) as ShipmentRecord;
+      })
+      .then((record) => {
+        if (cancelled) return;
+        if (record) {
+          setServerShipment(record);
+          addShipment(record);
+        }
+        setLookupComplete(true);
+      })
+      .catch(() => {
+        if (!cancelled) setLookupComplete(true);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [ready, rawId, stored, demo, addShipment]);
+
+  if (!ready || (!stored && !demo && !serverShipment && !lookupComplete)) {
     return (
       <div className="mx-auto max-w-[1600px] px-5 py-8 lg:px-10">
         <Panel>
@@ -63,10 +96,6 @@ export default function ShipmentDetailPage() {
         </Panel>
       </div>
     );
-  }
-
-  if (!stored && !demo) {
-    notFound();
   }
 
   if (stored) {
@@ -77,6 +106,37 @@ export default function ShipmentDetailPage() {
         currentRoleOwner={currentRoleOwner}
         onUpdate={(patch) => updateShipment(stored.id, patch)}
       />
+    );
+  }
+
+  if (serverShipment) {
+    const currentRoleOwner: DocumentOwner = role;
+    return (
+      <StoredShipmentView
+        shipment={serverShipment}
+        currentRoleOwner={currentRoleOwner}
+        onUpdate={(patch) => updateShipment(serverShipment.id, patch)}
+      />
+    );
+  }
+
+  if (!demo) {
+    return (
+      <div className="mx-auto max-w-[1600px] px-5 py-8 lg:px-10">
+        <Panel>
+          <div className="flex items-start gap-3">
+            <AlertCircle className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
+            <div>
+              <p className="font-semibold text-pearl">Shipment not found</p>
+              <p className="mt-1 text-sm text-steel">The shipment record is not available yet or does not exist.</p>
+              <Link href="/shipments" className="mt-4 inline-flex items-center gap-2 text-sm text-sui hover:text-pearl">
+                <ArrowLeft className="h-4 w-4" />
+                Back to shipments
+              </Link>
+            </div>
+          </div>
+        </Panel>
+      </div>
     );
   }
 
@@ -346,6 +406,8 @@ function StoredShipmentView({
             onToggleDetail={() => setShowAiDetail((open) => !open)}
           />
 
+          <MintedStoragePanel shipment={shipment} />
+
           <WalrusPanel
             ai={ai}
             walrus={shipment.walrus}
@@ -495,6 +557,56 @@ function AiPanel({
 }
 
 const MIN_AI_SCORE_FOR_WALRUS = 90;
+
+function MintedStoragePanel({ shipment }: { shipment: ShipmentRecord }) {
+  if (!shipment.passportId && !shipment.memWalSpaceId && !shipment.walrusBlobIds?.length) return null;
+
+  const blobs = shipment.walrusBlobIds ?? (shipment.walrusManifestBlobId ? [shipment.walrusManifestBlobId] : []);
+
+  return (
+    <Panel className="min-w-0 overflow-hidden">
+      <div className="flex items-center gap-2">
+        <Fingerprint className="h-5 w-5 text-sui" />
+        <h2 className="truncate text-xl font-semibold text-pearl">Storage evidence</h2>
+      </div>
+
+      <div className="mt-4 grid gap-2 text-xs">
+        {shipment.passportId && <EvidenceLine label="Passport" value={shipment.passportId} />}
+        {shipment.txDigest && <EvidenceLine label="Tx digest" value={shipment.txDigest} />}
+        {shipment.memWalSpaceId && <EvidenceLine label="MemWal" value={shipment.memWalSpaceId} />}
+        {shipment.manifestHash && <EvidenceLine label="Manifest hash" value={shipment.manifestHash} />}
+      </div>
+
+      {blobs.length > 0 && (
+        <div className="mt-4 grid gap-2">
+          <p className="text-[10px] font-bold uppercase tracking-wide text-steel">Walrus testnet blobs</p>
+          {blobs.map((blobId, index) => (
+            <a
+              key={`${blobId}-${index}`}
+              href={aggregatorUrl(blobId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex min-w-0 items-center gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs font-bold text-pearl hover:text-[#4DA2FF]"
+            >
+              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
+              <span className="shrink-0">{index === 0 ? "Manifest" : `Doc ${index}`}</span>
+              <span className="min-w-0 truncate font-mono">{blobId}</span>
+            </a>
+          ))}
+        </div>
+      )}
+    </Panel>
+  );
+}
+
+function EvidenceLine({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl bg-blue-50 px-3 py-2">
+      <p className="text-[10px] font-bold uppercase tracking-wide text-steel">{label}</p>
+      <p className="mt-1 break-all font-mono font-bold text-pearl">{value}</p>
+    </div>
+  );
+}
 
 function WalrusPanel({
   ai,

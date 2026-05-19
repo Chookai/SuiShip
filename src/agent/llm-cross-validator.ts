@@ -22,12 +22,14 @@ Check for mismatches across documents in these fields:
 - Consignee / importer name (should be the same entity across all docs — allow reasonable abbreviations)
 - BL number (BOL bl_number) vs invoice sender_reference (should match when both present)
 - Country of origin (should match across invoice line items and COO country_of_origin)
-- HS codes (should be consistent across invoice and COO)
-- Total quantities and weights (packing list totals should broadly match invoice totals)
+- HS codes (should be consistent across invoice and COO; any obviously invalid placeholder code such as "000000" or "999999" must be flagged as error even if it appears in only one document)
+- Total quantities and weights: BOL total_cargo_packages must match packing list total_packages; BOL total_cargo_gross_weight_kg must match packing list total_gross_weight value (within 5% tolerance). A count or weight mismatch is an error.
+- Destination port consistency: BOL port_of_discharge should agree with the destination implied by the commercial invoice (recipient_city or city_of_liability) and packing list consignee_city. A clear city-level difference (e.g. "Seattle" vs "Los Angeles") is an error.
+- Document date sequencing: COO issue_date must not pre-date the commercial invoice invoice_date. If the COO is dated before the invoice, flag as warning with both dates in the message.
 
 Severity rules:
-- "error": Definitive factual mismatch — different invoice numbers, clearly different company names, different HS codes, different countries of origin. These indicate documents belong to DIFFERENT shipments.
-- "warning": Soft mismatch — minor formatting differences, date format ambiguity, abbreviated vs full names that could refer to the same entity.
+- "error": Definitive factual mismatch — different invoice numbers, clearly different company names, different HS codes, different countries of origin, port of discharge mismatch, package count or weight mismatch, invalid placeholder HS code. These indicate documents belong to DIFFERENT shipments or are incomplete.
+- "warning": Soft mismatch — minor formatting differences, date format ambiguity, abbreviated vs full names that could refer to the same entity, COO pre-dating invoice by a small margin.
 - "info": Observation only — a field is present in some docs but null in others (not necessarily a problem).
 
 Allow for reasonable abbreviations and aliases. For example "Java Highlands Co." and "Java Highlands Cooperative Sdn Bhd" are the SAME company — do NOT flag. Be strict on reference numbers and HS codes.
@@ -90,6 +92,8 @@ function buildDocSummary(detected: DetectedDocs): string {
       sender_reference: d.sender_reference,
       shipper_name: d.sender?.name,
       recipient_name: d.recipient?.name,
+      recipient_city: d.recipient?.city,
+      city_of_liability: d.city_of_liability,
       incoterms: d.incoterms,
       currency: d.currency,
       total_invoice_amount: d.totals?.total_invoice_amount,
@@ -114,6 +118,7 @@ function buildDocSummary(detected: DetectedDocs): string {
       ship_date: d.ship_date,
       shipper_name: d.shipper?.name,
       consignee_name: d.consignee?.name,
+      consignee_city: d.consignee?.city,
       total_packages: d.totals?.total_packages,
       total_gross_weight: d.totals?.total_gross_weight,
       total_net_weight: d.totals?.total_net_weight,
@@ -123,6 +128,9 @@ function buildDocSummary(detected: DetectedDocs): string {
   const bol = detected.bill_of_lading[0];
   if (bol?.extraction_result.document_type === "bill_of_lading") {
     const d = bol.extraction_result.data;
+    const bolTotalPackages = d.cargo?.reduce((s, c) => s + (c.number_of_packages ?? 0), 0) ?? null;
+    const bolTotalGrossWeightKg = d.cargo?.reduce((s, c) =>
+      c.gross_weight?.unit === "kg" ? s + (c.gross_weight.value ?? 0) : s, 0) ?? null;
     summary.bill_of_lading = {
       file: bol.file_name,
       bl_number: d.bl_number,
@@ -133,6 +141,8 @@ function buildDocSummary(detected: DetectedDocs): string {
       port_of_loading: d.port_of_loading,
       port_of_discharge: d.port_of_discharge,
       shipment_date: d.shipment_date,
+      total_cargo_packages: bolTotalPackages,
+      total_cargo_gross_weight_kg: bolTotalGrossWeightKg,
     };
   }
 
@@ -142,6 +152,7 @@ function buildDocSummary(detected: DetectedDocs): string {
     summary.certificate_of_origin = {
       file: coo.file_name,
       certificate_number: d.certificate_number,
+      issue_date: d.issue_date,
       country_of_origin: d.country_of_origin,
       exporter_name: d.exporter?.name,
       importer_name: d.importer?.name,
@@ -179,6 +190,75 @@ function mapToValidationIssues(
       .filter(Boolean) as string[],
     values: issue.values,
   }));
+}
+
+/**
+ * Token-efficient overload: uses a pre-built compact manifest from SQLite
+ * + new extraction summaries + retrieved semantic chunks instead of re-sending
+ * full raw PDFs. All cross-validation rules are identical — only input sourcing changes.
+ */
+export async function llmCrossValidateCompact(
+  compactManifest: string,
+  newExtractionsJson: string,
+  retrievedChunks: string,
+  client: Anthropic
+): Promise<{ issues: ValidationIssue[]; overallVerdict: string; verdictReason: string; inputTokens: number; outputTokens: number }> {
+  const userContent = [
+    `## Existing documents (compact manifest from cache)\n${compactManifest}`,
+    newExtractionsJson ? `## New/updated document extractions\n${newExtractionsJson}` : null,
+    retrievedChunks ? `## Relevant context chunks from prior extractions\n${retrievedChunks}` : null,
+    "Cross-validate all of the above for consistency.",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
+
+  try {
+    const response = await client.messages.create(
+      {
+        model: "claude-haiku-4-5",
+        max_tokens: 2048,
+        system: [
+          {
+            type: "text",
+            text: CROSS_VALIDATION_SYSTEM_PROMPT,
+            cache_control: { type: "ephemeral" },
+          } as Anthropic.TextBlockParam & { cache_control: { type: "ephemeral" } },
+        ],
+        messages: [{ role: "user", content: userContent }],
+      },
+      { headers: { "anthropic-beta": "prompt-caching-2024-07-31" } }
+    );
+
+    const inputTokens = response.usage?.input_tokens ?? 0;
+    const outputTokens = response.usage?.output_tokens ?? 0;
+
+    const rawText = response.content
+      .filter((b) => b.type === "text")
+      .map((b) => (b as Anthropic.TextBlock).text)
+      .join("");
+
+    const cleanText = rawText.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/, "$1").trim();
+    const parsed = JSON.parse(cleanText);
+    const validated = LLMValidationResponseSchema.parse(parsed);
+
+    const fakeDetected: DetectedDocs = {
+      commercial_invoice: [],
+      packing_list: [],
+      bill_of_lading: [],
+      certificate_of_origin: [],
+    };
+
+    return {
+      issues: mapToValidationIssues(validated.issues, fakeDetected),
+      overallVerdict: validated.overall_verdict,
+      verdictReason: validated.verdict_reason,
+      inputTokens,
+      outputTokens,
+    };
+  } catch (err) {
+    logger.warn({ err }, "llmCrossValidateCompact failed — returning empty issues");
+    return { issues: [], overallVerdict: "insufficient_data", verdictReason: "Compact validation failed", inputTokens: 0, outputTokens: 0 };
+  }
 }
 
 export async function llmCrossValidate(

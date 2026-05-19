@@ -2,6 +2,26 @@
 
 import { createContext, createElement, useCallback, useContext, useEffect, useMemo, useState } from "react";
 
+async function syncToServer(record: ShipmentRecord): Promise<void> {
+  try {
+    await fetch("/api/shipments", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(record),
+    });
+  } catch {
+    // non-fatal — localStorage remains source of truth
+  }
+}
+
+async function deleteFromServer(id: string): Promise<void> {
+  try {
+    await fetch(`/api/shipments/${encodeURIComponent(id)}`, { method: "DELETE" });
+  } catch {
+    // non-fatal
+  }
+}
+
 export type WorkflowKey = "importer" | "exporter";
 
 export type DocumentOwner = "Importer" | "Exporter";
@@ -48,6 +68,15 @@ export type WalrusUpload = {
   endEpoch?: number;
   publisher: string;
   aggregator: string;
+};
+
+export type MintStorageResult = {
+  passportId: string;
+  txDigest: string;
+  mintedAt: string;
+  walrusBlobIds: string[];
+  memWalSpaceId: string;
+  manifestHash: string;
 };
 
 export type ShipmentRecord = {
@@ -105,6 +134,13 @@ export type ShipmentRecord = {
   walrus?: WalrusUpload;
   extractedRef?: string;
   extractionStatus?: "extracting" | "complete" | "failed";
+  passportId?: string;
+  txDigest?: string;
+  memWalSpaceId?: string;
+  walrusManifestBlobId?: string;
+  walrusBlobIds?: string[];
+  manifestHash?: string;
+  mintedAt?: string;
 };
 
 type ShipmentsContextValue = {
@@ -126,18 +162,27 @@ export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
+    let local: ShipmentRecord[] = [];
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as ShipmentRecord[];
-        if (Array.isArray(parsed)) {
-          setShipments(parsed);
-        }
+        if (Array.isArray(parsed)) local = parsed;
       }
-    } catch {
-      // ignore corrupted store
-    }
-    setReady(true);
+    } catch {}
+
+    fetch("/api/shipments")
+      .then((res) => (res.ok ? res.json() : Promise.reject()))
+      .then((server: ShipmentRecord[]) => {
+        const serverIds = new Set(server.map((r) => r.id));
+        const merged = [...server, ...local.filter((r) => !serverIds.has(r.id))];
+        setShipments(merged);
+        try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+      })
+      .catch(() => {
+        setShipments(local);
+      })
+      .finally(() => setReady(true));
   }, []);
 
   const persist = useCallback((next: ShipmentRecord[]) => {
@@ -155,18 +200,21 @@ export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
       ready,
       addShipment: (record) => {
         persist([record, ...shipments.filter((existing) => existing.id !== record.id)]);
+        syncToServer(record);
       },
       updateShipment: (id, patch) => {
-        persist(
-          shipments.map((shipment) =>
-            shipment.id === id
-              ? { ...shipment, ...patch, updatedAt: new Date().toISOString() }
-              : shipment
-          )
+        const updated = shipments.map((shipment) =>
+          shipment.id === id
+            ? { ...shipment, ...patch, updatedAt: new Date().toISOString() }
+            : shipment
         );
+        persist(updated);
+        const found = updated.find((s) => s.id === id);
+        if (found) syncToServer(found);
       },
       removeShipment: (id) => {
         persist(shipments.filter((shipment) => shipment.id !== id));
+        deleteFromServer(id);
       },
       getShipment: (id) => shipments.find((shipment) => shipment.id === id),
       clear: () => persist([])

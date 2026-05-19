@@ -3,13 +3,13 @@
 import "@mysten/dapp-kit/dist/index.css";
 
 import { createNetworkConfig, SuiClientProvider, WalletProvider } from "@mysten/dapp-kit";
-import { getFullnodeUrl } from "@mysten/sui/client";
+import { getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { useState } from "react";
 
 const { networkConfig } = createNetworkConfig({
-  testnet: { url: getFullnodeUrl("testnet") },
-  devnet: { url: getFullnodeUrl("devnet") }
+  testnet: { network: "testnet", url: getJsonRpcFullnodeUrl("testnet") },
+  devnet: { network: "devnet", url: getJsonRpcFullnodeUrl("devnet") }
 });
 
 export function Providers({ children }: { children: React.ReactNode }) {

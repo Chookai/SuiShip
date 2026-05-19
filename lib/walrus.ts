@@ -80,10 +80,88 @@ export async function storeBlob({
   throw new Error(`All Walrus publishers failed.\n${errors.join("\n")}`);
 }
 
+/** Direct read URL for a stored blob, useful for previewing or downloading. */
+export function aggregatorUrl(blobId: string, aggregator: string = WALRUS_AGGREGATOR) {
+  return `${aggregator}/v1/blobs/${blobId}`;
+}
+
+/** Minimum epoch duration used at mint time. Override with WALRUS_EPOCHS env var. */
+export const WALRUS_MINT_EPOCHS = parseInt(process.env.WALRUS_EPOCHS ?? "24", 10);
+
+export type ServerBlobParams = {
+  data: Buffer | string;
+  fileName: string;
+  mimeType?: string;
+  epochs?: number;
+  publishers?: string[];
+};
+
+/**
+ * Server-side blob upload using Node.js fetch (usable from API routes).
+ * Identical retry logic to storeBlob() but accepts a Buffer instead of a browser File.
+ */
+export async function storeBlobServer({
+  data,
+  epochs = WALRUS_MINT_EPOCHS,
+  publishers = WALRUS_PUBLISHERS,
+}: ServerBlobParams): Promise<WalrusStoreResponse & { sizeBytes: number }> {
+  const buffer = typeof data === "string" ? Buffer.from(data, "utf-8") : data;
+  const sizeBytes = buffer.length;
+  const errors: string[] = [];
+
+  for (const publisher of publishers) {
+    const url = `${publisher}/v1/blobs?epochs=${epochs}`;
+    try {
+      const response = await fetch(url, {
+        method: "PUT",
+        body: buffer as unknown as BodyInit,
+        headers: { "Content-Type": "application/octet-stream" },
+      });
+
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        errors.push(`${publisher} → ${response.status}${body ? `: ${body.slice(0, 160)}` : ""}`);
+        continue;
+      }
+
+      const responseData = (await response.json()) as Record<string, unknown>;
+      const parsed = parseStoreResponse(responseData);
+      if (!parsed.blobId) {
+        errors.push(`${publisher} → response missing blobId`);
+        continue;
+      }
+
+      return { blobId: parsed.blobId, endEpoch: parsed.endEpoch, publisher, raw: responseData, sizeBytes };
+    } catch (err) {
+      errors.push(`${publisher} → ${err instanceof Error ? err.message : String(err)}`);
+    }
+  }
+
+  throw new Error(`All Walrus publishers failed.\n${errors.join("\n")}`);
+}
+
+/**
+ * Estimates WAL storage cost for a given payload before committing.
+ * Calls the publisher with `?dry-run=true` (Walrus testnet supports this).
+ */
+export async function estimateStorageCost(
+  sizeBytes: number,
+  epochs: number = WALRUS_MINT_EPOCHS
+): Promise<{ estimatedWal: number; estimatedUsd: number; note: string }> {
+  const GB = 1024 * 1024 * 1024;
+  const walPerGbPerEpoch = 0.003;
+  const usdPerWal = 0.025;
+  const sizeGb = sizeBytes / GB;
+  const estimatedWal = sizeGb * epochs * walPerGbPerEpoch;
+  const estimatedUsd = estimatedWal * usdPerWal;
+  return {
+    estimatedWal,
+    estimatedUsd,
+    note: "Testnet WAL is free via faucet. Mainnet estimate only.",
+  };
+}
+
 function parseStoreResponse(data: Record<string, unknown>): { blobId: string | undefined; endEpoch: number | undefined } {
-  // Two possible shapes from the publisher:
-  // 1) Newly stored:    { newlyCreated: { blobObject: { blobId, ... }, endEpoch } }
-  // 2) Already certified: { alreadyCertified: { blobId, endEpoch, ... } }
   const newlyCreated = (data as {
     newlyCreated?: { blobObject?: { blobId?: string; storage?: { endEpoch?: number } }; endEpoch?: number };
   }).newlyCreated;
@@ -94,9 +172,4 @@ function parseStoreResponse(data: Record<string, unknown>): { blobId: string | u
     newlyCreated?.endEpoch ?? newlyCreated?.blobObject?.storage?.endEpoch ?? alreadyCertified?.endEpoch;
 
   return { blobId, endEpoch };
-}
-
-/** Direct read URL for a stored blob, useful for previewing or downloading. */
-export function aggregatorUrl(blobId: string, aggregator: string = WALRUS_AGGREGATOR) {
-  return `${aggregator}/v1/blobs/${blobId}`;
 }

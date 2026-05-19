@@ -10,6 +10,17 @@ const DOC_TYPES = [
 ] as const;
 type DocType = (typeof DOC_TYPES)[number];
 
+function detectDocType(file: PdfFile, fallback: DocType): DocType {
+  const name = file.name.toLowerCase();
+  if (name.includes("commercial") || name.includes("invoice")) return "commercial_invoice";
+  if (name.includes("packing") || name.includes("packlist")) return "packing_list";
+  if (name.includes("bill_of_lading") || name.includes("bill-of-lading") || name.includes("lading") || name.includes("bol") || name.includes("waybill") || name.includes("awb")) {
+    return "bill_of_lading";
+  }
+  if (name.includes("certificate") || name.includes("origin") || name.includes("coo")) return "certificate_of_origin";
+  return fallback;
+}
+
 const ADDR = {
   name: null, contact_name: null, street: null, city: null, state: null,
   postal_code: null, country: null, country_code: null,
@@ -217,9 +228,37 @@ export function mockExtractPass(files: PdfFile[]): AggregateResult {
     certificate_of_origin: [],
   };
 
-  // Always produce all 4 types regardless of file count — cycle through files
+  if (files.length === 0) {
+    return {
+      detected,
+      missing: ["commercial_invoice", "packing_list", "bill_of_lading", "certificate_of_origin"],
+      duplicates: [],
+      garbage: [],
+      low_confidence: [],
+      cross_validation: [],
+      errors: [],
+      summary: {
+        total_files: 0,
+        successfully_extracted: 0,
+        is_complete: false,
+        total_haiku_cost_usd: 0,
+      },
+    };
+  }
+
+  const usedTypes = new Set<DocType>();
+  files.forEach((file, i) => {
+    const type = detectDocType(file, DOC_TYPES[i % DOC_TYPES.length]);
+    usedTypes.add(type);
+    detected[type].push(makeDoc(file, type));
+  });
+
+  // In pass mode, synthesize any missing required type from the first file so
+  // a partial demo upload can still exercise the happy path.
   DOC_TYPES.forEach((type, i) => {
-    detected[type].push(makeDoc(files[i % files.length], type));
+    if (!usedTypes.has(type)) {
+      detected[type].push(makeDoc(files[i % files.length], type));
+    }
   });
 
   return {
