@@ -2,6 +2,7 @@ import pino from "pino";
 
 const logger = pino({ name: "memwal-client" });
 const DEFAULT_MEMWAL_RELAYER_URL = "https://relayer.staging.memwal.ai";
+const REMEMBER_MAX_ATTEMPTS = 3;
 
 // Lazy-loaded so Next.js doesn't try to bundle it for client components
 let _MemWalClass: typeof import("@mysten-incubation/memwal").MemWal | null = null;
@@ -42,16 +43,30 @@ export async function memwalRemember(
   });
 
   try {
-    const accepted = await client.remember(text, namespace);
-    logger.info({ jobId: accepted.job_id, namespace }, "MemWal remember accepted");
+    for (let attempt = 1; attempt <= REMEMBER_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        const accepted = await client.remember(text, namespace);
+        logger.info({ jobId: accepted.job_id, namespace, attempt }, "MemWal remember accepted");
 
-    const result = await client.waitForRememberJob(accepted.job_id, {
-      pollIntervalMs: 1500,
-      timeoutMs: 60_000,
-    });
+        const result = await client.waitForRememberJob(accepted.job_id, {
+          pollIntervalMs: 1500,
+          timeoutMs: 60_000,
+        });
 
-    logger.info({ jobId: result.id, blobId: result.blob_id, namespace }, "MemWal remember complete");
-    return { jobId: result.id, blobId: result.blob_id, namespace: result.namespace };
+        logger.info({ jobId: result.id, blobId: result.blob_id, namespace, attempt }, "MemWal remember complete");
+        return { jobId: result.id, blobId: result.blob_id, namespace: result.namespace };
+      } catch (err) {
+        if (attempt >= REMEMBER_MAX_ATTEMPTS || !isRetriableMemWalError(err)) {
+          throw err;
+        }
+
+        const delayMs = attempt * 1500;
+        logger.warn({ err, namespace, attempt, delayMs }, "MemWal remember failed transiently — retrying");
+        await sleep(delayMs);
+      }
+    }
+
+    throw new Error("MemWal remember exhausted retries");
   } finally {
     client.destroy();
   }
@@ -114,4 +129,15 @@ export function isMemWalConfigured(): boolean {
   const key = process.env.MEMWAL_ED25519_KEY;
   const accountId = process.env.MEMWAL_ACCOUNT_ID;
   return !!(key && accountId && !key.startsWith("your-") && !accountId.startsWith("0xTODO"));
+}
+
+function isRetriableMemWalError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /(502|503|504|429|timeout|timed out|temporar)/i.test(message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
 }

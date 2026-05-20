@@ -333,7 +333,15 @@ async function writeToMemWal(
         `Carrier: ${shipment.shipment.carrier}. Cargo: ${shipment.cargo.description}, HS ${shipment.cargo.hsCode}. ` +
         `Declared value: ${shipment.shipment.declaredValue} ${shipment.shipment.currency}. ` +
         `Walrus evidence blobs: ${walrusBlobIds.join(", ")}`;
-      await memwalRemember(summary, namespace);
+      try {
+        await memwalRemember(summary, namespace);
+        logger.info({ shipmentId, namespace }, "MemWal summary written");
+      } catch (err) {
+        logger.warn(
+          { err, shipmentId, namespace },
+          "MemWal summary write failed after manifest success — continuing"
+        );
+      }
     }
 
     // spaceId encodes accountId + namespace so recall can reconstruct the query params
