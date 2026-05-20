@@ -1,5 +1,6 @@
 import type { ShipmentRecord } from "./shipments-store";
 import { getDb } from "./db";
+import { listProgressManifests } from "./progress-manifests";
 
 type ShipmentRow = {
   id: string;
@@ -58,15 +59,33 @@ function rowToRecord(row: ShipmentRow): ShipmentRecord {
     walrusBlobIds: walrusBlobIds.length > 0 ? walrusBlobIds : undefined,
     manifestHash: row.manifest_hash ?? undefined,
     mintedAt: row.minted_at ?? undefined,
+    progressManifests: listProgressManifests(row.id),
   };
 }
 
 function getWalrusBlobIds(shipmentId: string): string[] {
   try {
-    const rows = getDb()
-      .prepare("SELECT blob_id FROM walrus_blobs WHERE shipment_id = ? ORDER BY stored_at ASC")
+    const db = getDb();
+    const manifestRows = db
+      .prepare("SELECT blob_id FROM walrus_blobs WHERE shipment_id = ? AND purpose IN ('manifest', 'document_package') ORDER BY stored_at ASC")
       .all(shipmentId) as { blob_id: string }[];
-    return rows.map((row) => row.blob_id);
+    const documentRows = db
+      .prepare(
+        `SELECT walrus_blob_id AS blob_id
+         FROM shipment_files
+         WHERE shipment_id = ? AND walrus_blob_id IS NOT NULL
+         ORDER BY uploaded_at ASC`
+      )
+      .all(shipmentId) as { blob_id: string }[];
+
+    const seen = new Set<string>();
+    return [...manifestRows, ...documentRows]
+      .map((row) => row.blob_id)
+      .filter((blobId) => {
+        if (seen.has(blobId)) return false;
+        seen.add(blobId);
+        return true;
+      });
   } catch {
     return [];
   }
@@ -156,7 +175,24 @@ export function listShipments(): ShipmentRecord[] {
 }
 
 export function deleteShipment(id: string): void {
-  getDb().prepare("DELETE FROM shipments WHERE id = ?").run(id);
+  const db = getDb();
+  const fileRows = db
+    .prepare("SELECT sha256 FROM shipment_files WHERE shipment_id = ?")
+    .all(id) as { sha256: string }[];
+  const sha256s = fileRows.map((row) => row.sha256);
+
+  db.prepare("DELETE FROM shipments WHERE id = ?").run(id);
+
+  const deleteOrphanedCache = db.prepare(`
+    DELETE FROM file_cache
+    WHERE sha256 = ?
+      AND NOT EXISTS (
+        SELECT 1 FROM shipment_files WHERE shipment_files.sha256 = file_cache.sha256
+      )
+  `);
+  for (const sha256 of sha256s) {
+    deleteOrphanedCache.run(sha256);
+  }
 }
 
 export function updateShipmentMintPointers(

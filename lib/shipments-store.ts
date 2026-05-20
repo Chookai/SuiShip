@@ -79,6 +79,20 @@ export type MintStorageResult = {
   manifestHash: string;
 };
 
+export type ProgressManifest = {
+  id: string;
+  shipmentId: string;
+  sequence: number;
+  stage: string;
+  actor: string;
+  summary: string;
+  manifestJson: string;
+  memwalBlobId?: string;
+  memwalNamespace: string;
+  status: string;
+  createdAt: string;
+};
+
 export type ShipmentRecord = {
   id: string;
   createdAt: string;
@@ -141,6 +155,7 @@ export type ShipmentRecord = {
   walrusBlobIds?: string[];
   manifestHash?: string;
   mintedAt?: string;
+  progressManifests?: ProgressManifest[];
 };
 
 type ShipmentsContextValue = {
@@ -154,8 +169,27 @@ type ShipmentsContextValue = {
 };
 
 const STORAGE_KEY = "suiship-shipments";
+const DELETED_STORAGE_KEY = "suiship-deleted-shipments";
 
 const ShipmentsContext = createContext<ShipmentsContextValue | null>(null);
+
+function loadDeletedIds(): Set<string> {
+  try {
+    const raw = window.localStorage.getItem(DELETED_STORAGE_KEY);
+    const parsed = raw ? (JSON.parse(raw) as unknown) : [];
+    return new Set(Array.isArray(parsed) ? parsed.filter((id): id is string => typeof id === "string") : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function saveDeletedIds(ids: Set<string>) {
+  try {
+    window.localStorage.setItem(DELETED_STORAGE_KEY, JSON.stringify([...ids]));
+  } catch {
+    // ignore quota errors
+  }
+}
 
 export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
   const [shipments, setShipments] = useState<ShipmentRecord[]>([]);
@@ -163,21 +197,21 @@ export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
 
   useEffect(() => {
     let local: ShipmentRecord[] = [];
+    const deletedIds = loadDeletedIds();
     try {
       const raw = window.localStorage.getItem(STORAGE_KEY);
       if (raw) {
         const parsed = JSON.parse(raw) as ShipmentRecord[];
-        if (Array.isArray(parsed)) local = parsed;
+        if (Array.isArray(parsed)) local = parsed.filter((shipment) => !deletedIds.has(shipment.id));
       }
     } catch {}
 
     fetch("/api/shipments")
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((server: ShipmentRecord[]) => {
-        const serverIds = new Set(server.map((r) => r.id));
-        const merged = [...server, ...local.filter((r) => !serverIds.has(r.id))];
-        setShipments(merged);
-        try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(merged)); } catch {}
+        const visibleServer = server.filter((shipment) => !deletedIds.has(shipment.id));
+        setShipments(visibleServer);
+        try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleServer)); } catch {}
       })
       .catch(() => {
         setShipments(local);
@@ -199,25 +233,54 @@ export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
       shipments,
       ready,
       addShipment: (record) => {
-        persist([record, ...shipments.filter((existing) => existing.id !== record.id)]);
+        const deletedIds = loadDeletedIds();
+        deletedIds.delete(record.id);
+        saveDeletedIds(deletedIds);
+        setShipments((current) => {
+          const next = [record, ...current.filter((existing) => existing.id !== record.id)];
+          try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+          } catch {}
+          return next;
+        });
         syncToServer(record);
       },
       updateShipment: (id, patch) => {
-        const updated = shipments.map((shipment) =>
-          shipment.id === id
-            ? { ...shipment, ...patch, updatedAt: new Date().toISOString() }
-            : shipment
-        );
-        persist(updated);
-        const found = updated.find((s) => s.id === id);
-        if (found) syncToServer(found);
+        if (loadDeletedIds().has(id)) return;
+        setShipments((current) => {
+          let found: ShipmentRecord | undefined;
+          const updated = current.map((shipment) => {
+            if (shipment.id !== id) return shipment;
+            found = { ...shipment, ...patch, updatedAt: new Date().toISOString() };
+            return found;
+          });
+          try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
+          } catch {}
+          if (found) syncToServer(found);
+          return updated;
+        });
       },
       removeShipment: (id) => {
-        persist(shipments.filter((shipment) => shipment.id !== id));
-        deleteFromServer(id);
+        const deletedIds = loadDeletedIds();
+        deletedIds.add(id);
+        saveDeletedIds(deletedIds);
+        setShipments((current) => {
+          const next = current.filter((shipment) => shipment.id !== id);
+          try {
+            window.localStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+          } catch {}
+          return next;
+        });
+        void deleteFromServer(id);
       },
       getShipment: (id) => shipments.find((shipment) => shipment.id === id),
-      clear: () => persist([])
+      clear: () => {
+        const deletedIds = loadDeletedIds();
+        shipments.forEach((shipment) => deletedIds.add(shipment.id));
+        saveDeletedIds(deletedIds);
+        persist([]);
+      }
     };
   }, [shipments, ready, persist]);
 

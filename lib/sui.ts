@@ -1,21 +1,25 @@
 import { Transaction } from "@mysten/sui/transactions";
-import type { ShipmentDocument } from "@/lib/demo-data";
 
 export const SUI_NETWORK = "testnet";
-export const PACKAGE_ID = process.env.NEXT_PUBLIC_SUISHIP_PACKAGE_ID || "0xTODO_PUBLISH_PACKAGE";
+const DEPLOYED_PACKAGE_ID = "0xf14daf6545bd8952322b3cefe6163bdd6a37c5746c25c986c0b2c46863009927";
+const configuredPackageId = process.env.NEXT_PUBLIC_SUISHIP_PACKAGE_ID;
+
+export const PACKAGE_ID =
+  configuredPackageId && configuredPackageId.startsWith("0x") && !configuredPackageId.includes("TODO")
+    ? configuredPackageId
+    : DEPLOYED_PACKAGE_ID;
 export const MODULE_NAME = "shipment_passport";
 
 type CreatePassportInput = {
   shipmentId: string;
-  shipper: string;
-  consignee: string;
-  origin: string;
-  destination: string;
-  carrier: string;
-  transportMode: string;
-  aiScore: number;
-  riskLevel: string;
-  documents: ShipmentDocument[];
+  importer: string;
+  exporter: string;
+  walrusBlobId: string;
+  memWalSpaceId: string;
+  finalValidationMemWalId: string;
+  packageHash?: number[] | null;
+  verificationScore: number;
+  documentCount: number;
 };
 
 export function canUsePublishedPackage() {
@@ -28,16 +32,14 @@ export function buildCreateShipmentTx(input: CreatePassportInput) {
     target: `${PACKAGE_ID}::${MODULE_NAME}::create_shipment_passport`,
     arguments: [
       tx.pure.string(input.shipmentId),
-      tx.pure.string(input.shipper),
-      tx.pure.string(input.consignee),
-      tx.pure.string(input.origin),
-      tx.pure.string(input.destination),
-      tx.pure.string(input.carrier),
-      tx.pure.string(input.transportMode),
-      tx.pure.u64(input.aiScore),
-      tx.pure.string(input.riskLevel),
-      tx.pure.vector("string", input.documents.map((document) => document.hash)),
-      tx.pure.vector("string", input.documents.map((document) => document.storageUri)),
+      tx.pure.address(input.importer),
+      tx.pure.address(input.exporter),
+      tx.pure.string(input.walrusBlobId),
+      tx.pure.string(input.memWalSpaceId),
+      tx.pure.string(input.finalValidationMemWalId),
+      tx.pure.option("vector<u8>", input.packageHash ?? null),
+      tx.pure.u64(input.verificationScore),
+      tx.pure.u64(input.documentCount),
       tx.object("0x6")
     ]
   });

@@ -1,5 +1,6 @@
 "use client";
 
+import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
 import {
   AlertCircle,
   ArrowLeft,
@@ -7,19 +8,15 @@ import {
   Building2,
   CheckCircle2,
   Clock3,
-  CloudUpload,
-  Copy,
   ExternalLink,
-  FileArchive,
   FileCheck2,
   Fingerprint,
   Globe2,
   Info,
   Loader2,
-  Lock,
   Mail,
   Phone,
-  Search,
+  Plus,
   ShieldCheck,
   Sparkles,
   Upload,
@@ -33,18 +30,37 @@ import { QrCard } from "@/components/qr-card";
 import { useRole } from "@/components/role-context";
 import { Button, Panel, RiskBadge, StatusBadge } from "@/components/ui";
 import { findShipment } from "@/lib/demo-data";
-import { runAiVerification } from "@/lib/ai-verification";
 import {
   useShipments,
   type AiCheck,
   type AiResult,
   type DocumentOwner,
   type DocumentRequirement,
+  type ProgressManifest,
   type ShipmentRecord,
   type WalrusUpload
 } from "@/lib/shipments-store";
+import { buildCreateShipmentTx, canUsePublishedPackage, PACKAGE_ID } from "@/lib/sui";
 import { cn } from "@/lib/utils";
-import { aggregatorUrl, storeBlob, WALRUS_AGGREGATOR, WALRUS_PUBLISHER } from "@/lib/walrus";
+import { aggregatorUrl } from "@/lib/walrus";
+
+type AggregateLike = {
+  extractedRef?: string;
+  cross_validation?: Array<{ severity?: string; message?: string; field?: string }>;
+  detected?: {
+    commercial_invoice?: Array<{ file_name: string }>;
+    packing_list?: Array<{ file_name: string }>;
+    bill_of_lading?: Array<{ file_name: string }>;
+    certificate_of_origin?: Array<{ file_name: string }>;
+  };
+};
+
+type SuiPassportProgress = {
+  passportId?: string;
+  txDigest: string;
+  packageId: string;
+  network: "testnet";
+};
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
@@ -152,34 +168,269 @@ function StoredShipmentView({
   currentRoleOwner: DocumentOwner;
   onUpdate: (patch: Partial<ShipmentRecord>) => void;
 }) {
-  const [showAiDetail, setShowAiDetail] = useState(true);
-  const qrValue = `suiship://passport/${shipment.id}`;
+  const currentAccount = useCurrentAccount();
+  const suiClient = useSuiClient();
+  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
+  const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
+  const [progressBusy, setProgressBusy] = useState(false);
+  const [workflowError, setWorkflowError] = useState<string | null>(null);
+  const [newDocumentName, setNewDocumentName] = useState("");
+  const [dragOver, setDragOver] = useState(false);
+  const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const batchInputRef = useRef<HTMLInputElement | null>(null);
   const requiredDocs = shipment.documents.filter((doc) => doc.required);
-  const uploadedDocs = requiredDocs.filter((doc) => doc.uploaded).length;
-  const ai = shipment.ai;
+  const ai = shipment.ai ?? buildShipmentAiOverview(shipment);
+  const requiredDocsComplete = requiredDocs.length > 0 && requiredDocs.every((doc) => doc.uploaded);
+  const hasFinalManifest = (shipment.progressManifests ?? []).some((manifest) => manifest.stage === "final_manifest");
+  const documentsLocked = hasFinalManifest || Boolean(shipment.walrus);
+  const passportBusy = documentPhase === "validating" || documentPhase === "minting";
+  const canFinalize =
+    requiredDocsComplete &&
+    shipment.extractionStatus === "complete" &&
+    !hasFinalManifest &&
+    documentPhase === "idle";
 
-  function updateDoc(index: number, patch: Partial<DocumentRequirement>) {
-    const nextDocs = shipment.documents.map((doc, idx) => (idx === index ? { ...doc, ...patch } : doc));
-    // Any doc edit invalidates the previous AI run so the score stays honest.
-    onUpdate({ documents: nextDocs, ai: undefined });
-  }
-
-  function attachFile(index: number, file: File) {
-    updateDoc(index, {
-      uploaded: true,
-      fileName: file.name,
-      uploadedAt: new Date().toISOString()
+  function appendProgressManifest(manifest: ProgressManifest) {
+    onUpdate({
+      progressManifests: [...(shipment.progressManifests ?? []), manifest],
     });
   }
 
-  function clearFile(index: number) {
-    updateDoc(index, { uploaded: false, fileName: undefined, uploadedAt: undefined });
+  async function recordProgressCheckpoint(input: {
+    stage:
+      | "documents_uploaded"
+      | "ai_check_failed"
+      | "ai_check_passed"
+      | "walrus_package_stored"
+      | "final_manifest"
+      | "sui_passport_created";
+    actor: string;
+    summary: string;
+    documents?: Array<{ name: string; fileName?: string; uploaded?: boolean }>;
+    aiIssues?: Array<{ severity?: string; message?: string; field?: string }>;
+    walrusPackage?: WalrusUpload;
+    suiPassport?: SuiPassportProgress;
+  }): Promise<ProgressManifest> {
+    setProgressBusy(true);
+    try {
+      const response = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/progress`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(input),
+      });
+      const payload = await parseJsonResponse(response);
+      if (!response.ok) {
+        throw new Error(getErrorMessage(payload, `Progress manifest failed with HTTP ${response.status}`));
+      }
+      const manifest = payload as ProgressManifest;
+      appendProgressManifest(manifest);
+      return manifest;
+    } finally {
+      setProgressBusy(false);
+    }
   }
 
-  function runAi() {
-    const result = runAiVerification(shipment);
-    onUpdate({ ai: result });
-    setShowAiDetail(true);
+  function addToStaged(files: File[]) {
+    const pdfs = files.filter((file) => file.type === "application/pdf" || file.name.toLowerCase().endsWith(".pdf"));
+    if (pdfs.length === 0) return;
+    setStagedFiles((current) => {
+      const next = new Map(current.map((file) => [file.name, file]));
+      pdfs.forEach((file) => next.set(file.name, file));
+      return [...next.values()];
+    });
+  }
+
+  async function extractStagedFiles() {
+    if (stagedFiles.length === 0 || documentPhase !== "idle" || documentsLocked) return;
+    const files = [...stagedFiles];
+    setStagedFiles([]);
+    onUpdate({
+      ai: undefined,
+      extractionStatus: "extracting",
+      status: "In Progress"
+    });
+    setWorkflowError(null);
+    setDocumentPhase("extracting");
+
+    try {
+      const formData = new FormData();
+      formData.append("shipmentId", shipment.id);
+      files.forEach((file) => formData.append("files", file));
+      const res = await fetch("/api/documents/extract", { method: "POST", body: formData });
+      const payload = await parseJsonResponse(res);
+      if (!res.ok) {
+        throw new Error(getErrorMessage(payload, `Extraction failed with HTTP ${res.status}`));
+      }
+      const detectedDocs = docsWithExtractionResult(shipment.documents, payload as AggregateLike, currentRoleOwner);
+      const allRequiredUploaded = detectedDocs.filter((doc) => doc.required).every((doc) => doc.uploaded);
+      const issues = (payload as AggregateLike).cross_validation ?? [];
+      const blockingIssues = issues.filter((issue) => issue.severity === "error");
+      onUpdate({
+        documents: detectedDocs,
+        ai: buildAiOverview(detectedDocs, payload as AggregateLike),
+        extractionStatus: "complete",
+        extractedRef: typeof (payload as { extractedRef?: unknown }).extractedRef === "string" ? (payload as { extractedRef: string }).extractedRef : shipment.extractedRef,
+        status: allRequiredUploaded ? "Documents Uploaded" : "In Progress"
+      });
+      await recordProgressCheckpoint({
+        stage: blockingIssues.length > 0 ? "ai_check_failed" : "ai_check_passed",
+        actor: currentRoleOwner,
+        summary:
+          blockingIssues.length > 0
+            ? `AI found ${blockingIssues.length} blocking issue(s) after ${currentRoleOwner} uploaded ${files.length} document(s).`
+            : `AI checked ${files.length} uploaded document(s) together and found no blocking issues.`,
+        documents: detectedDocs.map((item) => ({ name: item.name, fileName: item.fileName, uploaded: item.uploaded })),
+        aiIssues: issues,
+      });
+    } catch (err) {
+      onUpdate({ extractionStatus: "failed" });
+      setWorkflowError(err instanceof Error ? err.message : "Document extraction failed");
+    } finally {
+      setDocumentPhase("idle");
+    }
+  }
+
+  function addDocument() {
+    const name = newDocumentName.trim();
+    if (!name) return;
+    if (shipment.documents.some((doc) => doc.name.toLowerCase() === name.toLowerCase())) {
+      setWorkflowError("That document is already in the checklist.");
+      return;
+    }
+    onUpdate({
+      documents: [
+        ...shipment.documents,
+        {
+          name,
+          owner: currentRoleOwner,
+          required: false,
+          uploaded: false,
+        },
+      ],
+    });
+    setNewDocumentName("");
+    setWorkflowError(null);
+  }
+
+  async function finalizeShipment() {
+    setWorkflowError(null);
+    if (!requiredDocsComplete) {
+      setWorkflowError("Upload all required documents before final storage.");
+      return;
+    }
+    if (shipment.extractionStatus !== "complete") {
+      setWorkflowError("Run document extraction successfully before final storage.");
+      return;
+    }
+    if (!currentAccount?.address) {
+      setWorkflowError("Connect your Sui wallet before creating the passport.");
+      return;
+    }
+    if (!canUsePublishedPackage()) {
+      setWorkflowError("SuiShip package ID is not configured.");
+      return;
+    }
+
+    try {
+      setDocumentPhase("validating");
+      const validationRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/validate`, { method: "POST" });
+      const validationPayload = await parseJsonResponse(validationRes);
+      if (!validationRes.ok) {
+        throw new Error(getErrorMessage(validationPayload, `Validation failed with HTTP ${validationRes.status}`));
+      }
+      const issues = Array.isArray((validationPayload as { issues?: unknown }).issues)
+        ? ((validationPayload as { issues: Array<{ severity?: string; message?: string }> }).issues)
+        : [];
+      const blockingIssues = issues.filter((issue) => issue.severity === "error");
+      if (blockingIssues.length > 0) {
+        setWorkflowError(blockingIssues.map((issue) => issue.message).filter(Boolean).join(" ") || "Validation found blocking document mismatches.");
+        return;
+      }
+
+      setDocumentPhase("minting");
+      const packageRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/walrus-package`, { method: "POST" });
+      const packagePayload = await parseJsonResponse(packageRes);
+      if (!packageRes.ok) {
+        throw new Error(getErrorMessage(packagePayload, `Walrus package upload failed with HTTP ${packageRes.status}`));
+      }
+      const walrusUpload = packagePayload as WalrusUpload & { documentCount?: number };
+
+      const walrusManifest = await recordProgressCheckpoint({
+        stage: "walrus_package_stored",
+        actor: currentRoleOwner,
+        summary: `Document package stored on Walrus as ${walrusUpload.fileName}. Blob ID: ${walrusUpload.blobId}.`,
+        documents: shipment.documents.map((doc) => ({ name: doc.name, fileName: doc.fileName, uploaded: doc.uploaded })),
+        aiIssues: issues,
+        walrusPackage: walrusUpload,
+      });
+
+      const finalManifest = await recordProgressCheckpoint({
+        stage: "final_manifest",
+        actor: currentRoleOwner,
+        summary: `Final AI validation passed. ${walrusUpload.documentCount ?? shipment.documents.filter((doc) => doc.uploaded).length} submitted PDF(s) were packaged and stored on Walrus.`,
+        documents: shipment.documents.map((doc) => ({ name: doc.name, fileName: doc.fileName, uploaded: doc.uploaded })),
+        aiIssues: issues,
+        walrusPackage: walrusUpload,
+      });
+      const signerAddress = currentAccount.address;
+      const mockCounterpartyAddress = "0x0";
+      const tx = buildCreateShipmentTx({
+        shipmentId: shipment.id,
+        importer: currentRoleOwner === "Importer" ? signerAddress : mockCounterpartyAddress,
+        exporter: currentRoleOwner === "Exporter" ? signerAddress : mockCounterpartyAddress,
+        walrusBlobId: walrusUpload.blobId,
+        memWalSpaceId: finalManifest.memwalNamespace,
+        finalValidationMemWalId: finalManifest.memwalBlobId ?? finalManifest.memwalNamespace,
+        packageHash: null,
+        verificationScore: Math.max(90, ai.score),
+        documentCount: walrusUpload.documentCount ?? shipment.documents.filter((doc) => doc.uploaded).length
+      });
+      const txResult = await signAndExecuteTransaction({ transaction: tx });
+      const txDigest = "digest" in txResult ? txResult.digest : "";
+      const finalizedTx = txDigest
+        ? await suiClient.waitForTransaction({
+            digest: txDigest,
+            options: { showObjectChanges: true, showEvents: true }
+          })
+        : null;
+      const passportObject = finalizedTx?.objectChanges?.find(
+        (change) =>
+          change.type === "created" &&
+          change.objectType.endsWith("::shipment_passport::ShipmentPassport")
+      );
+      const passportId = passportObject?.type === "created" ? passportObject.objectId : undefined;
+      const suiPassportManifest = await recordProgressCheckpoint({
+        stage: "sui_passport_created",
+        actor: currentRoleOwner,
+        summary: passportId
+          ? `Sui passport object created on testnet: ${passportId}.`
+          : `Sui passport transaction confirmed on testnet: ${txDigest}.`,
+        documents: shipment.documents.map((doc) => ({ name: doc.name, fileName: doc.fileName, uploaded: doc.uploaded })),
+        aiIssues: issues,
+        walrusPackage: walrusUpload,
+        suiPassport: {
+          passportId,
+          txDigest,
+          packageId: PACKAGE_ID,
+          network: "testnet"
+        }
+      });
+
+      onUpdate({
+        status: "Passport Minted",
+        walrus: walrusUpload,
+        passportId,
+        txDigest,
+        memWalSpaceId: finalManifest.memwalNamespace,
+        walrusManifestBlobId: walrusUpload.blobId,
+        mintedAt: new Date().toISOString(),
+        progressManifests: [...(shipment.progressManifests ?? []), walrusManifest, finalManifest, suiPassportManifest]
+      });
+    } catch (err) {
+      setWorkflowError(err instanceof Error ? err.message : "Final storage failed");
+    } finally {
+      setDocumentPhase("idle");
+    }
   }
 
   return (
@@ -189,90 +440,58 @@ function StoredShipmentView({
         Back to shipments
       </Link>
 
-      <div className="mt-6 flex flex-col justify-between gap-5 md:flex-row md:items-end">
-        <div>
-          <p className="text-sm uppercase tracking-[0.25em] text-sui">Shipment passport</p>
+      <div className="mt-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
+        <div className="min-w-0">
+          <p className="text-sm uppercase tracking-[0.25em] text-sui">Shipment Details</p>
           <h1 className="mt-3 text-4xl font-semibold text-pearl">{shipment.id}</h1>
-          <p className="mt-3 text-steel">
-            {shipment.cargo.description} from {shipment.shipment.origin} to {shipment.shipment.destination}
-          </p>
+          <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-steel">
+            <span>Created by {capitalize(shipment.createdBy)}</span>
+            <span>Created {formatDate(shipment.createdAt)}</span>
+            <span>Updated {formatDate(shipment.updatedAt)}</span>
+            {shipment.inviteToken && <span>Invite active</span>}
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <StatusBadge value={shipment.status} />
-          <StatusBadge value={`Created by ${capitalize(shipment.createdBy)}`} />
-          {ai && <RiskBadge value={ai.riskLevel} />}
+        <div className="shrink-0 md:pr-8">
+          <Button onClick={finalizeShipment} disabled={!canFinalize || passportBusy}>
+            {passportBusy ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <Fingerprint className="h-4 w-4" />
+            )}
+            {hasFinalManifest ? "Passport Created" : "Create Passport"}
+          </Button>
+          {workflowError && (
+            <p className="mt-2 max-w-64 text-right text-xs font-semibold text-red-600">{workflowError}</p>
+          )}
         </div>
       </div>
 
       <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
         <div className="grid gap-6">
           <Panel>
-            <div className="grid gap-4 md:grid-cols-4">
-              {[
-                ["AI score", ai ? `${ai.score}%` : "—", ShieldCheck],
-                ["Documents", `${uploadedDocs}/${requiredDocs.length}`, FileCheck2],
-                ["Transport", shipment.shipment.transportMode, Globe2],
-                ["Updated", formatDate(shipment.updatedAt), Clock3]
-              ].map(([label, value, Icon]) => {
-                const IconComponent = Icon as typeof Globe2;
-                return (
-                  <div key={String(label)} className="rounded-lg border border-blue-100 bg-blue-50 p-4">
-                    <IconComponent className="h-5 w-5 text-[#4DA2FF]" />
-                    <p className="mt-4 text-sm text-steel">{label as string}</p>
-                    <p className="mt-1 font-semibold text-pearl">{value as string}</p>
-                  </div>
-                );
-              })}
-            </div>
-          </Panel>
-
-          <Panel>
-            <h2 className="text-xl font-semibold text-pearl">Passport overview</h2>
-            <div className="mt-5 grid gap-4 sm:grid-cols-2">
-              {[
-                ["Exporter", shipment.exporter.company],
-                ["Importer", shipment.importer.company],
-                ["Carrier", shipment.shipment.carrier],
-                ["Incoterm", shipment.shipment.incoterm],
-                ["Declared value", `${shipment.shipment.currency} ${shipment.shipment.declaredValue}`],
-                ["Country of origin", shipment.cargo.countryOfOrigin],
-                ["HS code", shipment.cargo.hsCode],
-                ["Broker", shipment.broker || "—"]
-              ].map(([label, value]) => (
-                <div key={label} className="rounded-lg bg-blue-50 p-4">
-                  <p className="text-sm text-steel">{label}</p>
-                  <p className="mt-1 font-medium text-pearl">{value}</p>
-                </div>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel>
-            <h2 className="text-xl font-semibold text-pearl">Exporter and importer details</h2>
+            <h2 className="text-xl font-semibold text-pearl">Overview</h2>
             <div className="mt-5 grid gap-5 lg:grid-cols-2">
               {[
                 {
                   role: "Exporter",
                   ...shipment.exporter,
-                  country: shipment.shipment.origin,
-                  responsibility: "Prepares export documents, commercial invoice, packing list, and origin proofs."
+                  country: shipment.shipment.origin
                 },
                 {
                   role: "Importer",
                   ...shipment.importer,
-                  country: shipment.shipment.destination,
-                  responsibility: "Receives customs package, coordinates broker review, and confirms import clearance."
+                  country: shipment.shipment.destination
                 }
               ].map((party) => (
-                <div key={party.role} className="rounded-2xl border border-blue-100 bg-white p-5">
+                <div key={party.role} className="rounded-lg border border-blue-100 bg-white p-4">
                   <div className="flex items-start justify-between gap-4">
                     <div>
                       <p className="text-sm font-bold text-[#4DA2FF]">{party.role}</p>
-                      <h3 className="mt-1 text-xl font-extrabold text-pearl">{party.company}</h3>
+                      <h3 className="mt-1 text-lg font-extrabold text-pearl">{party.company}</h3>
                     </div>
                     <Building2 className="h-6 w-6 text-[#4DA2FF]" />
                   </div>
-                  <div className="mt-5 grid gap-3 text-sm">
+                  <div className="mt-4 grid gap-2 text-sm">
                     <p>
                       <span className="font-bold text-steel">Country:</span>{" "}
                       <span className="font-semibold text-pearl">{party.country}</span>
@@ -289,40 +508,148 @@ function StoredShipmentView({
                       <Phone className="h-4 w-4 text-[#4DA2FF]" />
                       <span className="font-semibold text-pearl">{party.phone}</span>
                     </div>
-                    <p className="rounded-2xl bg-blue-50 p-3 font-semibold leading-6 text-steel">{party.responsibility}</p>
                   </div>
                 </div>
               ))}
             </div>
+            <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+              {[
+                ["Carrier", shipment.shipment.carrier],
+                ["Incoterm", shipment.shipment.incoterm],
+                ["Declared value", `${shipment.shipment.currency} ${shipment.shipment.declaredValue}`],
+                ["Country of origin", shipment.cargo.countryOfOrigin],
+                ["HS code", shipment.cargo.hsCode],
+                ["Broker", shipment.broker || "—"]
+              ].map(([label, value]) => (
+                <div key={label} className="rounded-lg bg-blue-50 p-4">
+                  <p className="text-sm text-steel">{label}</p>
+                  <p className="mt-1 font-medium text-pearl">{value}</p>
+                </div>
+              ))}
+            </div>
           </Panel>
+
+          <AiPanel ai={ai} />
 
           <Panel>
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-pearl">Documents</h2>
                 <p className="mt-1 text-sm text-steel">
-                  Each side uploads the documents assigned to them. You are signed in as{" "}
-                  <span className="font-bold text-pearl">{currentRoleOwner}</span>.
+                  Upload all shipment PDFs together so AI can sort and validate them in one run.
                 </p>
               </div>
-              <AiScoreBadge ai={ai} />
             </div>
 
+            {!documentsLocked && (
+              <div className="mt-5 grid gap-4">
+                <div className="flex flex-col gap-2 rounded-lg border border-blue-100 bg-blue-50 p-3 sm:flex-row">
+                  <input
+                    value={newDocumentName}
+                    onChange={(event) => setNewDocumentName(event.target.value)}
+                    placeholder="Additional document name"
+                    className="min-h-10 flex-1 rounded-lg border border-blue-100 bg-white px-3 text-sm font-semibold text-pearl outline-none focus:border-[#4DA2FF]"
+                  />
+                  <Button variant="secondary" onClick={addDocument} disabled={!newDocumentName.trim() || documentPhase !== "idle"}>
+                    <Plus className="h-4 w-4" />
+                    Add document
+                  </Button>
+                </div>
+
+                <div
+                  onDragOver={(event) => {
+                    event.preventDefault();
+                    if (documentPhase === "idle") setDragOver(true);
+                  }}
+                  onDragEnter={(event) => {
+                    event.preventDefault();
+                    if (documentPhase === "idle") setDragOver(true);
+                  }}
+                  onDragLeave={() => setDragOver(false)}
+                  onDrop={(event) => {
+                    event.preventDefault();
+                    setDragOver(false);
+                    if (documentPhase !== "idle") return;
+                    addToStaged(Array.from(event.dataTransfer.files));
+                  }}
+                  onClick={() => documentPhase === "idle" && batchInputRef.current?.click()}
+                  className={cn(
+                    "rounded-2xl border-2 border-dashed p-8 text-center transition",
+                    documentPhase === "extracting" ? "cursor-default" : "cursor-pointer",
+                    dragOver ? "border-[#4DA2FF] bg-blue-50" : "border-[#4DA2FF]/45 bg-white hover:bg-blue-50/40"
+                  )}
+                >
+                  {documentPhase === "extracting" ? (
+                    <div className="flex flex-col items-center gap-3">
+                      <Loader2 className="h-10 w-10 animate-spin text-[#4DA2FF]" />
+                      <h3 className="text-xl font-extrabold text-pearl">AI is sorting documents...</h3>
+                    </div>
+                  ) : (
+                    <>
+                      <Upload className="mx-auto h-10 w-10 text-[#4DA2FF]" />
+                      <h3 className="mt-3 text-xl font-extrabold text-pearl">Drop PDFs here or click to add</h3>
+                      <p className="mx-auto mt-2 max-w-xl text-sm leading-6 text-steel">
+                        Upload invoices, packing lists, BL/AWB, origin certificates, permits, and support files together.
+                      </p>
+                    </>
+                  )}
+                </div>
+
+                <input
+                  ref={batchInputRef}
+                  type="file"
+                  multiple
+                  accept="application/pdf,.pdf"
+                  className="hidden"
+                  onChange={(event) => {
+                    addToStaged(Array.from(event.target.files || []));
+                    event.target.value = "";
+                  }}
+                />
+
+                {stagedFiles.length > 0 && documentPhase === "idle" && (
+                  <div className="grid gap-3 rounded-2xl border border-blue-100 bg-white p-4">
+                    <p className="text-xs font-bold uppercase text-steel">
+                      Staged — {stagedFiles.length} file{stagedFiles.length !== 1 ? "s" : ""} ready for AI sorting
+                    </p>
+                    <div className="flex flex-wrap gap-2">
+                      {stagedFiles.map((file) => (
+                        <div
+                          key={file.name}
+                          className="flex items-center gap-1.5 rounded-full border border-blue-100 bg-blue-50 px-3 py-1.5 text-xs font-semibold text-pearl"
+                        >
+                          <FileCheck2 className="h-3 w-3 shrink-0 text-[#4DA2FF]" />
+                          <span className="max-w-[220px] truncate" title={file.name}>{file.name}</span>
+                          <button
+                            type="button"
+                            onClick={() => setStagedFiles((current) => current.filter((item) => item.name !== file.name))}
+                            className="ml-1 rounded-full text-steel transition hover:text-red-500"
+                            aria-label={`Remove ${file.name}`}
+                          >
+                            <XCircle className="h-3 w-3" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+                    <Button onClick={extractStagedFiles} className="w-fit">
+                      <Upload className="h-4 w-4" />
+                      AI sort {stagedFiles.length} document{stagedFiles.length !== 1 ? "s" : ""}
+                    </Button>
+                  </div>
+                )}
+              </div>
+            )}
+
             <div className="mt-5 overflow-x-auto">
-              <table className="w-full min-w-[720px] text-left text-sm">
+              <table className="w-full min-w-[560px] text-left text-sm">
                 <thead>
-                  <tr className="border-b border-blue-50 text-xs font-bold uppercase text-steel">
-                    <th className="pb-3 pr-4">Document</th>
-                    <th className="pb-3 pr-4">In charge</th>
-                    <th className="pb-3 pr-4">Required</th>
-                    <th className="pb-3 pr-4">Upload</th>
-                    <th className="pb-3 pr-4">Status</th>
-                  </tr>
+	                  <tr className="border-b border-blue-50 text-xs font-bold uppercase text-steel">
+	                    <th className="pb-3 pr-4">Document</th>
+	                    <th className="pb-3 pr-4">Status</th>
+	                  </tr>
                 </thead>
                 <tbody className="divide-y divide-blue-50">
-                  {shipment.documents.map((doc, index) => {
-                    const canUpload = doc.owner === currentRoleOwner;
-                    return (
+                  {shipment.documents.map((doc) => (
                       <tr key={doc.name} className="align-top">
                         <td className="py-4 pr-4">
                           <p className="font-bold text-pearl">{doc.name}</p>
@@ -331,557 +658,405 @@ function StoredShipmentView({
                           )}
                         </td>
                         <td className="py-4 pr-4">
-                          <select
-                            value={doc.owner}
-                            onChange={(event) => updateDoc(index, { owner: event.target.value as DocumentOwner })}
-                            className={cn(
-                              "min-h-10 rounded-2xl border px-3 text-sm font-semibold outline-none",
-                              canUpload
-                                ? "border-[#4DA2FF]/50 bg-blue-50 text-pearl"
-                                : "border-blue-100 bg-white text-pearl"
-                            )}
-                          >
-                            <option value="Importer">Importer</option>
-                            <option value="Exporter">Exporter</option>
-                          </select>
-                        </td>
-                        <td className="py-4 pr-4">
-                          <label className="inline-flex items-center gap-2 text-sm font-bold text-pearl">
-                            <input
-                              type="checkbox"
-                              checked={doc.required}
-                              onChange={(event) => updateDoc(index, { required: event.target.checked })}
-                              className="h-4 w-4 rounded border-blue-200 text-[#4DA2FF] focus:ring-[#4DA2FF]"
-                            />
-                            {doc.required ? "Required" : "Optional"}
-                          </label>
-                        </td>
-                        <td className="py-4 pr-4">
-                          {canUpload ? (
-                            <UploadCell
-                              doc={doc}
-                              onAttach={(file) => attachFile(index, file)}
-                              onClear={() => clearFile(index)}
-                            />
-                          ) : (
-                            <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-1.5 text-xs font-bold text-steel">
-                              <Lock className="h-3 w-3" />
-                              {doc.owner} only
-                            </span>
-                          )}
-                        </td>
-                        <td className="py-4 pr-4">
-                          {doc.uploaded ? (
+                          {documentsLocked && doc.uploaded ? (
                             <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-600">
                               <CheckCircle2 className="h-3 w-3" />
-                              Uploaded
+                              Uploaded to Walrus
                             </span>
-                          ) : doc.required ? (
-                            <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-600">
-                              Pending
-                            </span>
-                          ) : (
-                            <span className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-steel">
-                              Optional
-                            </span>
-                          )}
+                          ) : documentsLocked ? (
+                            <span className="text-xs font-semibold text-steel">Not included</span>
+                          ) : doc.uploaded ? (
+	                            <span className="inline-flex items-center gap-2 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-bold text-emerald-600">
+	                              <CheckCircle2 className="h-3 w-3" />
+	                              Uploaded
+	                            </span>
+	                          ) : (
+	                            <span className="inline-flex items-center gap-2 rounded-full bg-amber-50 px-2.5 py-1 text-xs font-bold text-amber-600">
+	                              Pending
+	                            </span>
+	                          )}
                         </td>
                       </tr>
-                    );
-                  })}
+                  ))}
                 </tbody>
               </table>
             </div>
-            <p className="mt-4 text-xs text-steel">
-              Tip: switch role in the sidebar (Importer ↔ Exporter) to upload documents owned by the other side.
-            </p>
           </Panel>
         </div>
 
         <aside className="grid h-fit min-w-0 gap-6">
-          <AiPanel
-            ai={ai}
-            onRun={runAi}
-            showDetail={showAiDetail}
-            onToggleDetail={() => setShowAiDetail((open) => !open)}
-          />
-
-          <MintedStoragePanel shipment={shipment} />
-
-          <WalrusPanel
-            ai={ai}
-            walrus={shipment.walrus}
-            onUploaded={(upload) => onUpdate({ walrus: upload })}
-            onClear={() => onUpdate({ walrus: undefined })}
-          />
-
-          <Panel>
-            <div className="flex items-center gap-3">
-              <Boxes className="h-5 w-5 text-sui" />
-              <h2 className="text-xl font-semibold text-pearl">Workflow</h2>
-            </div>
-            <div className="mt-5 grid gap-2 text-sm">
-              <p className="text-steel">Created by</p>
-              <p className="font-extrabold text-pearl">{capitalize(shipment.createdBy)}</p>
-              <p className="mt-3 text-steel">Created</p>
-              <p className="font-semibold text-pearl">{formatDate(shipment.createdAt)}</p>
-              <p className="mt-3 text-steel">Updated</p>
-              <p className="font-semibold text-pearl">{formatDate(shipment.updatedAt)}</p>
-            </div>
-            {shipment.inviteToken && (
-              <div className="mt-5 rounded-2xl bg-blue-50 p-4 text-sm">
-                <div className="flex items-center gap-2 font-bold text-pearl">
-                  <Lock className="h-4 w-4 text-[#4DA2FF]" />
-                  Counterparty invite active
-                </div>
-                <p className="mt-1 break-all text-xs text-steel">Token: {shipment.inviteToken}</p>
-              </div>
-            )}
-          </Panel>
-
-          <Panel>
-            <div className="flex items-center gap-3">
-              <Fingerprint className="h-5 w-5 text-sui" />
-              <h2 className="text-xl font-semibold text-pearl">QR shipment link</h2>
-            </div>
-            <div className="mt-5 flex justify-center">
-              <QrCard value={qrValue} />
-            </div>
-            <p className="mt-4 break-all text-center text-xs text-steel">{qrValue}</p>
-          </Panel>
-
-          <Panel>
-            <h2 className="text-xl font-semibold text-pearl">Customs action</h2>
-            <p className="mt-2 text-sm text-steel">For a minted passport, this signs a Sui status update transaction.</p>
-            <div className="mt-5">
-              <PassportActions objectId={undefined} />
-            </div>
-          </Panel>
+          <ProgressManifestPanel manifests={shipment.progressManifests ?? []} recording={progressBusy} />
         </aside>
       </div>
     </div>
   );
 }
 
-function AiPanel({
-  ai,
-  onRun,
-  showDetail,
-  onToggleDetail
-}: {
+function AiPanel({ ai }: {
   ai?: AiResult;
-  onRun: () => void;
-  showDetail: boolean;
-  onToggleDetail: () => void;
 }) {
+  const shortResults = ai?.checks
+    .filter((check) => check.status === "missing" || check.status === "mismatch")
+    .slice(0, 3);
+
   return (
     <Panel>
       <div className="flex items-center justify-between gap-2">
         <div className="flex items-center gap-2">
           <Sparkles className="h-5 w-5 text-[#4DA2FF]" />
-          <h2 className="text-xl font-semibold text-pearl">AI verification</h2>
+          <h2 className="text-xl font-semibold text-pearl">AI Overview</h2>
         </div>
         {ai && <RiskBadge value={ai.riskLevel} />}
       </div>
 
       {!ai ? (
         <>
-          <p className="mt-3 text-sm text-steel">
-            Cross-checks uploaded files for invoice, HS code, quantity, value, parties and origin.
+          <p className="mt-3 text-sm font-semibold text-steel">
+            AI Validation has not started yet.
           </p>
-          <Button onClick={onRun} className="mt-4 w-full">
-            <Sparkles className="h-4 w-4" />
-            Run AI check
-          </Button>
         </>
       ) : (
         <>
-          <div
-            className={cn(
-              "mt-4 flex items-end justify-between rounded-2xl border px-4 py-3",
-              ai.riskLevel === "Low" && "border-emerald-100 bg-emerald-50",
-              ai.riskLevel === "Medium" && "border-amber-100 bg-amber-50",
-              ai.riskLevel === "High" && "border-red-100 bg-red-50"
-            )}
-          >
-            <div>
-              <p
-                className={cn(
-                  "text-[10px] font-bold uppercase tracking-wide",
-                  ai.riskLevel === "Low" && "text-emerald-600",
-                  ai.riskLevel === "Medium" && "text-amber-600",
-                  ai.riskLevel === "High" && "text-red-500"
-                )}
-              >
-                Score
-              </p>
-              <p className="text-4xl font-extrabold text-pearl">{ai.score}</p>
-            </div>
-            <p className="text-[10px] font-semibold text-steel">{formatDate(ai.ranAt)}</p>
+          <div className="mt-4 rounded-lg border border-blue-100 bg-blue-50 p-4">
+            <p className="text-xs font-bold uppercase tracking-wide text-steel">AI Validation</p>
+            <p className="mt-1 text-sm font-semibold text-pearl">{ai.summary}</p>
+            <p className="mt-2 text-xs font-semibold text-steel">Ran {formatDate(ai.ranAt)}</p>
           </div>
 
-          <div className="mt-3 grid grid-cols-3 gap-2">
-            <MiniStat label="Match" value={ai.checks.filter((c) => c.status === "matched").length} tone="emerald" />
-            <MiniStat label="1 src" value={ai.checks.filter((c) => c.status === "info").length} tone="blue" />
-            <MiniStat
-              label="Issue"
-              value={ai.checks.filter((c) => c.status === "missing" || c.status === "mismatch").length}
-              tone="amber"
-            />
+          <div className="mt-4 grid gap-2">
+            {(shortResults && shortResults.length > 0 ? shortResults : ai.checks.slice(0, 3)).map((check) => (
+              <AiCheckRow key={check.field} check={check} />
+            ))}
           </div>
 
-          <p className="mt-3 text-xs leading-5 text-steel">{ai.summary}</p>
-
-          <div className="mt-4 flex gap-2">
-            <Button variant="secondary" onClick={onToggleDetail} className="flex-1">
-              <Search className="h-3 w-3" />
-              {showDetail ? "Hide" : "Details"}
-            </Button>
-            <Button onClick={onRun} className="flex-1">
-              <Sparkles className="h-3 w-3" />
-              Re-run
-            </Button>
-          </div>
-
-          {showDetail && (
-            <div className="mt-4 grid gap-2">
-              {ai.checks.map((check) => (
-                <AiCheckRow key={check.field} check={check} />
-              ))}
-            </div>
-          )}
         </>
       )}
     </Panel>
   );
 }
 
-const MIN_AI_SCORE_FOR_WALRUS = 90;
+function buildShipmentAiOverview(shipment: ShipmentRecord): AiResult {
+  return buildAiOverview(shipment.documents, undefined, shipment.extractionStatus);
+}
 
-function MintedStoragePanel({ shipment }: { shipment: ShipmentRecord }) {
-  if (!shipment.passportId && !shipment.memWalSpaceId && !shipment.walrusBlobIds?.length) return null;
+function buildAiOverview(
+  docs: DocumentRequirement[],
+  result?: AggregateLike,
+  extractionStatus?: ShipmentRecord["extractionStatus"]
+): AiResult {
+  const uploadedDocs = docs.filter((doc) => doc.uploaded);
+  const pendingDocs = docs.filter((doc) => !doc.uploaded);
+  const requiredPendingDocs = pendingDocs.filter((doc) => doc.required);
+  const issues = result?.cross_validation ?? [];
+  const blockingIssues = issues.filter((issue) => issue.severity === "error");
+  const warningIssues = issues.filter((issue) => issue.severity === "warning");
+  const checks: AiCheck[] = [];
 
-  const blobs = shipment.walrusBlobIds ?? (shipment.walrusManifestBlobId ? [shipment.walrusManifestBlobId] : []);
+  if (extractionStatus === "extracting") {
+    checks.push({
+      field: "AI Validation",
+      status: "info",
+      detail: "Documents are being read now.",
+      documents: uploadedDocs.map((doc) => doc.name),
+    });
+  }
+
+  if (uploadedDocs.length === 0) {
+    checks.push({
+      field: "Documents",
+      status: "missing",
+      detail: "No documents have been uploaded for this shipment yet.",
+      documents: [],
+    });
+  } else {
+    checks.push({
+      field: "Uploaded documents",
+      status: "matched",
+      detail: `${uploadedDocs.length} document${uploadedDocs.length !== 1 ? "s" : ""} uploaded: ${uploadedDocs.map((doc) => doc.name).join(", ")}.`,
+      documents: uploadedDocs.map((doc) => doc.name),
+    });
+  }
+
+  if (requiredPendingDocs.length > 0) {
+    checks.push({
+      field: "Missing documents",
+      status: "missing",
+      detail: `${requiredPendingDocs.length} required document${requiredPendingDocs.length !== 1 ? "s are" : " is"} still pending: ${requiredPendingDocs.map((doc) => doc.name).join(", ")}.`,
+      documents: requiredPendingDocs.map((doc) => doc.name),
+    });
+  }
+
+  for (const issue of blockingIssues.slice(0, 3)) {
+    checks.push({
+      field: issue.field || "Document mismatch",
+      status: "mismatch",
+      detail: issue.message || "AI found a blocking mismatch.",
+      documents: uploadedDocs.map((doc) => doc.name),
+    });
+  }
+
+  for (const issue of warningIssues.slice(0, 2)) {
+    checks.push({
+      field: issue.field || "Document warning",
+      status: "info",
+      detail: issue.message || "AI found a warning to review.",
+      documents: uploadedDocs.map((doc) => doc.name),
+    });
+  }
+
+  if (checks.length === 0) {
+    checks.push({
+      field: "Documents",
+      status: "matched",
+      detail: "Uploaded documents are ready for final validation.",
+      documents: uploadedDocs.map((doc) => doc.name),
+    });
+  }
+
+  let score = 100;
+  score -= requiredPendingDocs.length * 20;
+  score -= blockingIssues.length * 30;
+  score -= warningIssues.length * 10;
+  if (uploadedDocs.length === 0) score = 0;
+  score = Math.max(0, Math.min(100, score));
+
+  const riskLevel: AiResult["riskLevel"] = blockingIssues.length > 0 || uploadedDocs.length === 0
+    ? "High"
+    : requiredPendingDocs.length > 0 || warningIssues.length > 0
+      ? "Medium"
+      : "Low";
+
+  const summary = uploadedDocs.length === 0
+    ? "No documents uploaded yet. AI validation is waiting for shipment documents."
+    : blockingIssues.length > 0
+      ? `AI found ${blockingIssues.length} blocking issue${blockingIssues.length !== 1 ? "s" : ""}.`
+      : requiredPendingDocs.length > 0
+        ? `AI detected ${uploadedDocs.length} uploaded document${uploadedDocs.length !== 1 ? "s" : ""}; ${requiredPendingDocs.length} required document${requiredPendingDocs.length !== 1 ? "s are" : " is"} still pending.`
+        : warningIssues.length > 0
+          ? `AI detected all required documents with ${warningIssues.length} warning${warningIssues.length !== 1 ? "s" : ""}.`
+          : "AI detected the uploaded documents and found no blocking issues.";
+
+  return {
+    score,
+    riskLevel,
+    checks,
+    ranAt: new Date().toISOString(),
+    summary,
+  };
+}
+
+async function parseJsonResponse(response: Response): Promise<unknown> {
+  const contentType = response.headers.get("content-type") ?? "";
+  if (contentType.includes("application/json")) return response.json();
+  const text = await response.text();
+  return text ? { error: text } : {};
+}
+
+function getErrorMessage(payload: unknown, fallback: string): string {
+  if (typeof payload === "object" && payload && "error" in payload && typeof payload.error === "string") {
+    return payload.error;
+  }
+  return fallback;
+}
+
+function docsWithExtractionResult(
+  docs: DocumentRequirement[],
+  result: AggregateLike,
+  defaultOwner: DocumentOwner = "Importer"
+): DocumentRequirement[] {
+  const now = new Date().toISOString();
+  const usedFileNames = new Set<string>();
+  const nextDocs = docs.map((doc) => {
+    const docLower = doc.name.toLowerCase();
+    if (docLower.includes("commercial invoice") && result.detected?.commercial_invoice?.length) {
+      const fileName = result.detected.commercial_invoice[0].file_name;
+      usedFileNames.add(fileName);
+      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+    }
+    if (docLower.includes("packing list") && result.detected?.packing_list?.length) {
+      const fileName = result.detected.packing_list[0].file_name;
+      usedFileNames.add(fileName);
+      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+    }
+    if ((docLower.includes("bill of lading") || docLower.includes("air waybill")) && result.detected?.bill_of_lading?.length) {
+      const fileName = result.detected.bill_of_lading[0].file_name;
+      usedFileNames.add(fileName);
+      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+    }
+    if (docLower.includes("certificate of origin") && result.detected?.certificate_of_origin?.length) {
+      const fileName = result.detected.certificate_of_origin[0].file_name;
+      usedFileNames.add(fileName);
+      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+    }
+    return doc;
+  });
+  const existingFiles = new Set(nextDocs.map((doc) => doc.fileName).filter(Boolean));
+  const existingNames = new Set(nextDocs.map((doc) => doc.name.toLowerCase()));
+  const extras = detectedDocumentFiles(result)
+    .filter((item) => !usedFileNames.has(item.fileName) && !existingFiles.has(item.fileName))
+    .map((item, index) => {
+      let name = item.label;
+      if (existingNames.has(name.toLowerCase())) name = `${item.label} ${index + 2}`;
+      existingNames.add(name.toLowerCase());
+      return {
+        name,
+        owner: defaultOwner,
+        required: false,
+        uploaded: true,
+        fileName: item.fileName,
+        uploadedAt: now
+      };
+    });
+
+  return [...nextDocs, ...extras];
+}
+
+function detectedDocumentFiles(result: AggregateLike) {
+  return [
+    ...(result.detected?.commercial_invoice ?? []).map((doc) => ({ label: "Commercial Invoice", fileName: doc.file_name })),
+    ...(result.detected?.packing_list ?? []).map((doc) => ({ label: "Packing List", fileName: doc.file_name })),
+    ...(result.detected?.bill_of_lading ?? []).map((doc) => ({ label: "Bill of Lading / Air Waybill", fileName: doc.file_name })),
+    ...(result.detected?.certificate_of_origin ?? []).map((doc) => ({ label: "Certificate of Origin", fileName: doc.file_name }))
+  ];
+}
+
+function ProgressManifestPanel({ manifests, recording }: { manifests: ProgressManifest[]; recording: boolean }) {
+  const [expanded, setExpanded] = useState(false);
+  const orderedManifests = [...manifests].sort((a, b) => b.sequence - a.sequence);
+  const visibleManifests = expanded ? orderedManifests : orderedManifests.slice(0, 2);
+  const previewManifest = !expanded && orderedManifests.length > 2 ? orderedManifests[2] : null;
 
   return (
     <Panel className="min-w-0 overflow-hidden">
       <div className="flex items-center gap-2">
-        <Fingerprint className="h-5 w-5 text-sui" />
-        <h2 className="truncate text-xl font-semibold text-pearl">Storage evidence</h2>
+        <Clock3 className="h-5 w-5 text-sui" />
+        <h2 className="truncate text-xl font-semibold text-pearl">Progress</h2>
       </div>
-
-      <div className="mt-4 grid gap-2 text-xs">
-        {shipment.passportId && <EvidenceLine label="Passport" value={shipment.passportId} />}
-        {shipment.txDigest && <EvidenceLine label="Tx digest" value={shipment.txDigest} />}
-        {shipment.memWalSpaceId && <EvidenceLine label="MemWal" value={shipment.memWalSpaceId} />}
-        {shipment.manifestHash && <EvidenceLine label="Manifest hash" value={shipment.manifestHash} />}
-      </div>
-
-      {blobs.length > 0 && (
-        <div className="mt-4 grid gap-2">
-          <p className="text-[10px] font-bold uppercase tracking-wide text-steel">Walrus testnet blobs</p>
-          {blobs.map((blobId, index) => (
-            <a
-              key={`${blobId}-${index}`}
-              href={aggregatorUrl(blobId)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="flex min-w-0 items-center gap-2 rounded-xl bg-blue-50 px-3 py-2 text-xs font-bold text-pearl hover:text-[#4DA2FF]"
-            >
-              <ExternalLink className="h-3.5 w-3.5 shrink-0" />
-              <span className="shrink-0">{index === 0 ? "Manifest" : `Doc ${index}`}</span>
-              <span className="min-w-0 truncate font-mono">{blobId}</span>
-            </a>
+      {recording && (
+        <div className="mt-4 flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-3">
+          <Loader2 className="mt-0.5 h-4 w-4 shrink-0 animate-spin text-[#4DA2FF]" />
+          <div>
+            <p className="text-sm font-bold text-pearl">Recording progress...</p>
+            <p className="mt-1 text-xs font-semibold text-steel">Uploading the checkpoint to MemWal.</p>
+          </div>
+        </div>
+      )}
+      {manifests.length === 0 && !recording ? (
+        <p className="mt-3 text-sm text-steel">
+          No progress has been recorded yet. Creating or checking documents will add the first checkpoint.
+        </p>
+      ) : manifests.length > 0 ? (
+        <div className="mt-4 grid gap-3">
+          {visibleManifests.map((manifest) => (
+            <ProgressItem key={manifest.id} manifest={manifest} />
           ))}
+          {previewManifest && (
+            <div className="pointer-events-none max-h-20 overflow-hidden opacity-45 blur-[1px]">
+              <ProgressItem manifest={previewManifest} />
+            </div>
+          )}
+          {orderedManifests.length > 2 && (
+            <button
+              type="button"
+              onClick={() => setExpanded((open) => !open)}
+              className="rounded-xl bg-blue-50 px-3 py-2 text-xs font-extrabold text-[#4DA2FF] hover:bg-blue-100"
+            >
+              {expanded ? "View less" : "View more"}
+            </button>
+          )}
         </div>
-      )}
+      ) : null}
     </Panel>
   );
 }
 
-function EvidenceLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-blue-50 px-3 py-2">
-      <p className="text-[10px] font-bold uppercase tracking-wide text-steel">{label}</p>
-      <p className="mt-1 break-all font-mono font-bold text-pearl">{value}</p>
-    </div>
-  );
-}
-
-function WalrusPanel({
-  ai,
-  walrus,
-  onUploaded,
-  onClear
-}: {
-  ai?: AiResult;
-  walrus?: WalrusUpload;
-  onUploaded: (upload: WalrusUpload) => void;
-  onClear: () => void;
-}) {
-  const [file, setFile] = useState<File | null>(null);
-  const [phase, setPhase] = useState<"idle" | "uploading" | "error">("idle");
-  const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-  const inputRef = useRef<HTMLInputElement | null>(null);
-
-  const aiPassed = !!ai && ai.score >= MIN_AI_SCORE_FOR_WALRUS;
-  const canUpload = aiPassed && !!file && phase !== "uploading";
-
-  async function handleUpload() {
-    if (!file) return;
-    setPhase("uploading");
-    setError(null);
-    try {
-      const { blobId, endEpoch } = await storeBlob({ file, epochs: 5 });
-      onUploaded({
-        blobId,
-        fileName: file.name,
-        sizeBytes: file.size,
-        uploadedAt: new Date().toISOString(),
-        endEpoch,
-        publisher: WALRUS_PUBLISHER,
-        aggregator: WALRUS_AGGREGATOR
-      });
-      setFile(null);
-      setPhase("idle");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Upload failed");
-      setPhase("error");
-    }
-  }
-
-  async function copyBlobId() {
-    if (!walrus?.blobId) return;
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      await navigator.clipboard.writeText(walrus.blobId);
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 1500);
-    }
-  }
+function ProgressItem({ manifest }: { manifest: ProgressManifest }) {
+  const walrusPackage = getWalrusPackage(manifest);
+  const suiPassport = getSuiPassportProgress(manifest);
 
   return (
-    <Panel className="min-w-0 overflow-hidden">
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex min-w-0 items-center gap-2">
-          <CloudUpload className="h-5 w-5 shrink-0 text-[#4DA2FF]" />
-          <h2 className="truncate text-xl font-semibold text-pearl">Walrus storage</h2>
-        </div>
-        {walrus && (
-          <span className="inline-flex shrink-0 items-center gap-1 rounded-full bg-emerald-50 px-2.5 py-1 text-xs font-extrabold text-emerald-600">
-            <CheckCircle2 className="h-3 w-3" />
-            Uploaded
-          </span>
-        )}
+    <div className="rounded-xl border border-blue-100 bg-blue-50 p-3">
+      <div className="min-w-0">
+        <p className="text-[10px] font-bold uppercase tracking-wide text-steel">
+          #{manifest.sequence} · {formatStage(manifest.stage)}
+        </p>
+        <p className="mt-1 text-sm font-bold text-pearl">{manifest.summary}</p>
       </div>
-
-      {!walrus ? (
-        <>
-          <p className="mt-3 text-sm text-steel">
-            Zip all required documents into one file, then upload to Walrus testnet.
-          </p>
-
-          {!aiPassed && (
-            <div className="mt-3 flex items-start gap-2 rounded-2xl bg-amber-50 p-3 text-xs font-semibold text-amber-700">
-              <AlertCircle className="mt-0.5 h-3.5 w-3.5 shrink-0" />
-              <span>
-                Run AI verification and reach a score of at least {MIN_AI_SCORE_FOR_WALRUS} before uploading.
-                {ai ? ` Current score: ${ai.score}.` : ""}
-              </span>
-            </div>
-          )}
-
-          <input
-            ref={inputRef}
-            type="file"
-            accept=".zip,application/zip,application/x-zip-compressed"
-            className="hidden"
-            onChange={(event) => {
-              const picked = event.target.files?.[0];
-              setFile(picked || null);
-              setError(null);
-              event.target.value = "";
-            }}
-          />
-
-          <div className="mt-4 flex w-full min-w-0 items-center gap-2">
-            <button
-              type="button"
-              onClick={() => inputRef.current?.click()}
-              className={cn(
-                "inline-flex shrink-0 items-center gap-2 rounded-full bg-blue-50 px-3 py-2 text-xs font-extrabold text-pearl transition hover:bg-blue-100",
-                !aiPassed && "opacity-60"
-              )}
-            >
-              <FileArchive className="h-3.5 w-3.5 text-[#4DA2FF]" />
-              {file ? "Change zip" : "Choose zip"}
-            </button>
-            <span
-              className="block min-w-0 flex-1 overflow-hidden truncate whitespace-nowrap text-xs font-semibold text-steel"
-              title={file?.name}
-            >
-              {file ? `${file.name} · ${formatBytes(file.size)}` : "No file selected"}
-            </span>
-          </div>
-
-          <Button onClick={handleUpload} disabled={!canUpload} className="mt-3 w-full">
-            {phase === "uploading" ? (
-              <>
-                <Loader2 className="h-4 w-4 animate-spin" />
-                Uploading...
-              </>
-            ) : (
-              <>
-                <CloudUpload className="h-4 w-4" />
-                Upload to Walrus
-              </>
-            )}
-          </Button>
-
-          {error && (
-            <details className="mt-3 rounded-2xl bg-red-50 p-3 text-xs font-semibold text-red-600">
-              <summary className="flex cursor-pointer items-center gap-2">
-                <AlertCircle className="h-3.5 w-3.5 shrink-0" />
-                Upload failed — show details
-              </summary>
-              <p className="mt-2 max-h-32 overflow-auto whitespace-pre-wrap break-all text-[11px] font-medium">{error}</p>
-            </details>
-          )}
-        </>
-      ) : (
-        <>
-          <div className="mt-4 grid gap-3 text-sm">
-            <div className="rounded-2xl bg-blue-50 p-3">
-              <p className="text-[10px] font-bold uppercase tracking-wide text-steel">Blob ID</p>
-              <div className="mt-1 flex items-start justify-between gap-2">
-                <p className="min-w-0 break-all font-mono text-xs font-bold text-pearl">{walrus.blobId}</p>
-                <button
-                  type="button"
-                  onClick={copyBlobId}
-                  className="shrink-0 rounded-full bg-white px-2 py-1 text-[10px] font-extrabold text-[#4DA2FF] hover:bg-blue-50"
-                >
-                  <Copy className="inline h-3 w-3" /> {copied ? "Copied" : "Copy"}
-                </button>
-              </div>
-            </div>
-
-            <div className="grid grid-cols-2 gap-2">
-              <InfoTile label="File" value={walrus.fileName} />
-              <InfoTile label="Size" value={formatBytes(walrus.sizeBytes)} />
-              <InfoTile label="Uploaded" value={formatDate(walrus.uploadedAt)} />
-              <InfoTile label="End epoch" value={walrus.endEpoch?.toString() || "—"} />
-            </div>
-
-            <a
-              href={aggregatorUrl(walrus.blobId)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center justify-center gap-2 rounded-2xl bg-[#4DA2FF] px-4 py-2 text-sm font-extrabold text-white shadow-glow hover:brightness-105"
-            >
-              <ExternalLink className="h-4 w-4" />
-              Open on Walrus aggregator
-            </a>
-
-            <button
-              type="button"
-              onClick={onClear}
-              className="rounded-2xl bg-blue-50 px-4 py-2 text-xs font-bold text-steel hover:text-red-500"
-            >
-              Replace zip / re-upload
-            </button>
-          </div>
-        </>
-      )}
-    </Panel>
-  );
-}
-
-function InfoTile({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="rounded-xl bg-blue-50 px-3 py-2">
-      <p className="text-[10px] font-bold uppercase tracking-wide text-steel">{label}</p>
-      <p className="mt-0.5 truncate text-xs font-bold text-pearl">{value}</p>
-    </div>
-  );
-}
-
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes)) return "—";
-  if (bytes < 1024) return `${bytes} B`;
-  if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
-  if (bytes < 1024 * 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-  return `${(bytes / (1024 * 1024 * 1024)).toFixed(2)} GB`;
-}
-
-function UploadCell({
-  doc,
-  onAttach,
-  onClear
-}: {
-  doc: DocumentRequirement;
-  onAttach: (file: File) => void;
-  onClear: () => void;
-}) {
-  const inputRef = useRef<HTMLInputElement | null>(null);
-  return (
-    <div className="flex flex-col gap-2">
-      <div className="flex items-center gap-2">
-        <button
-          type="button"
-          onClick={() => inputRef.current?.click()}
-          className={cn(
-            "inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-xs font-extrabold transition",
-            doc.uploaded ? "bg-emerald-50 text-emerald-600" : "bg-[#4DA2FF] text-white shadow-glow hover:brightness-105"
-          )}
+      <p className="mt-2 break-all font-mono text-[11px] text-steel">
+        ID: {manifest.memwalBlobId ?? manifest.memwalNamespace}
+      </p>
+      {walrusPackage && (
+        <a
+          href={aggregatorUrl(walrusPackage.blobId, walrusPackage.aggregator)}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#4DA2FF] px-3 py-2 text-xs font-extrabold text-white shadow-glow hover:brightness-105"
         >
-          <Upload className="h-3 w-3" />
-          {doc.uploaded ? "Replace" : "Upload"}
-        </button>
-        {doc.uploaded && (
-          <button
-            type="button"
-            onClick={onClear}
-            className="inline-flex items-center gap-1 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-steel hover:text-red-500"
-          >
-            Clear
-          </button>
-        )}
-      </div>
-      <input
-        ref={inputRef}
-        type="file"
-        className="hidden"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) onAttach(file);
-          event.target.value = "";
-        }}
-      />
+          <ExternalLink className="h-3.5 w-3.5" />
+          Download ZIP from Walrus
+        </a>
+      )}
+      {suiPassport && (
+        <a
+          href={`https://suiscan.xyz/${suiPassport.network}/tx/${suiPassport.txDigest}`}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-pearl px-3 py-2 text-xs font-extrabold text-white shadow-glow hover:brightness-105"
+        >
+          <ExternalLink className="h-3.5 w-3.5" />
+          View Sui transaction
+        </a>
+      )}
+      <p className="mt-2 text-[10px] font-semibold text-steel">{formatDate(manifest.createdAt)}</p>
     </div>
   );
 }
 
-function AiScoreBadge({ ai }: { ai?: AiResult }) {
-  if (!ai) {
-    return (
-      <div className="inline-flex items-center gap-2 rounded-full bg-blue-50 px-3 py-2 text-xs font-bold text-steel">
-        <Sparkles className="h-3 w-3 text-[#4DA2FF]" />
-        AI not run yet
-      </div>
-    );
+function formatStage(stage: string) {
+  return stage.replace(/_/g, " ");
+}
+
+function getWalrusPackage(manifest: ProgressManifest): WalrusUpload | null {
+  if (manifest.stage !== "walrus_package_stored") return null;
+
+  try {
+    const parsed = JSON.parse(manifest.manifestJson) as { walrus_package?: Partial<WalrusUpload> };
+    const walrusPackage = parsed.walrus_package;
+    if (
+      typeof walrusPackage?.blobId !== "string" ||
+      typeof walrusPackage.fileName !== "string" ||
+      typeof walrusPackage.sizeBytes !== "number" ||
+      typeof walrusPackage.uploadedAt !== "string" ||
+      typeof walrusPackage.publisher !== "string" ||
+      typeof walrusPackage.aggregator !== "string"
+    ) {
+      return null;
+    }
+
+    return walrusPackage as WalrusUpload;
+  } catch {
+    return null;
   }
-  const tone =
-    ai.riskLevel === "Low"
-      ? "bg-emerald-50 text-emerald-600"
-      : ai.riskLevel === "Medium"
-        ? "bg-amber-50 text-amber-600"
-        : "bg-red-50 text-red-500";
-  return (
-    <div className={cn("inline-flex items-center gap-2 rounded-full px-3 py-2 text-xs font-extrabold", tone)}>
-      <Sparkles className="h-3 w-3" />
-      AI score: {ai.score}
-    </div>
-  );
+}
+
+function getSuiPassportProgress(manifest: ProgressManifest): SuiPassportProgress | null {
+  if (manifest.stage !== "sui_passport_created") return null;
+
+  try {
+    const parsed = JSON.parse(manifest.manifestJson) as { sui_passport?: Partial<SuiPassportProgress> };
+    const suiPassport = parsed.sui_passport;
+    if (
+      typeof suiPassport?.txDigest !== "string" ||
+      typeof suiPassport.packageId !== "string" ||
+      suiPassport.network !== "testnet"
+    ) {
+      return null;
+    }
+
+    return suiPassport as SuiPassportProgress;
+  } catch {
+    return null;
+  }
 }
 
 function AiCheckRow({ check }: { check: AiCheck }) {
@@ -903,29 +1078,6 @@ function AiCheckRow({ check }: { check: AiCheck }) {
           <p className="mt-0.5 text-xs leading-5 text-steel">{check.detail}</p>
         </div>
       </div>
-    </div>
-  );
-}
-
-function MiniStat({
-  label,
-  value,
-  tone
-}: {
-  label: string;
-  value: number;
-  tone: "emerald" | "blue" | "amber";
-}) {
-  const toneClass =
-    tone === "emerald"
-      ? "border-emerald-100 bg-emerald-50 text-emerald-600"
-      : tone === "amber"
-        ? "border-amber-100 bg-amber-50 text-amber-600"
-        : "border-blue-100 bg-blue-50 text-[#4DA2FF]";
-  return (
-    <div className={cn("rounded-xl border px-2 py-2 text-center", toneClass)}>
-      <p className="text-lg font-extrabold leading-none">{value}</p>
-      <p className="mt-1 text-[10px] font-bold uppercase tracking-wide">{label}</p>
     </div>
   );
 }

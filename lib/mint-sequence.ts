@@ -82,14 +82,11 @@ export async function executeMintSequence(
     .get(shipmentId) as MintPointerRow | undefined;
 
   if (pointers?.passport_id) {
-    const blobRows = db
-      .prepare("SELECT blob_id FROM walrus_blobs WHERE shipment_id = ?")
-      .all(shipmentId) as { blob_id: string }[];
     return {
       passportId: pointers.passport_id,
       txDigest: pointers.tx_digest!,
       mintedAt: pointers.minted_at!,
-      walrusBlobIds: blobRows.map((r) => r.blob_id),
+      walrusBlobIds: getStoredWalrusBlobIds(shipmentId, db),
       memWalSpaceId: pointers.memwal_space_id!,
       manifestHash: pointers.manifest_hash!,
     };
@@ -99,10 +96,7 @@ export async function executeMintSequence(
   let walrusBlobIds: string[];
 
   if (pointers?.walrus_manifest_blob_id) {
-    const blobRows = db
-      .prepare("SELECT blob_id FROM walrus_blobs WHERE shipment_id = ?")
-      .all(shipmentId) as { blob_id: string }[];
-    walrusBlobIds = blobRows.map((r) => r.blob_id);
+    walrusBlobIds = getStoredWalrusBlobIds(shipmentId, db);
     logger.info({ shipmentId }, "Walrus blobs already uploaded — skipping");
   } else {
     const walrusResult = await uploadDocumentsToWalrus(shipmentId, ownerAddress, db);
@@ -190,6 +184,29 @@ export async function executeMintSequence(
 
 // ── Private helpers ────────────────────────────────────────────────────────────
 
+function getStoredWalrusBlobIds(shipmentId: string, db: ReturnType<typeof getDb>): string[] {
+  const manifestRows = db
+    .prepare("SELECT blob_id FROM walrus_blobs WHERE shipment_id = ? AND purpose = 'manifest' ORDER BY stored_at ASC")
+    .all(shipmentId) as { blob_id: string }[];
+  const documentRows = db
+    .prepare(
+      `SELECT walrus_blob_id AS blob_id
+       FROM shipment_files
+       WHERE shipment_id = ? AND walrus_blob_id IS NOT NULL
+       ORDER BY uploaded_at ASC`
+    )
+    .all(shipmentId) as { blob_id: string }[];
+
+  const seen = new Set<string>();
+  return [...manifestRows, ...documentRows]
+    .map((row) => row.blob_id)
+    .filter((blobId) => {
+      if (seen.has(blobId)) return false;
+      seen.add(blobId);
+      return true;
+    });
+}
+
 async function uploadDocumentsToWalrus(
   shipmentId: string,
   ownerAddress: string,
@@ -258,6 +275,14 @@ async function uploadDocumentsToWalrus(
         retriable: true,
       };
     }
+  }
+
+  if (blobIds.length === 0) {
+    return {
+      error: "Walrus upload blocked: the extracted document PDFs are missing from the local cache. Re-upload the documents and run extraction again before minting.",
+      step: "walrus",
+      retriable: false,
+    };
   }
 
   // Upload manifest JSON as a Walrus blob (slot 0 per plan convention)

@@ -14,6 +14,7 @@ import {
   Ship,
   Upload,
   UserCheck,
+  X,
   XCircle
 } from "lucide-react";
 import { useRouter } from "next/navigation";
@@ -26,7 +27,7 @@ import {
   useShipments,
   type DocumentOwner,
   type DocumentRequirement,
-  type MintStorageResult,
+  type ProgressManifest,
   type ShipmentRecord,
   type WorkflowKey
 } from "@/lib/shipments-store";
@@ -45,12 +46,8 @@ const workflowTitles: Record<WorkflowKey, string> = {
 const documentCatalog: Array<{ name: string; defaultOwner: DocumentOwner; defaultRequired: boolean }> = [
   { name: "Commercial Invoice", defaultOwner: "Exporter", defaultRequired: true },
   { name: "Packing List", defaultOwner: "Exporter", defaultRequired: true },
-  { name: "Air Waybill / Bill of Lading", defaultOwner: "Exporter", defaultRequired: true },
-  { name: "Certificate of Origin", defaultOwner: "Exporter", defaultRequired: true },
-  { name: "Customs Declaration", defaultOwner: "Importer", defaultRequired: false },
-  { name: "Insurance Certificate", defaultOwner: "Importer", defaultRequired: false },
-  { name: "Import / Export Permit", defaultOwner: "Importer", defaultRequired: false },
-  { name: "Dangerous Goods Declaration", defaultOwner: "Exporter", defaultRequired: false }
+  { name: "Bill of Lading", defaultOwner: "Exporter", defaultRequired: true },
+  { name: "Customs Declaration", defaultOwner: "Importer", defaultRequired: true }
 ];
 
 const initialShipmentDetails = {
@@ -95,12 +92,12 @@ export default function CreateShipmentPage() {
 
   const [workflow, setWorkflow] = useState<WorkflowKey>(defaultWorkflow);
   const [activeStep, setActiveStep] = useState(0);
+  const [maxUnlockedStep, setMaxUnlockedStep] = useState(0);
   const [shipmentRecordId, setShipmentRecordId] = useState<string | null>(null);
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [createdInProgress, setCreatedInProgress] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
-  const [mintResult, setMintResult] = useState<MintStorageResult | null>(null);
 
   // Async extraction state
   const [extractionStatus, setExtractionStatus] = useState<"idle" | "extracting" | "complete" | "failed">("idle");
@@ -140,6 +137,7 @@ export default function CreateShipmentPage() {
     []
   );
   const [docs, setDocs] = useState<DocumentRequirement[]>(initialDocs);
+  const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
   // Re-sync the creator's auto-filled party when the workflow changes.
   useEffect(() => {
@@ -152,7 +150,13 @@ export default function CreateShipmentPage() {
     setShipmentRecordId(null);
     setInviteToken(null);
     setCreatedInProgress(false);
-  }, [workflow, profile]);
+    setActiveStep(0);
+    setMaxUnlockedStep(0);
+    setDocs(initialDocs);
+    setUploadedFiles([]);
+    setExtractResult(null);
+    setExtractionStatus("idle");
+  }, [workflow, profile, initialDocs]);
 
   // Step enforcement — steps 2, 3, 4 all require step 1 to be complete
 
@@ -165,16 +169,46 @@ export default function CreateShipmentPage() {
     return ok(importer) && ok(exporter);
   }, [importer, exporter]);
 
+  const isShipmentDetailsComplete = useMemo(() => {
+    return [
+      details.shipmentId,
+      details.origin,
+      details.originPort,
+      details.destination,
+      details.destinationPort,
+      details.carrier,
+      details.transportMode,
+      details.incoterm,
+      details.etd,
+      details.eta,
+      details.declaredValue,
+      details.currency,
+    ].every((value) => value.trim().length > 0);
+  }, [details]);
+
+  const isCargoComplete = useMemo(() => {
+    return [
+      cargo.description,
+      cargo.hsCode,
+      cargo.quantity,
+      cargo.grossWeight,
+      cargo.netWeight,
+      cargo.handlingUnits,
+      cargo.countryOfOrigin,
+    ].every((value) => value.trim().length > 0);
+  }, [cargo]);
+
   function canAccessStep(stepIndex: number): boolean {
-    if (stepIndex === 0 || stepIndex === 1) return true;
-    return isStep1Complete;
+    return stepIndex <= maxUnlockedStep;
   }
 
   function isStepComplete(stepIndex: number): boolean {
     if (stepIndex === 0) return true;
     if (stepIndex === 1) return isStep1Complete;
-    if (stepIndex === 2 || stepIndex === 3) return isStep1Complete;
-    return false;
+    if (stepIndex === 2) return isShipmentDetailsComplete;
+    if (stepIndex === 3) return isCargoComplete;
+    if (stepIndex === 4) return docs.some((doc) => doc.uploaded) || shipmentRecordId !== null;
+    return true;
   }
 
   function buildShipmentRecord(status: ShipmentRecord["status"], token?: string): ShipmentRecord {
@@ -267,15 +301,14 @@ export default function CreateShipmentPage() {
     });
   }
 
-  const creatorRequiredDocs = docs.filter((doc) => doc.required);
-  const counterpartyRequiredDocs: DocumentRequirement[] = [];
-
-  const allCreatorDocsUploaded = creatorRequiredDocs.every((doc) => doc.uploaded);
+  const creatorOwner: DocumentOwner = workflow === "importer" ? "Importer" : "Exporter";
+  const counterpartyRequiredDocs = docs.filter((doc) => doc.required && doc.owner !== creatorOwner);
 
   function persistDraft(
     status: ShipmentRecord["status"],
     exStatus?: "extracting" | "complete" | "failed",
-    docsOverride?: DocumentRequirement[]
+    docsOverride?: DocumentRequirement[],
+    inviteTokenOverride?: string
   ) {
     const patch: Partial<ShipmentRecord> = {
       status,
@@ -287,7 +320,7 @@ export default function CreateShipmentPage() {
       shipment: { ...details },
       cargo: { ...cargo },
       documents: docsOverride ?? docs,
-      inviteToken: inviteToken || undefined,
+      inviteToken: inviteTokenOverride || inviteToken || undefined,
       extractedRef: extractResult?.extractedRef,
       extractionStatus: exStatus
     };
@@ -298,6 +331,7 @@ export default function CreateShipmentPage() {
     const record = buildShipmentRecord(status);
     if (docsOverride) record.documents = docsOverride;
     if (exStatus) record.extractionStatus = exStatus;
+    if (inviteTokenOverride) record.inviteToken = inviteTokenOverride;
     addShipment(record);
     setShipmentRecordId(record.id);
     return record.id;
@@ -326,30 +360,50 @@ export default function CreateShipmentPage() {
     }
   }
 
-  async function parseJsonOrThrow(response: Response): Promise<unknown> {
-    const contentType = response.headers.get("content-type") ?? "";
-    if (contentType.includes("application/json")) {
-      return response.json();
-    }
-
-    const text = await response.text();
-    if (text.startsWith("<!DOCTYPE") || text.startsWith("<html")) {
-      throw new Error(`Route returned HTML (${response.status}). Restart the Next dev server and try again.`);
-    }
-
-    throw new Error(text || `Unexpected non-JSON response (${response.status})`);
+  async function recordProgressCheckpoint(
+    id: string,
+    status: ShipmentRecord["status"],
+    docsForManifest: DocumentRequirement[] = docs
+  ) {
+    const response = await fetch(`/api/shipments/${encodeURIComponent(id)}/progress`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        stage: "shipment_created",
+        actor: creatorOwner,
+        summary: `${creatorOwner} created shipment ${id} and uploaded ${docsForManifest.filter((doc) => doc.uploaded).length} document(s).`,
+        documents: docsForManifest.map((doc) => ({ name: doc.name, fileName: doc.fileName, uploaded: doc.uploaded })),
+      }),
+    });
+    if (!response.ok) return;
+    const manifest = (await response.json()) as ProgressManifest;
+    updateShipment(id, {
+      status,
+      progressManifests: [manifest],
+    });
   }
 
-  // Fire-and-forget extraction; merges new results into existing ones for accumulation
-  async function startExtractionAsync(files: File[], shipmentId: string, baseDocs: DocumentRequirement[]) {
+  async function postDocumentExtraction(files: File[], shipmentId?: string) {
     const formData = new FormData();
     files.forEach((f) => formData.append("files", f));
-    formData.append("shipmentId", shipmentId);
+    if (shipmentId) {
+      formData.append("shipmentId", shipmentId);
+    }
+    const res = await fetch("/api/documents/extract", { method: "POST", body: formData });
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    return res.json() as Promise<AggregateResult>;
+  }
+
+  function mergeUploadedFiles(current: File[], incoming: File[]) {
+    const files = new Map(current.map((file) => [file.name, file]));
+    incoming.forEach((file) => files.set(file.name, file));
+    return [...files.values()];
+  }
+
+  // Fire-and-forget extraction; this validates documents without creating a shipment record.
+  async function startExtractionAsync(files: File[], baseDocs: DocumentRequirement[]) {
     try {
-      await saveShipmentSnapshot(shipmentId, "In Progress", "extracting", baseDocs);
-      const res = await fetch("/api/documents/extract", { method: "POST", body: formData });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const incoming: AggregateResult = await res.json();
+      const incoming = await postDocumentExtraction(files);
       let merged = incoming;
       setExtractResult((prev) => {
         merged = prev ? mergeExtractionResults(prev, incoming) : incoming;
@@ -358,24 +412,52 @@ export default function CreateShipmentPage() {
       setExtractionStatus("complete");
       const updatedDocs = docsWithExtractionResult(baseDocs, merged);
       setDocs(updatedDocs);
-      updateShipment(shipmentId, {
-        extractionStatus: "complete",
-        extractedRef: merged.extractedRef,
-        documents: updatedDocs
-      });
     } catch {
       setExtractionStatus("failed");
-      updateShipment(shipmentId, { extractionStatus: "failed" });
     }
   }
 
   function handleFilesSelected(files: File[]) {
     if (files.length === 0) return;
     const nextDocs = docsWithAttachedFiles(docs, files);
+    setUploadedFiles((current) => mergeUploadedFiles(current, files));
     setDocs(nextDocs); // immediate filename display
     setExtractionStatus("extracting");
-    const id = persistDraft("In Progress", "extracting", nextDocs);
-    startExtractionAsync(files, id, nextDocs); // fire and forget
+    startExtractionAsync(files, nextDocs); // fire and forget
+  }
+
+  function addDocumentRequirement(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return false;
+    if (docs.some((doc) => doc.name.toLowerCase() === trimmed.toLowerCase())) {
+      setError("That document is already in the checklist.");
+      return false;
+    }
+
+    const nextDocs: DocumentRequirement[] = [
+      ...docs,
+      {
+        name: trimmed,
+        owner: creatorOwner,
+        required: false,
+        uploaded: false,
+      },
+    ];
+
+    setDocs(nextDocs);
+    setError(null);
+    if (shipmentRecordId) {
+      updateShipment(shipmentRecordId, { documents: nextDocs });
+    }
+    return true;
+  }
+
+  function removeDocumentRequirement(name: string) {
+    const nextDocs = docs.filter((doc) => doc.name !== name);
+    setDocs(nextDocs);
+    if (shipmentRecordId) {
+      updateShipment(shipmentRecordId, { documents: nextDocs });
+    }
   }
 
   const hasValidationErrors = (extractResult?.cross_validation ?? []).some(
@@ -383,64 +465,48 @@ export default function CreateShipmentPage() {
   );
 
   async function createShipmentNow() {
-    if (!allCreatorDocsUploaded && extractionStatus !== "extracting") {
-      setError("Upload all required documents before creating the shipment.");
-      return;
-    }
     if (extractionStatus === "extracting") {
-      setError("Document extraction is still running. Wait for validation to complete, then create the shipment.");
-      return;
-    }
-    if (extractionStatus === "failed" || !extractResult) {
-      setError("Document extraction failed or has not completed. Re-upload the files and try again.");
-      return;
-    }
-    if (hasValidationErrors) {
-      setError("Shipment creation is blocked: cross-document mismatches detected. Fix the source documents and re-upload.");
+      setError("Document extraction is still running. Wait for it to complete, then create the shipment.");
       return;
     }
     setError(null);
     setCreatedInProgress(true);
-    const status: ShipmentRecord["status"] = counterpartyRequiredDocs.length > 0 ? "In Progress" : "Documents Uploaded";
-    const id = persistDraft(status, "complete");
+    const allRequiredDocsUploaded = docs.filter((doc) => doc.required).every((doc) => doc.uploaded);
+    const status: ShipmentRecord["status"] = allRequiredDocsUploaded ? "Documents Uploaded" : "In Progress";
+    const token = inviteToken || (counterpartyRequiredDocs.length > 0 ? generateInviteToken() : undefined);
+    if (token) setInviteToken(token);
+    const id = persistDraft(status, "complete", docs, token);
 
     try {
-      await saveShipmentSnapshot(id, status, "complete", docs);
-      const response = await fetch("/api/shipments/mint", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          shipmentId: id,
-          ownerAddress: "0xmock_owner_address",
-        }),
-      });
-      const payload = await parseJsonOrThrow(response);
-      if (!response.ok) {
-        const errorMessage =
-          typeof payload === "object" && payload && "error" in payload && typeof payload.error === "string"
-            ? payload.error
-            : `Mint failed with HTTP ${response.status}`;
-        throw new Error(errorMessage);
+      let finalDocs = docs;
+      let finalExtractResult = extractResult;
+
+      await saveShipmentSnapshot(id, status, "complete", finalDocs);
+
+      if (uploadedFiles.length > 0) {
+        setExtractionStatus("extracting");
+        finalExtractResult = await postDocumentExtraction(uploadedFiles, id);
+        finalDocs = docsWithExtractionResult(finalDocs, finalExtractResult);
+        setExtractResult(finalExtractResult);
+        setDocs(finalDocs);
+        setExtractionStatus("complete");
+        await saveShipmentSnapshot(id, status, "complete", finalDocs);
       }
 
-      const result = payload as MintStorageResult;
-      setMintResult(result);
+      if (token) {
+        updateShipment(id, { inviteToken: token });
+      }
       updateShipment(id, {
-        status: "Passport Minted",
-        passportId: result.passportId,
-        txDigest: result.txDigest,
-        mintedAt: result.mintedAt,
-        walrusBlobIds: result.walrusBlobIds,
-        walrusManifestBlobId: result.walrusBlobIds[0],
-        memWalSpaceId: result.memWalSpaceId,
-        manifestHash: result.manifestHash,
+        extractionStatus: "complete",
+        extractedRef: finalExtractResult?.extractedRef,
+        documents: finalDocs,
       });
-      window.setTimeout(() => {
-        router.push(`/shipments/${encodeURIComponent(id)}`);
-      }, 1200);
+      await recordProgressCheckpoint(id, status, finalDocs);
+      router.push(`/shipments/${encodeURIComponent(id)}`);
     } catch (err) {
       setCreatedInProgress(false);
-      setError(err instanceof Error ? err.message : "Shipment storage failed");
+      setExtractionStatus(uploadedFiles.length > 0 ? "failed" : extractionStatus);
+      setError(err instanceof Error ? err.message : "Shipment creation failed");
     }
   }
 
@@ -452,14 +518,24 @@ export default function CreateShipmentPage() {
   }
 
   function goNext() {
-    if (activeStep === 1 && !isStep1Complete) {
-      setError("Please fill in company, contact, and email for both importer and exporter before continuing.");
+    if (!isStepComplete(activeStep)) {
+      const message =
+        activeStep === 1
+          ? "Please fill in company, contact, and email for both importer and exporter before continuing."
+          : activeStep === 2
+            ? "Please complete the required shipment details before continuing."
+            : activeStep === 3
+              ? "Please complete the required cargo details before continuing."
+              : "Please complete this step before continuing.";
+      setError(message);
       return;
     }
     setError(null);
     const currentIndex = visibleStepIndexes.indexOf(activeStep);
     const nextIndex = Math.min(visibleStepIndexes.length - 1, currentIndex + 1);
-    setActiveStep(visibleStepIndexes[nextIndex] ?? lastVisibleStep);
+    const nextStep = visibleStepIndexes[nextIndex] ?? lastVisibleStep;
+    setMaxUnlockedStep((current) => Math.max(current, nextStep));
+    setActiveStep(nextStep);
   }
 
   const workflowOptions = useMemo<WorkflowKey[]>(() => {
@@ -471,10 +547,6 @@ export default function CreateShipmentPage() {
       <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
-          <p className="mt-3 max-w-3xl text-steel">
-            Start as an {role.toLowerCase()}. Auto-fill your own company, invite the counterparty, and upload only the
-            documents your side owns.
-          </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusBadge value={selectedWorkflow} />
@@ -490,6 +562,7 @@ export default function CreateShipmentPage() {
               const accessible = canAccessStep(stepIndex);
               const complete = isStepComplete(stepIndex);
               const isActive = activeStep === stepIndex;
+              const displayComplete = complete && stepIndex < maxUnlockedStep && !isActive;
               const isLast = visibleIndex === visibleStepIndexes.length - 1;
               return (
                 <div key={steps[stepIndex]} className="relative flex items-stretch gap-3">
@@ -507,18 +580,16 @@ export default function CreateShipmentPage() {
                       aria-label={steps[stepIndex]}
                       className={cn(
                         "relative z-10 flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-xs font-extrabold ring-2 transition",
-                        isActive
-                          ? "bg-[#4DA2FF] text-white ring-[#4DA2FF]"
-                          : complete
-                            ? "bg-emerald-50 text-emerald-600 ring-emerald-400"
+                        displayComplete
+                          ? "bg-emerald-50 text-emerald-600 ring-emerald-400"
+                          : isActive
+                            ? "bg-[#4DA2FF] text-white ring-[#4DA2FF]"
                             : accessible
                               ? "bg-white text-steel ring-blue-200 hover:ring-[#4DA2FF]/60"
                               : "cursor-not-allowed bg-white text-steel/40 ring-blue-100"
                       )}
                     >
-                      {!accessible ? (
-                        <Lock className="h-3 w-3" />
-                      ) : complete && !isActive ? (
+                      {displayComplete ? (
                         <CheckCircle2 className="h-4 w-4" />
                       ) : (
                         visibleIndex + 1
@@ -527,7 +598,7 @@ export default function CreateShipmentPage() {
                     {!isLast && (
                       <div className={cn(
                         "w-0.5 flex-1 my-1",
-                        complete ? "bg-emerald-200" : "bg-blue-100"
+                        displayComplete ? "bg-emerald-200" : "bg-blue-100"
                       )} style={{ minHeight: "20px" }} />
                     )}
                   </div>
@@ -545,15 +616,10 @@ export default function CreateShipmentPage() {
                       "flex-1 pb-5 pt-1 text-left text-sm font-bold transition",
                       isLast && "pb-0",
                       !accessible && "cursor-not-allowed opacity-40",
-                      isActive ? "text-[#4DA2FF]" : complete ? "text-emerald-600" : "text-steel hover:text-[#4DA2FF]"
+                      displayComplete ? "text-emerald-600" : isActive ? "text-[#4DA2FF]" : "text-steel hover:text-[#4DA2FF]"
                     )}
                   >
                     {steps[stepIndex]}
-                    {isActive && (
-                      <span className="ml-2 inline-block rounded-full bg-[#4DA2FF]/10 px-1.5 py-0.5 text-[10px] font-extrabold uppercase tracking-wide text-[#4DA2FF]">
-                        Current
-                      </span>
-                    )}
                   </button>
                 </div>
               );
@@ -567,11 +633,12 @@ export default function CreateShipmentPage() {
             {visibleStepIndexes.map((stepIndex) => {
               const complete = isStepComplete(stepIndex);
               const isActive = activeStep === stepIndex;
+              const displayComplete = complete && stepIndex < maxUnlockedStep && !isActive;
               return (
                 <div key={stepIndex} className="flex flex-1 flex-col items-center gap-1">
                   <div className={cn(
                     "h-1.5 w-full rounded-full transition",
-                    isActive ? "bg-[#4DA2FF]" : complete ? "bg-emerald-400" : "bg-blue-100"
+                    displayComplete ? "bg-emerald-400" : isActive ? "bg-[#4DA2FF]" : "bg-blue-100"
                   )} />
                   {isActive && (
                     <span className="text-[10px] font-bold text-[#4DA2FF]">{steps[stepIndex]}</span>
@@ -775,11 +842,11 @@ export default function CreateShipmentPage() {
               <DocumentUploadStep
                 docs={docs}
                 onFilesSelected={handleFilesSelected}
+                onAddDocument={addDocumentRequirement}
+                onRemoveDocument={removeDocumentRequirement}
                 extractionStatus={extractionStatus}
                 extractResult={extractResult}
                 error={error}
-                hasCounterpartyDocs={counterpartyRequiredDocs.length > 0}
-                shipmentSaved={Boolean(shipmentRecordId)}
                 hasValidationErrors={hasValidationErrors}
               />
             )}
@@ -793,8 +860,6 @@ export default function CreateShipmentPage() {
             </p>
           )}
 
-          {mintResult && <MintResultPanel result={mintResult} />}
-
           <div className="flex items-center justify-between gap-3">
             <Button variant="secondary" disabled={activeStep === visibleStepIndexes[0]} onClick={goBack}>
               Back
@@ -805,15 +870,14 @@ export default function CreateShipmentPage() {
               <div className="flex flex-col items-end gap-1">
                 <Button
                   onClick={createShipmentNow}
-                  disabled={(!allCreatorDocsUploaded && extractionStatus === "idle") || extractionStatus === "extracting" || createdInProgress || hasValidationErrors}
+                  disabled={extractionStatus === "extracting" || createdInProgress}
                 >
                   {createdInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
-                  {createdInProgress ? "Storing and minting..." : "Create shipment"}
+                  {createdInProgress ? "Creating shipment..." : "Create shipment"}
                 </Button>
                 {hasValidationErrors && (
-                  <span className="flex items-center gap-1 text-xs font-bold text-red-500">
-                    <XCircle className="h-3 w-3" />
-                    Blocked — fix document mismatches above
+                  <span className="max-w-xs text-right text-xs font-bold text-red-500">
+                    Mismatches can be fixed after creation. Final storage stays blocked until validation passes.
                   </span>
                 )}
               </div>
@@ -894,52 +958,6 @@ function PartyCard({
   );
 }
 
-function MintResultPanel({ result }: { result: MintStorageResult }) {
-  return (
-    <Panel className="border-emerald-200 bg-emerald-50">
-      <div className="flex items-start gap-3">
-        <CheckCircle2 className="mt-0.5 h-5 w-5 shrink-0 text-emerald-600" />
-        <div className="min-w-0 flex-1">
-          <p className="font-extrabold text-emerald-800">Shipment stored and passport minted</p>
-          <div className="mt-3 grid gap-2 text-xs font-semibold text-emerald-900">
-            <StorageLine label="Passport" value={result.passportId} />
-            <StorageLine label="Tx digest" value={result.txDigest} />
-            <StorageLine label="MemWal" value={result.memWalSpaceId} />
-            <StorageLine label="Manifest hash" value={result.manifestHash} />
-          </div>
-          {result.walrusBlobIds.length > 0 && (
-            <div className="mt-3 grid gap-2">
-              <p className="text-xs font-extrabold uppercase tracking-widest text-emerald-700">Walrus blobs</p>
-              {result.walrusBlobIds.map((blobId, index) => (
-                <a
-                  key={`${blobId}-${index}`}
-                  href={`https://aggregator.walrus-testnet.walrus.space/v1/blobs/${blobId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  className="flex min-w-0 items-center gap-2 rounded-lg bg-white/80 px-3 py-2 text-xs font-bold text-pearl hover:text-[#4DA2FF]"
-                >
-                  <Link2 className="h-3.5 w-3.5 shrink-0" />
-                  <span className="shrink-0">{index === 0 ? "Manifest" : `Document ${index}`}</span>
-                  <span className="min-w-0 truncate font-mono">{blobId}</span>
-                </a>
-              ))}
-            </div>
-          )}
-        </div>
-      </div>
-    </Panel>
-  );
-}
-
-function StorageLine({ label, value }: { label: string; value: string }) {
-  return (
-    <div className="grid gap-1 sm:grid-cols-[120px_minmax(0,1fr)]">
-      <span className="text-emerald-700">{label}</span>
-      <span className="min-w-0 break-all font-mono text-pearl">{value}</span>
-    </div>
-  );
-}
-
 function mergeExtractionResults(existing: AggregateResult, incoming: AggregateResult): AggregateResult {
   const detected = {
     commercial_invoice: incoming.detected.commercial_invoice.length > 0
@@ -998,29 +1016,29 @@ function detectDocumentIndex(fileName: string, docs: DocumentRequirement[]) {
 function DocumentUploadStep({
   docs,
   onFilesSelected,
+  onAddDocument,
+  onRemoveDocument,
   extractionStatus,
   extractResult,
   error,
-  hasCounterpartyDocs,
-  shipmentSaved,
   hasValidationErrors
 }: {
   docs: DocumentRequirement[];
   onFilesSelected: (files: File[]) => void;
+  onAddDocument: (name: string) => boolean;
+  onRemoveDocument: (name: string) => void;
   extractionStatus: "idle" | "extracting" | "complete" | "failed";
   extractResult: AggregateResult | null;
   error: string | null;
-  hasCounterpartyDocs: boolean;
-  shipmentSaved: boolean;
   hasValidationErrors: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
   const [openDocKey, setOpenDocKey] = useState<string | null>(null);
+  const [newDocumentName, setNewDocumentName] = useState("");
 
   const uploadedCount = docs.filter((doc) => doc.uploaded).length;
-  const requiredCount = docs.filter((doc) => doc.required).length;
   const isExtracting = extractionStatus === "extracting";
   const isComplete = extractionStatus === "complete";
   const isFailed = extractionStatus === "failed";
@@ -1054,6 +1072,12 @@ function DocumentUploadStep({
     onFilesSelected(toExtract);
   }
 
+  function handleAddDocument() {
+    if (onAddDocument(newDocumentName)) {
+      setNewDocumentName("");
+    }
+  }
+
   function fmtWeight(w: { value: number | null; unit: string | null } | null | undefined) {
     if (!w || w.value == null) return null;
     return `${w.value}${w.unit ? " " + w.unit : ""}`;
@@ -1065,6 +1089,90 @@ function DocumentUploadStep({
         Stage your shipment documents in the box below, then click{" "}
         <span className="font-bold text-pearl">Extract documents</span> to run AI analysis. You can add more files and
         extract again if some are missing — results accumulate automatically.
+      </div>
+
+      <div className="rounded-2xl border border-blue-100 bg-white p-4">
+        <p className="text-xs font-bold uppercase tracking-widest text-steel">Additional documents</p>
+        <div className="mt-3 flex flex-col gap-3 sm:flex-row">
+          <input
+            value={newDocumentName}
+            onChange={(e) => setNewDocumentName(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                e.preventDefault();
+                handleAddDocument();
+              }
+            }}
+            placeholder="e.g. Insurance Certificate"
+            className="min-h-11 flex-1 rounded-xl border border-blue-100 bg-blue-50 px-4 text-sm font-semibold text-pearl outline-none transition placeholder:text-steel/70 focus:border-[#4DA2FF] focus:bg-white"
+            disabled={isExtracting}
+          />
+          <Button variant="secondary" onClick={handleAddDocument} disabled={isExtracting || newDocumentName.trim().length === 0}>
+            <Plus className="h-4 w-4" />
+            Add document
+          </Button>
+        </div>
+      </div>
+
+      {/* Document status cards */}
+      <div>
+        <p className="mb-3 text-xs font-bold uppercase tracking-widest text-steel">Document checklist</p>
+        <div className="grid gap-3 sm:grid-cols-2">
+          {docs.map((doc) => {
+            const borderClass = doc.uploaded
+              ? "border-emerald-200 bg-emerald-50/40"
+              : isExtracting
+                ? "border-[#4DA2FF]/30 bg-blue-50/40"
+                : "border-blue-100 bg-white";
+            return (
+              <div key={doc.name} className={cn("rounded-2xl border p-4 transition", borderClass)}>
+                <div className="flex items-start justify-between gap-2">
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-extrabold text-pearl leading-tight">{doc.name}</p>
+                    {doc.fileName && (
+                      <p className="mt-0.5 truncate text-xs text-steel" title={doc.fileName}>{doc.fileName}</p>
+                    )}
+                    {!doc.fileName && isExtracting && (
+                      <p className="mt-0.5 flex items-center gap-1 text-xs text-[#4DA2FF]">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Analyzing…
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex shrink-0 items-start gap-2">
+                    <div className="flex flex-col items-end gap-1">
+                    {doc.uploaded ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">
+                        <CheckCircle2 className="h-3 w-3" />
+                        Detected
+                      </span>
+                    ) : isExtracting ? (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-[#4DA2FF]">
+                        <Loader2 className="h-3 w-3 animate-spin" />
+                        Analyzing
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-600">
+                        <XCircle className="h-3 w-3" />
+                        Pending
+                      </span>
+                    )}
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => onRemoveDocument(doc.name)}
+                      disabled={isExtracting}
+                      className="flex h-6 w-6 items-center justify-center rounded-full text-steel transition hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
+                      aria-label={`Remove ${doc.name}`}
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </button>
+                  </div>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
 
       {/* Drag-and-drop zone */}
@@ -1099,7 +1207,7 @@ function DocumentUploadStep({
             </p>
             {!isComplete && (
               <p className="mt-4 text-sm font-bold text-steel">
-                {uploadedCount}/{requiredCount} required documents detected
+                {uploadedCount}/{docs.length} documents detected
               </p>
             )}
           </>
@@ -1499,117 +1607,6 @@ function DocumentUploadStep({
           </div>
         </div>
       )}
-
-      {/* Document status cards */}
-      <div>
-        <p className="mb-3 text-xs font-bold uppercase tracking-widest text-steel">Document checklist</p>
-        <div className="grid gap-3 sm:grid-cols-2">
-          {docs.map((doc) => {
-            const borderClass = doc.uploaded
-              ? "border-emerald-200 bg-emerald-50/40"
-              : isExtracting
-                ? "border-[#4DA2FF]/30 bg-blue-50/40"
-                : doc.required
-                  ? "border-red-200 bg-red-50/30"
-                  : "border-blue-100 bg-white";
-            return (
-              <div key={doc.name} className={cn("rounded-2xl border p-4 transition", borderClass)}>
-                <div className="flex items-start justify-between gap-2">
-                  <div className="flex-1 min-w-0">
-                    <p className="text-sm font-extrabold text-pearl leading-tight">{doc.name}</p>
-                    {doc.fileName && (
-                      <p className="mt-0.5 truncate text-xs text-steel" title={doc.fileName}>{doc.fileName}</p>
-                    )}
-                    {!doc.fileName && isExtracting && (
-                      <p className="mt-0.5 flex items-center gap-1 text-xs text-[#4DA2FF]">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Analyzing…
-                      </p>
-                    )}
-                  </div>
-                  <div className="flex shrink-0 flex-col items-end gap-1">
-                    {doc.uploaded ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-100 px-2.5 py-1 text-xs font-bold text-emerald-700">
-                        <CheckCircle2 className="h-3 w-3" />
-                        Detected
-                      </span>
-                    ) : isExtracting ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-[#4DA2FF]">
-                        <Loader2 className="h-3 w-3 animate-spin" />
-                        Analyzing
-                      </span>
-                    ) : doc.required ? (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-600">
-                        <XCircle className="h-3 w-3" />
-                        Missing
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-50 px-2.5 py-1 text-xs font-bold text-steel">
-                        Optional
-                      </span>
-                    )}
-                    <span className="rounded-full bg-white/60 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide text-steel">
-                      {doc.owner}
-                    </span>
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
-      </div>
-
-      {/* Pre-flight checklist */}
-      {(() => {
-        const errorCount = extractResult?.cross_validation.filter((v) => v.severity === "error").length ?? 0;
-        const warnCount = extractResult?.cross_validation.filter((v) => v.severity === "warning").length ?? 0;
-        const docsReady = docs.filter((d) => d.required).every((d) => d.uploaded);
-        return (
-          <div className="rounded-2xl border border-blue-100 bg-white p-5">
-            <h3 className="mb-3 text-sm font-extrabold uppercase tracking-widest text-steel">Pre-flight checklist</h3>
-            <div className="grid gap-2 text-sm">
-              <div className="flex items-center gap-2">
-                {docsReady || isExtracting
-                  ? <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  : <XCircle className="h-4 w-4 text-red-400" />}
-                <span className={docsReady || isExtracting ? "text-emerald-700 font-semibold" : "text-red-600 font-semibold"}>
-                  {docsReady ? "All required documents uploaded" : isExtracting ? "Documents uploading…" : "Required documents missing"}
-                </span>
-              </div>
-              {errorCount > 0 && (
-                <div className="flex items-center gap-2">
-                  <XCircle className="h-4 w-4 text-red-500" />
-                  <span className="font-semibold text-red-600">{errorCount} cross-document mismatch{errorCount !== 1 ? "es" : ""} — creation blocked</span>
-                </div>
-              )}
-              {errorCount === 0 && extractResult && (
-                <div className="flex items-center gap-2">
-                  <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-                  <span className="font-semibold text-emerald-700">No blocking document mismatches</span>
-                </div>
-              )}
-              {warnCount > 0 && (
-                <div className="flex items-center gap-2">
-                  <AlertTriangle className="h-4 w-4 text-amber-500" />
-                  <span className="font-semibold text-amber-600">{warnCount} warning{warnCount !== 1 ? "s" : ""} — review recommended</span>
-                </div>
-              )}
-              {!extractResult && !isExtracting && (
-                <div className="flex items-center gap-2">
-                  <AlertCircle className="h-4 w-4 text-steel" />
-                  <span className="text-steel">Upload documents and run AI extraction to validate</span>
-                </div>
-              )}
-            </div>
-            {hasCounterpartyDocs && (
-              <p className="mt-3 text-xs text-steel">
-                {shipmentSaved ? "Draft saved. Creating again updates it." : ""}
-                {" "}The shipment will be saved as <span className="font-bold text-pearl">In Progress</span> while waiting for counterparty documents.
-              </p>
-            )}
-          </div>
-        );
-      })()}
 
       {error && (
         <p className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-600">

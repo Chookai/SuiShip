@@ -73,6 +73,28 @@ function cacheExtraction(
   }
 }
 
+function ensureCachedRawPdf(
+  sha256: string,
+  fileName: string,
+  sizeBytes: number,
+  rawPdf: Buffer
+): void {
+  try {
+    const db = tryGetDb();
+    if (!db) return;
+    db.prepare(`
+      UPDATE file_cache
+      SET raw_pdf = COALESCE(raw_pdf, ?),
+          file_name = ?,
+          size_bytes = ?,
+          last_hit_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+      WHERE sha256 = ?
+    `).run(rawPdf, fileName, sizeBytes, sha256);
+  } catch {
+    // non-fatal — extraction still returned correctly
+  }
+}
+
 function recordExtractionRun(
   shipmentId: string,
   sha256Map: Map<string, string>,
@@ -88,9 +110,6 @@ function recordExtractionRun(
     // Mark previous runs as superseded
     db.prepare(
       "UPDATE extraction_runs SET is_superseded = 1 WHERE shipment_id = ?"
-    ).run(shipmentId);
-    db.prepare(
-      "DELETE FROM shipment_files WHERE shipment_id = ? AND is_final = 0"
     ).run(shipmentId);
 
     db.prepare(`
@@ -145,6 +164,52 @@ function mergeAggregateResults(base: AggregateResult, extraDocs: ExtractedDoc[])
   };
 }
 
+function aggregateDocs(result: AggregateResult): ExtractedDoc[] {
+  return [
+    ...result.detected.commercial_invoice,
+    ...result.detected.packing_list,
+    ...result.detected.bill_of_lading,
+    ...result.detected.certificate_of_origin,
+    ...result.garbage.map((g) => g.file),
+    ...result.errors,
+    ...result.low_confidence,
+  ];
+}
+
+function getLatestAggregate(shipmentId: string): AggregateResult | null {
+  try {
+    const db = tryGetDb();
+    if (!db) return null;
+    const row = db
+      .prepare(
+        `SELECT aggregate_json FROM extraction_runs
+         WHERE shipment_id = ? AND is_superseded = 0
+         ORDER BY created_at DESC LIMIT 1`
+      )
+      .get(shipmentId) as { aggregate_json: string } | undefined;
+    return row ? (JSON.parse(row.aggregate_json) as AggregateResult) : null;
+  } catch {
+    return null;
+  }
+}
+
+function mergeAggregateRuns(existing: AggregateResult, incoming: AggregateResult): AggregateResult {
+  const docsByName = new Map<string, ExtractedDoc>();
+  for (const doc of aggregateDocs(existing)) docsByName.set(doc.file_name, doc);
+  for (const doc of aggregateDocs(incoming)) docsByName.set(doc.file_name, doc);
+
+  const merged = aggregate([...docsByName.values()], incoming.cross_validation);
+  return {
+    ...merged,
+    summary: {
+      ...merged.summary,
+      total_haiku_cost_usd:
+        (existing.summary.total_haiku_cost_usd ?? 0) + (incoming.summary.total_haiku_cost_usd ?? 0),
+    },
+    extractedRef: merged.extractedRef ?? incoming.extractedRef ?? existing.extractedRef,
+  };
+}
+
 export async function POST(request: NextRequest) {
   let formData: FormData;
   try {
@@ -193,6 +258,10 @@ export async function POST(request: NextRequest) {
 
     const cached = useExtractionCache ? getCachedExtraction(sha256) : null;
     if (cached) {
+      const buf = bufferMap.get(sha256);
+      if (buf) {
+        ensureCachedRawPdf(sha256, pdfFile.name, pdfFile.sizeBytes, buf);
+      }
       // Return cached result with original file name (id may differ across uploads)
       cachedDocs.set(pdfFile.id, { ...cached, file_id: pdfFile.id, file_name: pdfFile.name });
     } else {
@@ -233,6 +302,15 @@ export async function POST(request: NextRequest) {
     // Inject cached docs back into the detected map
     if (cachedDocs.size > 0) {
       result = mergeAggregateResults(result, [...cachedDocs.values()]);
+    }
+
+    // Accumulate per-shipment extractions so counterparties can upload one
+    // document at a time without replacing the earlier document set.
+    if (shipmentId) {
+      const existing = getLatestAggregate(shipmentId);
+      if (existing) {
+        result = mergeAggregateRuns(existing, result);
+      }
     }
 
     // Record extraction run + shipment files after cached docs are merged.
