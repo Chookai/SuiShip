@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db";
 import { getSuiPassportClient } from "@/lib/sui-passport";
+import { parseEd25519Keypair } from "@/lib/sui-keypair";
 
 export const runtime = "nodejs";
 
@@ -17,9 +18,10 @@ export async function POST(
       noteHash?: string;
       capObjectId?: string;
       requesterAddress?: string;
+      signerKeyHex?: string;
     };
 
-    const { role, action, noteHash, capObjectId, requesterAddress } = body;
+    const { role, action, noteHash, capObjectId, requesterAddress, signerKeyHex } = body;
     if (!role || !action || !requesterAddress) {
       return NextResponse.json(
         { error: "role, action, and requesterAddress are required" },
@@ -44,18 +46,38 @@ export async function POST(
 
     const client = getSuiPassportClient();
     const logObjectId = row.endorsement_log_object_id;
+    const signerKeypair = signerKeyHex ? parseEd25519Keypair(signerKeyHex) : undefined;
+    const signerAddress = signerKeypair?.toSuiAddress() ?? requesterAddress;
+    if (signerKeypair && signerAddress !== requesterAddress) {
+      return NextResponse.json(
+        { error: "signerKeyHex does not match requesterAddress" },
+        { status: 400 }
+      );
+    }
     let txDigest: string;
 
     if (role === "freight_forwarder") {
       if (!capObjectId) {
         return NextResponse.json({ error: "capObjectId required for freight_forwarder role" }, { status: 400 });
       }
-      ({ txDigest } = await client.endorseAsFreightForwarder({ logObjectId, capObjectId, action, noteHash }));
+      ({ txDigest } = await client.endorseAsFreightForwarder({
+        logObjectId,
+        capObjectId,
+        action,
+        noteHash,
+        signerKeypair,
+      }));
     } else if (role === "customs") {
       if (!capObjectId) {
         return NextResponse.json({ error: "capObjectId required for customs role" }, { status: 400 });
       }
-      ({ txDigest } = await client.endorseAsCustoms({ logObjectId, capObjectId, action, noteHash }));
+      ({ txDigest } = await client.endorseAsCustoms({
+        logObjectId,
+        capObjectId,
+        action,
+        noteHash,
+        signerKeypair,
+      }));
     } else {
       ({ txDigest } = await client.endorseShipment({ logObjectId, role, action, noteHash }));
     }
@@ -67,11 +89,11 @@ export async function POST(
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       randomUUID(), shipmentId, row.passport_id, logObjectId,
-      role, requesterAddress, action, noteHash ?? null,
+      role, signerAddress, action, noteHash ?? null,
       signedAtMs, txDigest
     );
 
-    return NextResponse.json({ txDigest, endorsement: { role, signer: requesterAddress, action, signedAtMs } });
+    return NextResponse.json({ txDigest, endorsement: { role, signer: signerAddress, action, signedAtMs } });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

@@ -1,3 +1,5 @@
+import type { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
+
 export type MemWalAccessScope =
   | "full"
   | "commercial_fields"
@@ -77,6 +79,7 @@ export type EndorseWithCapInput = {
   capObjectId: string;
   action: string;
   noteHash?: string;
+  signerKeypair?: Ed25519Keypair;
 };
 
 export type CreateShipmentInput = {

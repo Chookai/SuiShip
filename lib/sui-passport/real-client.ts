@@ -2,6 +2,7 @@ import { SuiJsonRpcClient, getJsonRpcFullnodeUrl } from "@mysten/sui/jsonRpc";
 import { Inputs, Transaction } from "@mysten/sui/transactions";
 import { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import pino from "pino";
+import { parseEd25519Keypair } from "@/lib/sui-keypair";
 import type {
   SuiPassportClient,
   DocCommitInput,
@@ -59,14 +60,7 @@ function getRegistryId(): string {
 function getKeypair(): Ed25519Keypair {
   const key = process.env.SUI_PRIVATE_KEY;
   if (!key) throw new Error("SUI_PRIVATE_KEY env var is not set");
-  if (key.startsWith("suiprivkey")) {
-    return Ed25519Keypair.fromSecretKey(key);
-  }
-  const bytes = Buffer.from(key.replace(/^0x/, ""), "hex");
-  if (bytes.length !== 32) {
-    throw new Error("SUI_PRIVATE_KEY must be 32 bytes hex or a bech32 suiprivkey");
-  }
-  return Ed25519Keypair.fromSecretKey(bytes);
+  return parseEd25519Keypair(key);
 }
 
 function getClient(): SuiJsonRpcClient {
@@ -101,7 +95,7 @@ function hexToFixedBytes(hex: string, size: number): number[] {
   return Array.from(Buffer.from(padded, "hex"));
 }
 
-async function executeTransaction(tx: Transaction): Promise<{
+async function executeTransaction(tx: Transaction, signer: Ed25519Keypair = getKeypair()): Promise<{
   digest: string;
   objectChanges: Array<{ type: string; objectId: string; objectType?: string }>;
   effects?: {
@@ -111,11 +105,10 @@ async function executeTransaction(tx: Transaction): Promise<{
   };
 }> {
   const client = getClient();
-  const keypair = getKeypair();
 
   const result = await client.signAndExecuteTransaction({
     transaction: tx,
-    signer: keypair,
+    signer,
     options: { showEffects: true, showObjectChanges: true },
   });
 
@@ -159,7 +152,8 @@ async function executeRetriableTransaction(
   build: () => Transaction,
   shipmentId?: string,
   maxAttempts = 3,
-  onRetry?: (attempt: number, err: unknown) => Promise<void> | void
+  onRetry?: (attempt: number, err: unknown) => Promise<void> | void,
+  signer: Ed25519Keypair = getKeypair()
 ): Promise<{
   digest: string;
   objectChanges: Array<{ type: string; objectId: string; objectType?: string }>;
@@ -171,7 +165,7 @@ async function executeRetriableTransaction(
 }> {
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     try {
-      const result = await executeTransaction(build());
+      const result = await executeTransaction(build(), signer);
       if (shipmentId) {
         const metrics = getOrCreateShipmentTxMetrics(shipmentId);
         metrics.mutableTxCount += 1;
@@ -556,6 +550,7 @@ export class RealSuiPassportClient implements SuiPassportClient {
     capObjectId: string;
     action: string;
     noteHash?: string;
+    signerKeypair?: Ed25519Keypair;
   }): Promise<{ txDigest: string }> {
     const tx = new Transaction();
     const noteBytes = input.noteHash ? hexToBytes(input.noteHash) : [];
@@ -569,7 +564,7 @@ export class RealSuiPassportClient implements SuiPassportClient {
         tx.object("0x6"),
       ],
     });
-    const { digest } = await executeTransaction(tx);
+    const { digest } = await executeTransaction(tx, input.signerKeypair ?? getKeypair());
     return { txDigest: digest };
   }
 
@@ -578,6 +573,7 @@ export class RealSuiPassportClient implements SuiPassportClient {
     capObjectId: string;
     action: string;
     noteHash?: string;
+    signerKeypair?: Ed25519Keypair;
   }): Promise<{ txDigest: string }> {
     const tx = new Transaction();
     const noteBytes = input.noteHash ? hexToBytes(input.noteHash) : [];
@@ -591,7 +587,7 @@ export class RealSuiPassportClient implements SuiPassportClient {
         tx.object("0x6"),
       ],
     });
-    const { digest } = await executeTransaction(tx);
+    const { digest } = await executeTransaction(tx, input.signerKeypair ?? getKeypair());
     return { txDigest: digest };
   }
 

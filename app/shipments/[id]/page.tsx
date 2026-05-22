@@ -26,6 +26,8 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PassportActions } from "@/components/passport-actions";
+import { CustodyTimeline } from "@/components/CustodyTimeline";
+import { ProvenancePanel } from "@/components/ProvenancePanel";
 import { QrCard } from "@/components/qr-card";
 import { useRole } from "@/components/role-context";
 import { Button, Panel, RiskBadge, StatusBadge } from "@/components/ui";
@@ -210,6 +212,7 @@ function StoredShipmentView({
 }) {
   const currentAccount = useCurrentAccount();
   const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
+  const [passportAvailable, setPassportAvailable] = useState(false);
   const [progressBusy, setProgressBusy] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [newDocumentName, setNewDocumentName] = useState("");
@@ -228,6 +231,30 @@ function StoredShipmentView({
     shipment.extractionStatus === "complete" &&
     !mintedExists &&
     documentPhase === "idle";
+
+  useEffect(() => {
+    if (!mintedExists) {
+      setPassportAvailable(false);
+      return;
+    }
+
+    let cancelled = false;
+    fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/passport`)
+      .then((response) => {
+        if (!response.ok) return false;
+        return true;
+      })
+      .then((available) => {
+        if (!cancelled) setPassportAvailable(Boolean(available));
+      })
+      .catch(() => {
+        if (!cancelled) setPassportAvailable(false);
+      });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [mintedExists, shipment.id]);
 
   function appendProgressManifest(manifest: ProgressManifest) {
     onUpdate({
@@ -453,6 +480,12 @@ function StoredShipmentView({
       {(shipment.passportId?.length || shipment.txDigest?.length) ? (
         <div className="mt-6">
           <PassportMintedCard shipment={shipment} />
+        </div>
+      ) : null}
+      {passportAvailable ? (
+        <div className="mt-6 grid gap-6">
+          <CustodyTimeline shipmentId={shipment.id} />
+          <ProvenancePanel shipmentId={shipment.id} />
         </div>
       ) : null}
 

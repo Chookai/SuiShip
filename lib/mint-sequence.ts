@@ -3,7 +3,8 @@ import JSZip from "jszip";
 import pLimit from "p-limit";
 import pino from "pino";
 import { getDb } from "./db";
-import { getShipmentById, updateShipmentMemWalSync, updateShipmentMintPointers } from "./shipments-server";
+import { getShipmentById, updateShipmentMemWalSync, updateShipmentMintPointers, updateShipmentSealPointers } from "./shipments-server";
+import { SEAL_ENABLED, encryptPrivateManifest, objectIdToSealId } from "./seal-client";
 import { storeBlobServer, WALRUS_AGGREGATOR, WALRUS_MINT_EPOCHS, aggregatorUrl } from "./walrus";
 import { getSuiPassportClient } from "./sui-passport";
 import { isMemWalConfigured, memwalRemember } from "./memwal/client";
@@ -215,7 +216,12 @@ export async function executeMintSequence(
     };
   }
 
-  // ── Step b: Upload to Walrus ───────────────────────────────────────────────
+  // ── SEAL path: confidential upload ordering ────────────────────────────────
+  if (SEAL_ENABLED) {
+    return sealMintPath(shipmentId, ownerAddress, db, pointers, latency, mintStartedAt);
+  }
+
+  // ── Step b: Upload to Walrus (plaintext path) ──────────────────────────────
   let walrusBlobIds: string[];
 
   if (pointers?.walrus_manifest_blob_id) {
@@ -268,7 +274,7 @@ export async function executeMintSequence(
     on_chain_accumulator_id: string | null;
   } | undefined;
 
-  let finalizedMint: { passportId: string; txDigest: string; mintedAt: string };
+  let finalizedMint: { passportId: string; txDigest: string; mintedAt: string; endorsementLogId?: string };
   try {
     finalizedMint = await runShipmentSuiMutation(shipmentId, "mintShipment", async () => {
       let resolvedChainRow = shipmentOnChainRow;
@@ -328,6 +334,7 @@ export async function executeMintSequence(
         passportId: result.passportId,
         txDigest: result.txDigest,
         mintedAt: result.mintedAt,
+        endorsementLogId: result.endorsementLogId,
       };
       if (result.endorsementLogId) {
         db.prepare(
@@ -993,4 +1000,406 @@ function sanitizeZipSegment(value: string) {
     .replace(/[/\\?%*:|"<>]/g, "-")
     .replace(/\s+/g, "_")
     .replace(/^\.+$/, "file") || "file";
+}
+
+/**
+ * SEAL mint path: encrypts confidential payload BEFORE finalize so the passport's
+ * walrus_blob_ids contains ONLY the public manifest and the encrypted blob.
+ * Called from executeMintSequence when SEAL_ENABLED=true.
+ */
+async function sealMintPath(
+  shipmentId: string,
+  ownerAddress: string,
+  db: ReturnType<typeof getDb>,
+  pointers: MintPointerRow | undefined,
+  latency: MintLatencyBreakdown,
+  mintStartedAt: number,
+): Promise<MintResult | MintError> {
+  // Idempotency: check if SEAL uploads already happened (partial retry support)
+  const sealRow = db.prepare(
+    "SELECT encrypted_walrus_blob_id, seal_object_id, walrus_manifest_blob_id FROM shipments WHERE id = ?"
+  ).get(shipmentId) as {
+    encrypted_walrus_blob_id: string | null;
+    seal_object_id: string | null;
+    walrus_manifest_blob_id: string | null;
+  } | undefined;
+
+  const sealAlreadyUploaded = !!(sealRow?.encrypted_walrus_blob_id && sealRow?.walrus_manifest_blob_id);
+
+  const suiClient = getSuiPassportClient();
+  resetSuiTxMetrics(shipmentId);
+
+  let walrusBlobIds: string[];
+  let manifestHash: string;
+  let packageHash: string;
+  let encryptedBlobId: string;
+  let encryptionId: string;
+
+  if (sealAlreadyUploaded) {
+    walrusBlobIds = [sealRow!.walrus_manifest_blob_id!, sealRow!.encrypted_walrus_blob_id!];
+    encryptedBlobId = sealRow!.encrypted_walrus_blob_id!;
+    encryptionId = objectIdToSealId(sealRow!.seal_object_id ?? "");
+    manifestHash = getManifestHash(shipmentId, db);
+    packageHash = manifestHash;
+    logger.info({ shipmentId }, "[seal] SEAL uploads already done — resuming at finalize");
+  } else {
+    walrusBlobIds = [];
+    manifestHash = "";
+    packageHash = "";
+    encryptedBlobId = "";
+    encryptionId = "";
+  }
+
+  let finalizedMint: {
+    passportId: string; txDigest: string; mintedAt: string;
+    endorsementLogId?: string; memWalSpaceId: string;
+    resolvedWalrusBlobIds: string[]; resolvedManifestHash: string;
+  };
+
+  try {
+    finalizedMint = await runShipmentSuiMutation(shipmentId, "sealMintShipment", async () => {
+      let accumulatorId = sealRow?.seal_object_id ?? "";
+      let resolvedRecordId = "";
+      let resolvedAccumulatorId = accumulatorId;
+
+      if (process.env.SUI_CLIENT === "real") {
+        try {
+          const bootstrapStartedAt = Date.now();
+          const initialized = await ensureOnChainShipmentInitialized(shipmentId, ownerAddress, db);
+          latency.suiBootstrapMs += Date.now() - bootstrapStartedAt;
+          resolvedRecordId = initialized.onChainRecordId;
+          resolvedAccumulatorId = initialized.onChainAccumulatorId;
+          accumulatorId = resolvedAccumulatorId;
+
+          const commitLoopStartedAt = Date.now();
+          await backfillOnChainDocumentCommitments(shipmentId, initialized, db);
+          latency.suiCommitLoopMs += Date.now() - commitLoopStartedAt;
+        } catch (err) {
+          throw new Error(`Sui bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      } else {
+        const chainRow = db.prepare("SELECT on_chain_record_id, on_chain_accumulator_id FROM shipments WHERE id = ?")
+          .get(shipmentId) as { on_chain_record_id: string | null; on_chain_accumulator_id: string | null } | undefined;
+        resolvedRecordId = chainRow?.on_chain_record_id ?? "";
+        resolvedAccumulatorId = chainRow?.on_chain_accumulator_id ?? shipmentId;
+        accumulatorId = resolvedAccumulatorId;
+      }
+
+      // SEAL uploads (if not already done)
+      let currentWalrusBlobIds = walrusBlobIds;
+      let currentPackageHash = packageHash;
+      let currentManifestHash = manifestHash;
+      let currentEncryptedBlobId = encryptedBlobId;
+      let currentEncryptionId = encryptionId;
+
+      if (!sealAlreadyUploaded) {
+        if (!accumulatorId) throw new Error("[seal] accumulatorId unavailable — cannot encrypt");
+
+        // Build all payloads in memory
+        const payloadsStartedAt = Date.now();
+        const payloads = await buildSealManifestPayloads(shipmentId, ownerAddress, db);
+        currentPackageHash = payloads.packageHash;
+        latency.walrusPackageMs += Date.now() - payloadsStartedAt;
+
+        // Upload public manifest (plaintext — hashes/scores only, no confidential data)
+        const pubResult = await storeBlobServer({
+          data: Buffer.from(payloads.publicManifestBytes),
+          fileName: `${shipmentId}/manifest.public.json`,
+          mimeType: "application/json",
+          epochs: WALRUS_MINT_EPOCHS,
+        });
+        latency.walrusManifestMs += Date.now() - payloadsStartedAt;
+
+        db.prepare(
+          `INSERT OR IGNORE INTO walrus_blobs (blob_id, shipment_id, purpose, file_name, size_bytes, sha256, end_epoch, publisher) VALUES (?, ?, 'manifest', ?, ?, ?, ?, ?)`
+        ).run(pubResult.blobId, shipmentId, `${shipmentId}/manifest.public.json`, pubResult.sizeBytes, currentPackageHash, pubResult.endEpoch ?? null, pubResult.publisher);
+
+        // Cache public manifest JSON for display / getManifestHash
+        db.prepare(`INSERT OR REPLACE INTO manifest_cache (shipment_id, manifest_json, fetched_from) VALUES (?, ?, 'local')`)
+          .run(shipmentId, payloads.publicManifestBytes.toString("utf-8"));
+
+        // SEAL-encrypt the confidential ZIP (private manifest + cargo manifest + PDFs)
+        const sealStartedAt = Date.now();
+        currentEncryptionId = objectIdToSealId(accumulatorId);
+        const sealed = await encryptPrivateManifest(payloads.confidentialZipBytes, currentEncryptionId);
+        if (!sealed) throw new Error("[seal] encryptPrivateManifest returned null with SEAL_ENABLED=true");
+
+        const sealUploadResult = await storeBlobServer({
+          data: Buffer.from(sealed.encryptedBytes),
+          fileName: `${shipmentId}-confidential.bin`,
+          mimeType: "application/octet-stream",
+          epochs: WALRUS_MINT_EPOCHS,
+        });
+        latency.walrusDocumentsMs += Date.now() - sealStartedAt;
+
+        db.prepare(
+          `INSERT OR IGNORE INTO walrus_blobs (blob_id, shipment_id, purpose, file_name, size_bytes, end_epoch, publisher) VALUES (?, ?, 'seal_encrypted', ?, ?, ?, ?)`
+        ).run(sealUploadResult.blobId, shipmentId, `${shipmentId}-confidential.bin`, sealUploadResult.sizeBytes, sealUploadResult.endEpoch ?? null, sealUploadResult.publisher);
+
+        currentEncryptedBlobId = sealUploadResult.blobId;
+        currentWalrusBlobIds = [pubResult.blobId, sealUploadResult.blobId];
+        currentManifestHash = getManifestHash(shipmentId, db);
+
+        // Persist SEAL pointers before finalize (so a finalize retry can skip this)
+        updateShipmentSealPointers(shipmentId, {
+          sealObjectId: accumulatorId,
+          encryptedWalrusBlobId: currentEncryptedBlobId,
+        });
+
+        logger.info({
+          shipmentId,
+          publicManifestBlobId: pubResult.blobId,
+          encryptedBlobId: currentEncryptedBlobId,
+          accumulatorIdPrefix: accumulatorId.slice(0, 16),
+        }, "[seal] SEAL uploads complete");
+      }
+
+      // MemWal
+      const memWalSpaceId = pointers?.memwal_space_id
+        ? pointers.memwal_space_id
+        : queueMemWalSync(shipmentId, ownerAddress, currentWalrusBlobIds, db).spaceId;
+
+      // Validation + score
+      const latestValidation = db.prepare(
+        `SELECT doc_set_hash FROM validation_runs WHERE shipment_id = ? AND is_superseded = 0 ORDER BY created_at DESC LIMIT 1`
+      ).get(shipmentId) as { doc_set_hash: string | null } | undefined;
+      const validationHash = createHash("sha256").update(latestValidation?.doc_set_hash ?? shipmentId).digest("hex");
+      const aiRow = db.prepare("SELECT ai_json FROM shipments WHERE id = ?").get(shipmentId) as { ai_json: string | null } | undefined;
+      const verificationScore = (() => {
+        try { return (JSON.parse(aiRow?.ai_json ?? "{}") as { score?: number }).score ?? 85; } catch { return 85; }
+      })();
+
+      // Finalize on Sui
+      const finalizeStartedAt = Date.now();
+      const result = await suiClient.mintPassport({
+        owner: ownerAddress,
+        shipmentId,
+        memWalSpaceId,
+        walrusBlobIds: currentWalrusBlobIds,
+        manifestHash: currentManifestHash,
+        metadata: {
+          recordId: resolvedRecordId,
+          accumulatorId: resolvedAccumulatorId,
+          packageHash: currentPackageHash,
+          validationHash,
+          verificationScore: String(verificationScore),
+          sealObjectId: currentEncryptionId,
+          encryptedBlobId: currentEncryptedBlobId,
+        },
+      });
+      latency.suiFinalizeMs += Date.now() - finalizeStartedAt;
+
+      if (result.endorsementLogId) {
+        db.prepare("UPDATE shipments SET endorsement_log_object_id = ? WHERE id = ?").run(result.endorsementLogId, shipmentId);
+      }
+
+      return {
+        passportId: result.passportId,
+        txDigest: result.txDigest,
+        mintedAt: result.mintedAt,
+        endorsementLogId: result.endorsementLogId,
+        memWalSpaceId,
+        resolvedWalrusBlobIds: currentWalrusBlobIds,
+        resolvedManifestHash: currentManifestHash,
+      };
+    });
+  } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const suiMetrics = takeSuiTxMetrics(shipmentId);
+    logger.error({ err, shipmentId, suiMetrics }, "[seal] Sui mutation failed");
+    return {
+      error: errorMessage.startsWith("Sui bootstrap failed:") ? errorMessage : `Sui mint failed (SEAL): ${errorMessage}`,
+      step: "sui",
+      retriable: true,
+    };
+  }
+
+  db.prepare("UPDATE shipment_files SET state = 'committed' WHERE shipment_id = ? AND state = 'validated'").run(shipmentId);
+
+  try {
+    updateShipmentMintPointers(shipmentId, {
+      passportId: finalizedMint.passportId,
+      txDigest: finalizedMint.txDigest,
+      memwalSpaceId: finalizedMint.memWalSpaceId,
+      walrusManifestBlobId: finalizedMint.resolvedWalrusBlobIds[0] ?? "",
+      manifestHash: finalizedMint.resolvedManifestHash,
+      mintedAt: finalizedMint.mintedAt,
+      walrusJson: JSON.stringify({ publicBlobId: finalizedMint.resolvedWalrusBlobIds[0], encryptedBlobId: finalizedMint.resolvedWalrusBlobIds[1], sealEnabled: true }),
+    });
+  } catch (err) {
+    logger.error({ err, shipmentId, passportId: finalizedMint.passportId }, "[seal] SQLite update failed after mint");
+    return {
+      error: `Passport ${finalizedMint.passportId} minted but SQLite update failed.`,
+      step: "db",
+      retriable: true,
+    };
+  }
+
+  const suiMetrics = takeSuiTxMetrics(shipmentId);
+  latency.mintE2eMs = Date.now() - mintStartedAt;
+  logger.info({
+    shipmentId,
+    passportId: finalizedMint.passportId,
+    walrusBlobIds: finalizedMint.resolvedWalrusBlobIds,
+    sealEnabled: true,
+    suiMutableTxCount: suiMetrics.mutableTxCount,
+    suiRetriesConsumed: suiMetrics.retryCountTotal,
+    perStageLatencyMs: latency,
+  }, "[seal] Mint sequence complete");
+
+  return {
+    passportId: finalizedMint.passportId,
+    txDigest: finalizedMint.txDigest,
+    mintedAt: finalizedMint.mintedAt,
+    walrusBlobIds: finalizedMint.resolvedWalrusBlobIds,
+    memWalSpaceId: finalizedMint.memWalSpaceId,
+    manifestHash: finalizedMint.resolvedManifestHash,
+  };
+}
+
+/**
+ * Build the two payloads needed for SEAL mint — without uploading anything.
+ * Returns:
+ *   publicManifestBytes — canonical JSON of manifest.public.json (hashes/scores only, no extracted values)
+ *   confidentialZipBytes — ZIP containing manifest.private.json + manifest.json (cargo) + all PDFs
+ *   packageHash — SHA256 of the canonical public manifest bytes
+ */
+async function buildSealManifestPayloads(
+  shipmentId: string,
+  ownerAddress: string,
+  db: ReturnType<typeof getDb>,
+): Promise<{ publicManifestBytes: Buffer; confidentialZipBytes: Buffer; packageHash: string }> {
+  const files = db.prepare(
+    `SELECT sf.sha256, sf.doc_type, sf.file_name, sf.size_bytes,
+            sf.slot_key, sf.uploaded_by_role, sf.on_chain_commitment_tx,
+            sf.version, sf.uploaded_at,
+            fc.raw_pdf, fc.extraction_json
+     FROM shipment_files sf
+     JOIN file_cache fc ON fc.sha256 = sf.sha256
+     WHERE sf.shipment_id = ?
+     ORDER BY sf.uploaded_at ASC`
+  ).all(shipmentId) as Array<ShipmentFileRow & FileCacheRow>;
+
+  if (files.length === 0) throw new Error("buildSealManifestPayloads: no files found");
+
+  const validationRow = db.prepare(
+    `SELECT overall_verdict, verdict_reason, doc_set_hash, model, issues_json,
+            strftime('%s', created_at) * 1000 AS created_at_ms
+     FROM validation_runs WHERE shipment_id = ? AND is_superseded = 0
+     ORDER BY created_at DESC LIMIT 1`
+  ).get(shipmentId) as {
+    overall_verdict: string | null; verdict_reason: string | null; doc_set_hash: string | null;
+    model: string | null; issues_json: string | null; created_at_ms: number | null;
+  } | undefined;
+
+  const chainRow = db.prepare(
+    "SELECT on_chain_record_id, on_chain_accumulator_id, ai_json FROM shipments WHERE id = ?"
+  ).get(shipmentId) as { on_chain_record_id: string | null; on_chain_accumulator_id: string | null; ai_json: string | null } | undefined;
+
+  const verificationScore = (() => {
+    try { return (JSON.parse(chainRow?.ai_json ?? "{}") as { score?: number }).score ?? 85; } catch { return 85; }
+  })();
+
+  const findingCounts = { error: 0, warning: 0, info: 0 };
+  if (validationRow?.issues_json) {
+    try {
+      for (const issue of JSON.parse(validationRow.issues_json) as { severity: string }[]) {
+        if (issue.severity === "error") findingCounts.error++;
+        else if (issue.severity === "warning") findingCounts.warning++;
+        else if (issue.severity === "info") findingCounts.info++;
+      }
+    } catch { /* leave zeros */ }
+  }
+
+  const sealedAtMs = validationRow?.created_at_ms ?? Date.now();
+  const usedNames = new Set<string>();
+  const publicDocuments: object[] = [];
+  const privateDocuments: object[] = [];
+
+  const confidentialZip = new JSZip();
+
+  files.forEach((file, index) => {
+    const docType = file.doc_type || "document";
+    const extractionHash = file.extraction_json
+      ? createHash("sha256").update(file.extraction_json).digest("hex")
+      : null;
+    const committedAtMs = file.uploaded_at ? new Date(file.uploaded_at).getTime() : null;
+
+    publicDocuments.push({
+      committed_at_ms: committedAtMs,
+      content_hash: file.sha256,
+      doc_type: docType,
+      extraction_hash: extractionHash,
+      file_name: file.file_name,
+      on_chain_commitment_tx: file.on_chain_commitment_tx ?? null,
+      size_bytes: file.size_bytes,
+      slot_key: file.slot_key ?? null,
+      uploaded_by_role: file.uploaded_by_role ?? null,
+      version: file.version ?? 1,
+    });
+
+    let extractionData: unknown = null;
+    if (file.extraction_json) {
+      try { extractionData = JSON.parse(file.extraction_json); } catch { /* leave null */ }
+    }
+    privateDocuments.push({ doc_type: docType, extraction: extractionData, file_name: file.file_name });
+
+    // Add PDF to confidential ZIP
+    if (file.raw_pdf) {
+      const zipPath = uniqueZipPath(usedNames, `${docType}/${index + 1}-${file.file_name}`);
+      confidentialZip.file(zipPath, file.raw_pdf as Buffer);
+    }
+  });
+
+  // Build manifest.public.json (no confidential data)
+  const publicManifestBase = {
+    documents: publicDocuments,
+    on_chain: {
+      accumulator_id: chainRow?.on_chain_accumulator_id ?? null,
+      passport_id: null,
+      record_id: chainRow?.on_chain_record_id ?? null,
+      registry_id: process.env.NEXT_PUBLIC_REGISTRY_ID ?? null,
+    },
+    schema_version: "suiship.walrus_package.v2",
+    sealed_at_ms: sealedAtMs,
+    shipment_id: shipmentId,
+    validation: {
+      finding_counts: findingCounts,
+      model: validationRow?.model ?? null,
+      overall_verdict: validationRow?.overall_verdict ?? null,
+      validated_at_ms: sealedAtMs,
+      validation_hash: validationRow?.doc_set_hash ?? null,
+      verification_score: verificationScore,
+    },
+  };
+
+  const packageHash = createHash("sha256").update(canonicalJson(publicManifestBase)).digest("hex");
+  const publicManifest = { ...publicManifestBase, public_manifest_hash: packageHash };
+  const publicManifestBytes = canonicalJson(publicManifest);
+
+  // Add manifests to confidential ZIP
+  confidentialZip.file(
+    "manifest.private.json",
+    JSON.stringify({
+      documents: privateDocuments,
+      schema_version: "suiship.walrus_package.v2",
+      shipment_id: shipmentId,
+      validation: {
+        issues: (() => { try { return JSON.parse(validationRow?.issues_json ?? "[]"); } catch { return []; } })(),
+        verdict_reason: validationRow?.verdict_reason ?? null,
+      },
+    }, null, 2)
+  );
+
+  // Also include the V1 cargo manifest (parties, HS code, declared value, ports)
+  const cargoManifestJson = buildManifestJson(shipmentId, ownerAddress, [], db);
+  confidentialZip.file("manifest.json", cargoManifestJson);
+
+  const confidentialZipBytes = await confidentialZip.generateAsync({
+    type: "nodebuffer",
+    compression: "DEFLATE",
+    compressionOptions: { level: 6 },
+  }) as Buffer;
+
+  return { publicManifestBytes, confidentialZipBytes, packageHash };
 }

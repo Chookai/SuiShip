@@ -1,7 +1,16 @@
 import Anthropic from "@anthropic-ai/sdk";
+import JSZip from "jszip";
+import type { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import pino from "pino";
 import { getDb } from "@/lib/db";
 import { getSuiPassportClient } from "@/lib/sui-passport";
+import {
+  SEAL_ENABLED,
+  decryptPrivateManifest,
+  objectIdToSealId,
+  resolveSealEncryptionObjectId,
+  SealUnavailableError,
+} from "@/lib/seal-client";
 
 const logger = pino({ name: "provenance-agent" });
 
@@ -26,6 +35,51 @@ export type ProvenanceAnswer = {
   decryptionSucceeded: boolean;
 };
 
+function isSealNoAccessError(err: unknown): boolean {
+  return err instanceof Error && (
+    err.name === "NoAccessError" ||
+    err.message.includes("does not have access")
+  );
+}
+
+async function extractZipEvidence(
+  plaintextZipBytes: Uint8Array,
+  evidence: Evidence[],
+): Promise<string> {
+  let extractionContext = "";
+  const zip = await JSZip.loadAsync(plaintextZipBytes);
+
+  const privateManifestFile = zip.file("manifest.private.json");
+  if (privateManifestFile) {
+    const privateManifest = JSON.parse(await privateManifestFile.async("string")) as Record<string, unknown>;
+    const docs = (privateManifest.documents as Array<Record<string, unknown>> | undefined) ?? [];
+    for (const doc of docs) {
+      if (!doc.extraction) continue;
+      const label = `${doc.doc_type ?? "document"}: ${doc.file_name ?? ""}`;
+      const value = JSON.stringify(doc.extraction, null, 2).slice(0, 500);
+      evidence.push({ type: "document_field", label, value });
+      extractionContext += `\n\n## ${label}\n${JSON.stringify(doc.extraction, null, 2)}`;
+    }
+  }
+
+  const cargoManifestFile = zip.file("manifest.json");
+  if (cargoManifestFile) {
+    const cargoManifest = JSON.parse(await cargoManifestFile.async("string")) as Record<string, unknown>;
+    evidence.push({
+      type: "document_field",
+      label: "Cargo manifest (parties + shipment details)",
+      value: JSON.stringify(
+        { parties: cargoManifest.parties, shipment: cargoManifest.shipment, cargo: cargoManifest.cargo },
+        null,
+        2,
+      ).slice(0, 500),
+    });
+    extractionContext += `\n\n## Cargo Manifest\n${JSON.stringify(cargoManifest, null, 2)}`;
+  }
+
+  return extractionContext;
+}
+
 function isAuthorized(
   requesterAddress: string,
   importer: string,
@@ -39,17 +93,21 @@ function isAuthorized(
 export async function answerProvenanceQuestion(
   shipmentId: string,
   question: string,
-  requesterAddress: string
+  requesterAddress: string,
+  requesterKeypair?: Ed25519Keypair,
 ): Promise<ProvenanceAnswer> {
   const db = getDb();
 
   const shipmentRow = db.prepare(
-    `SELECT passport_id, endorsement_log_object_id, encrypted_walrus_blob_id
+    `SELECT passport_id, endorsement_log_object_id, encrypted_walrus_blob_id,
+            seal_object_id, on_chain_accumulator_id
      FROM shipments WHERE id = ?`
   ).get(shipmentId) as {
     passport_id: string | null;
     endorsement_log_object_id: string | null;
     encrypted_walrus_blob_id: string | null;
+    seal_object_id: string | null;
+    on_chain_accumulator_id: string | null;
   } | undefined;
 
   if (!shipmentRow?.passport_id) {
@@ -94,7 +152,7 @@ export async function answerProvenanceQuestion(
   // authorize by SQLite mirror endorsements only. Importer/exporter check is skipped.
   // The demo flow requires at least one POST /passport/endorse call before the agent grants access.
   const onChainAddrKnown = !!(onChainImporter || onChainExporter);
-  const authorized = onChainAddrKnown
+  const appAuthorized = onChainAddrKnown
     ? isAuthorized(requesterAddress, onChainImporter, onChainExporter, onChainEndorsements)
     : onChainEndorsements.some((e) => e.signer === requesterAddress);
 
@@ -133,50 +191,120 @@ export async function answerProvenanceQuestion(
 
   // Try to get decrypted extraction data if authorized
   let decryptionSucceeded = false;
+  let sealStatus: "disabled" | "success" | "degraded" = "disabled";
   let extractionContext = "";
+  let authorized = appAuthorized;
+
+  const encryptedBlobId = shipmentRow.encrypted_walrus_blob_id;
+  const endorsementLogId = shipmentRow.endorsement_log_object_id;
+  const accumulatorId = shipmentRow.on_chain_accumulator_id ?? shipmentRow.seal_object_id;
+  const canAttemptSeal = Boolean(SEAL_ENABLED && requesterKeypair && encryptedBlobId && accumulatorId && endorsementLogId);
+
+  if (canAttemptSeal) {
+    const encryptionObjectId = await resolveSealEncryptionObjectId({
+      accumulatorId: accumulatorId!,
+      endorsementLogId: endorsementLogId!,
+      sealObjectId: shipmentRow.seal_object_id,
+    });
+    const encryptionId = objectIdToSealId(encryptionObjectId);
+    try {
+      const plaintextZipBytes = await decryptPrivateManifest(
+        encryptedBlobId!,
+        accumulatorId!,
+        endorsementLogId!,
+        encryptionId,
+        requesterKeypair,
+      );
+      extractionContext = await extractZipEvidence(plaintextZipBytes, evidence);
+      decryptionSucceeded = true;
+      sealStatus = "success";
+      authorized = true;
+      logger.info({ shipmentId, requesterAddress }, "[seal] provenance agent decryption succeeded with requester key");
+    } catch (err) {
+      if (err instanceof SealUnavailableError) {
+        sealStatus = "disabled";
+      } else if (isSealNoAccessError(err)) {
+        logger.warn({ err, shipmentId, requesterAddress }, "[seal] requester denied by SEAL key servers");
+        return {
+          answer: "Access denied: you are not endorsed on this shipment. Ask the importer or exporter to endorse you, then try again.",
+          evidence: [],
+          authorized: false,
+          decryptionSucceeded: false,
+        };
+      } else {
+        sealStatus = "degraded";
+        logger.warn({ err, shipmentId, requesterAddress }, "[seal] requester decryption failed — considering fallback");
+      }
+    }
+  }
 
   if (authorized) {
-    // For now: read extraction from manifest_cache or file_cache (SEAL decryption wired in Part 2)
-    const manifestRow = db.prepare(
-      "SELECT manifest_json FROM manifest_cache WHERE shipment_id = ?"
-    ).get(shipmentId) as { manifest_json: string } | undefined;
-
-    if (manifestRow) {
+    if (!decryptionSucceeded && SEAL_ENABLED && !requesterKeypair && encryptedBlobId && accumulatorId && endorsementLogId) {
+      const encryptionObjectId = await resolveSealEncryptionObjectId({
+        accumulatorId,
+        endorsementLogId,
+        sealObjectId: shipmentRow.seal_object_id,
+      });
+      const encryptionId = objectIdToSealId(encryptionObjectId);
       try {
-        const manifest = JSON.parse(manifestRow.manifest_json) as Record<string, unknown>;
-        extractionContext = JSON.stringify(manifest, null, 2);
+        const plaintextZipBytes = await decryptPrivateManifest(encryptedBlobId, accumulatorId, endorsementLogId, encryptionId);
+        extractionContext = await extractZipEvidence(plaintextZipBytes, evidence);
         decryptionSucceeded = true;
-        evidence.push({
-          type: "document_field",
-          label: "Manifest (cached)",
-          value: `Available — ${Object.keys(manifest).join(", ")}`,
-        });
-      } catch { /* skip */ }
+        sealStatus = "success";
+        logger.info({ shipmentId }, "[seal] provenance agent decryption succeeded");
+      } catch (err) {
+        if (err instanceof SealUnavailableError) {
+          sealStatus = "disabled";
+        } else {
+          sealStatus = "degraded";
+          logger.warn({ err, shipmentId }, "[seal] decryption failed — falling back to plaintext cache");
+        }
+      }
     }
 
-    // Also include per-doc extraction from file_cache
-    const fileRows = db.prepare(
-      `SELECT sf.doc_type, sf.file_name, sf.sha256, fc.extraction_json
-       FROM shipment_files sf JOIN file_cache fc ON fc.sha256 = sf.sha256
-       WHERE sf.shipment_id = ?`
-    ).all(shipmentId) as Array<{
-      doc_type: string;
-      file_name: string;
-      sha256: string;
-      extraction_json: string | null;
-    }>;
+    // ── Plaintext fallback: manifest_cache + file_cache ────────────────────
+    // Used when SEAL_ENABLED=false, or when SEAL decryption failed (degraded mode).
+    if (!decryptionSucceeded && authorized) {
+      const manifestRow = db.prepare(
+        "SELECT manifest_json FROM manifest_cache WHERE shipment_id = ?"
+      ).get(shipmentId) as { manifest_json: string } | undefined;
 
-    for (const f of fileRows) {
-      if (!f.extraction_json) continue;
-      try {
-        const ext = JSON.parse(f.extraction_json) as Record<string, unknown>;
-        evidence.push({
-          type: "document_field",
-          label: `${f.doc_type}: ${f.file_name}`,
-          value: JSON.stringify(ext.data ?? ext, null, 2).slice(0, 500),
-        });
-        extractionContext += `\n\n## ${f.doc_type} (${f.file_name})\n${JSON.stringify(ext.data ?? ext, null, 2)}`;
-      } catch { /* skip */ }
+      if (manifestRow) {
+        try {
+          const manifest = JSON.parse(manifestRow.manifest_json) as Record<string, unknown>;
+          extractionContext = JSON.stringify(manifest, null, 2);
+          decryptionSucceeded = true;
+          evidence.push({
+            type: "document_field",
+            label: sealStatus === "degraded" ? "Manifest (cached — SEAL degraded)" : "Manifest (cached)",
+            value: `Available — ${Object.keys(manifest).join(", ")}`,
+          });
+        } catch { /* skip */ }
+      }
+
+      const fileRows = db.prepare(
+        `SELECT sf.doc_type, sf.file_name, sf.sha256, fc.extraction_json
+         FROM shipment_files sf JOIN file_cache fc ON fc.sha256 = sf.sha256
+         WHERE sf.shipment_id = ?`
+      ).all(shipmentId) as Array<{
+        doc_type: string;
+        file_name: string;
+        sha256: string;
+        extraction_json: string | null;
+      }>;
+
+      for (const f of fileRows) {
+        if (!f.extraction_json) continue;
+        try {
+          const ext = JSON.parse(f.extraction_json) as Record<string, unknown>;
+          evidence.push({
+            type: "document_field",
+            label: `${f.doc_type}: ${f.file_name}`,
+            value: JSON.stringify(ext.data ?? ext, null, 2).slice(0, 500),
+          });
+          extractionContext += `\n\n## ${f.doc_type} (${f.file_name})\n${JSON.stringify(ext.data ?? ext, null, 2)}`;
+        } catch { /* skip */ }
+      }
     }
   }
 

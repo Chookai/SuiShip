@@ -42,6 +42,12 @@ export async function GET(
       tx_digest: string;
       created_at: string;
     }>;
+    const txDigestByKey = new Map(
+      endorsements.map((endorsement) => [
+        `${endorsement.role}:${endorsement.signer_address}:${endorsement.action}:${endorsement.signed_at_ms}`,
+        endorsement.tx_digest,
+      ]),
+    );
 
     // Optionally enrich from on-chain if endorsement log ID is known
     let onChainEndorsements: typeof endorsements | null = null;
@@ -55,7 +61,7 @@ export async function GET(
           action: e.action,
           note_hash: e.noteHash || null,
           signed_at_ms: e.signedAtMs,
-          tx_digest: "",
+          tx_digest: txDigestByKey.get(`${e.role}:${e.signer}:${e.action}:${e.signedAtMs}`) ?? "",
           created_at: new Date(e.signedAtMs).toISOString(),
         }));
       } catch {

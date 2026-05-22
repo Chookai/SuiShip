@@ -603,15 +603,18 @@ module suiship::shipment_passport {
 
     // ── SEAL access policy ───────────────────────────────────────────────────
 
-    /// Called by SEAL key servers to gate decryption of the private payload.
-    /// Approves if the caller is the importer, exporter, or any endorser on the log.
-    /// NOTE: exact seal_approve signature must be verified against @mysten/seal v1.1.3 docs.
+    /// Called by SEAL key servers to gate decryption of the confidential payload.
+    /// SEAL identity = DocAccumulator object ID (known before finalize, used as encryption id).
+    /// Authorization: caller must be importer, exporter, or any endorser on the log.
     public fun seal_approve(
         id: vector<u8>,
+        accumulator: &DocAccumulator,
         log: &ShipmentEndorsementLog,
         ctx: &TxContext,
     ) {
-        let _ = id;
+        assert!(id == object::id_to_bytes(&object::id(accumulator)), E_WRONG_SHIPMENT);
+        assert!(accumulator.shipment_id == log.shipment_id, E_WRONG_SHIPMENT);
+
         let sender = tx_context::sender(ctx);
         if (sender == log.importer || sender == log.exporter) { return };
         let mut i = 0;

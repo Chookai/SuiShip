@@ -400,6 +400,19 @@ export function updateShipmentMintPointers(
   `).run({ ...pointers, id });
 }
 
+export function updateShipmentSealPointers(
+  id: string,
+  pointers: { sealObjectId: string; encryptedWalrusBlobId: string },
+): void {
+  getDb().prepare(`
+    UPDATE shipments SET
+      seal_object_id = @sealObjectId,
+      encrypted_walrus_blob_id = @encryptedWalrusBlobId,
+      updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+    WHERE id = @id
+  `).run({ ...pointers, id });
+}
+
 export function updateShipmentMemWalSync(
   id: string,
   sync: {
