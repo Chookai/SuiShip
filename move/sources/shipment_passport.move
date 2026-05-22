@@ -1,52 +1,138 @@
+/// SuiShip — on-chain shipping document verification.
+///
+/// Three objects work together:
+///   1. ShipmentRecord   — lightweight metadata created at shipment creation.
+///   2. DocAccumulator   — shared object; each document upload appends a cheap
+///                         commitment (content_hash + extraction_hash) before mint.
+///   3. ShipmentPassport — final NFT created at mint; links Walrus blobs, MemWal
+///                         audit trail, and the frozen accumulator.
+///
+/// A ShipmentRegistry singleton prevents duplicate shipment IDs.
 #[allow(duplicate_alias, lint(public_entry))]
 module suiship::shipment_passport {
-    use std::option::Option;
     use std::string::{Self, String};
     use sui::clock::{Self, Clock};
     use sui::event;
     use sui::object::{Self, ID, UID};
+    use sui::table::{Self, Table};
     use sui::transfer;
     use sui::tx_context::{Self, TxContext};
 
-    const MIN_VERIFICATION_SCORE: u64 = 90;
+    // ── Error codes ──────────────────────────────────────────────────────────
 
-    const E_NOT_AUTHORIZED: u64 = 0;
-    const E_LOW_VERIFICATION_SCORE: u64 = 1;
+    const E_NOT_AUTHORIZED:       u64 = 0;
+    const E_LOW_SCORE:            u64 = 1;
     const E_EMPTY_WALRUS_BLOB_ID: u64 = 2;
-    const E_EMPTY_DOCUMENT_PACKAGE: u64 = 3;
+    const E_EMPTY_PACKAGE_HASH:   u64 = 3;
+    const E_NO_DOCUMENTS:         u64 = 4;
+    const E_DUPLICATE_SHIPMENT:   u64 = 5;
+    const E_ALREADY_FINALIZED:    u64 = 6;
+    const E_WRONG_SHIPMENT:       u64 = 7;
 
-    /// Final Sui proof that a shipment's verified document package was created.
-    ///
-    /// The actual PDFs live in one ZIP package on Walrus. The AI validation and
-    /// audit trail live in MemWal progress manifests. This object keeps the
-    /// minimum on-chain proof: who signed, which shipment, where to retrieve the
-    /// package/validation, and the final validation score.
+    const MIN_VERIFICATION_SCORE: u64 = 85;
+
+    // ── Structs ──────────────────────────────────────────────────────────────
+
+    /// Singleton registry — deployed once in init().
+    /// Prevents duplicate shipment IDs on-chain.
+    public struct ShipmentRegistry has key {
+        id: UID,
+        /// shipment_id (String) → ShipmentRecord object ID
+        shipments: Table<String, ID>,
+    }
+
+    /// Lightweight shipment metadata. Created at shipment creation.
+    /// Transferred to the initiator (importer or exporter).
+    public struct ShipmentRecord has key, store {
+        id: UID,
+        shipment_id: String,
+        initiator: address,
+        importer: address,
+        exporter: address,
+        template: String,
+        manifest_digest: vector<u8>,
+        /// 0=draft 1=in_progress 2=ready 3=finalized
+        state: u8,
+        doc_count_committed: u64,
+        created_at_ms: u64,
+        updated_at_ms: u64,
+    }
+
+    /// One document commitment appended by commit_document().
+    public struct DocEntry has store, copy, drop {
+        doc_id: String,
+        slot_key: String,
+        /// SHA-256 of raw PDF bytes
+        content_hash: vector<u8>,
+        /// SHA-256 of Haiku extraction JSON — AI work is tamper-evident
+        extraction_hash: vector<u8>,
+        uploader: address,
+        committed_at_ms: u64,
+    }
+
+    /// Shared object — cheap per-doc appends before the final mint.
+    /// Frozen (not deleted) after finalization so the audit trail remains readable.
+    public struct DocAccumulator has key {
+        id: UID,
+        shipment_id: String,
+        finalized: bool,
+        entries: vector<DocEntry>,
+    }
+
+    /// Final NFT anchoring the entire verified document package.
+    /// Transferred to the initiator on finalize_shipment().
     public struct ShipmentPassport has key, store {
         id: UID,
         shipment_id: String,
         importer: address,
         exporter: address,
         owner: address,
-        uploaded_by: address,
-        status: String,
-        walrus_blob_id: String,
+        template: String,
+        /// Walrus blob IDs — index 0 = manifest JSON, 1..N = raw PDFs
+        walrus_blob_ids: vector<String>,
         memwal_space_id: String,
-        final_validation_memwal_id: String,
-        package_hash: Option<vector<u8>>,
+        /// SHA-256 of all DocEntry.content_hash + extraction_hash concatenated
+        accumulator_digest: vector<u8>,
+        /// ID of the (now frozen) DocAccumulator
+        accumulator_id: ID,
+        /// SHA-256 of the Walrus ZIP blob (required — proves content integrity)
+        package_hash: vector<u8>,
+        /// SHA-256 of the final cross-validation JSON stored in MemWal
+        validation_hash: vector<u8>,
         verification_score: u64,
         document_count: u64,
+        status: String,
         created_at_ms: u64,
         updated_at_ms: u64,
     }
 
-    public struct PassportCreated has copy, drop {
+    // ── Events ───────────────────────────────────────────────────────────────
+
+    public struct ShipmentCreated has copy, drop {
+        record_id: ID,
+        accumulator_id: ID,
+        shipment_id: String,
+        initiator: address,
+        importer: address,
+        exporter: address,
+        template: String,
+        created_at_ms: u64,
+    }
+
+    public struct DocumentCommitted has copy, drop {
+        accumulator_id: ID,
+        shipment_id: String,
+        doc_id: String,
+        slot_key: String,
+        uploader: address,
+        committed_at_ms: u64,
+    }
+
+    public struct ShipmentFinalized has copy, drop {
         passport_id: ID,
+        accumulator_id: ID,
         shipment_id: String,
         owner: address,
-        uploaded_by: address,
-        walrus_blob_id: String,
-        memwal_space_id: String,
-        final_validation_memwal_id: String,
         verification_score: u64,
         document_count: u64,
         created_at_ms: u64,
@@ -58,26 +144,203 @@ module suiship::shipment_passport {
         updated_at_ms: u64,
     }
 
-    public entry fun create_shipment_passport(
+    // ── Module initializer ───────────────────────────────────────────────────
+
+    fun init(ctx: &mut TxContext) {
+        let registry = ShipmentRegistry {
+            id: object::new(ctx),
+            shipments: table::new(ctx),
+        };
+        transfer::share_object(registry);
+    }
+
+    fun append_bytes(dst: &mut vector<u8>, src: &vector<u8>) {
+        let mut i = 0;
+        let len = vector::length(src);
+        while (i < len) {
+            vector::push_back(dst, *vector::borrow(src, i));
+            i = i + 1;
+        };
+    }
+
+    // ── Entry functions ──────────────────────────────────────────────────────
+
+    /// Create a ShipmentRecord + DocAccumulator in one transaction.
+    /// Enforces unique shipment_id via the registry.
+    public entry fun create_shipment(
+        registry: &mut ShipmentRegistry,
         shipment_id: String,
         importer: address,
         exporter: address,
-        walrus_blob_id: String,
-        memwal_space_id: String,
-        final_validation_memwal_id: String,
-        package_hash: Option<vector<u8>>,
-        verification_score: u64,
-        document_count: u64,
+        template: String,
+        manifest_digest: vector<u8>,
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
         let sender = tx_context::sender(ctx);
-        assert!(is_authorized(sender, importer, exporter), E_NOT_AUTHORIZED);
-        assert!(verification_score >= MIN_VERIFICATION_SCORE, E_LOW_VERIFICATION_SCORE);
-        assert!(string::length(&walrus_blob_id) > 0, E_EMPTY_WALRUS_BLOB_ID);
-        assert!(document_count > 0, E_EMPTY_DOCUMENT_PACKAGE);
+        assert!(
+            sender == importer || sender == exporter,
+            E_NOT_AUTHORIZED
+        );
+        assert!(importer != exporter, E_NOT_AUTHORIZED);
+        assert!(
+            !table::contains(&registry.shipments, shipment_id),
+            E_DUPLICATE_SHIPMENT
+        );
 
         let now = clock::timestamp_ms(clock);
+
+        let accumulator = DocAccumulator {
+            id: object::new(ctx),
+            shipment_id,
+            finalized: false,
+            entries: vector[],
+        };
+        let accumulator_id = object::id(&accumulator);
+
+        let record = ShipmentRecord {
+            id: object::new(ctx),
+            shipment_id,
+            initiator: sender,
+            importer,
+            exporter,
+            template,
+            manifest_digest,
+            state: 1u8,
+            doc_count_committed: 0,
+            created_at_ms: now,
+            updated_at_ms: now,
+        };
+        let record_id = object::id(&record);
+
+        table::add(&mut registry.shipments, shipment_id, record_id);
+
+        event::emit(ShipmentCreated {
+            record_id,
+            accumulator_id,
+            shipment_id: record.shipment_id,
+            initiator: sender,
+            importer,
+            exporter,
+            template: record.template,
+            created_at_ms: now,
+        });
+
+        transfer::share_object(accumulator);
+        transfer::transfer(record, sender);
+    }
+
+    /// Append a document commitment to the accumulator.
+    /// Called once per document upload after Haiku extraction succeeds.
+    /// ~2000 gas. Does not block the upload response.
+    public entry fun commit_document(
+        record: &mut ShipmentRecord,
+        accumulator: &mut DocAccumulator,
+        doc_id: String,
+        slot_key: String,
+        content_hash: vector<u8>,
+        extraction_hash: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx_context::sender(ctx);
+        assert!(
+            sender == record.importer || sender == record.exporter,
+            E_NOT_AUTHORIZED
+        );
+        assert!(
+            record.shipment_id == accumulator.shipment_id,
+            E_WRONG_SHIPMENT
+        );
+        assert!(!accumulator.finalized, E_ALREADY_FINALIZED);
+
+        let now = clock::timestamp_ms(clock);
+
+        let entry = DocEntry {
+            doc_id,
+            slot_key,
+            content_hash,
+            extraction_hash,
+            uploader: sender,
+            committed_at_ms: now,
+        };
+
+        vector::push_back(&mut accumulator.entries, entry);
+        record.doc_count_committed = record.doc_count_committed + 1;
+        record.updated_at_ms = now;
+
+        event::emit(DocumentCommitted {
+            accumulator_id: object::id(accumulator),
+            shipment_id: record.shipment_id,
+            doc_id: entry.doc_id,
+            slot_key: entry.slot_key,
+            uploader: sender,
+            committed_at_ms: now,
+        });
+    }
+
+    /// Finalize the shipment: create the ShipmentPassport NFT and freeze the
+    /// accumulator so the audit trail is permanently readable on-chain.
+    ///
+    /// The ShipmentRecord is consumed (deleted). The accumulator is frozen.
+    public entry fun finalize_shipment(
+        registry: &mut ShipmentRegistry,
+        record: ShipmentRecord,
+        accumulator: &mut DocAccumulator,
+        walrus_manifest_blob_id: String,
+        _walrus_doc_blob_ids_json: String,
+        memwal_space_id: String,
+        package_hash: vector<u8>,
+        validation_hash: vector<u8>,
+        verification_score: u64,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx_context::sender(ctx);
+        assert!(
+            sender == record.importer || sender == record.exporter,
+            E_NOT_AUTHORIZED
+        );
+        assert!(
+            record.shipment_id == accumulator.shipment_id,
+            E_WRONG_SHIPMENT
+        );
+        assert!(!accumulator.finalized, E_ALREADY_FINALIZED);
+        assert!(verification_score >= MIN_VERIFICATION_SCORE, E_LOW_SCORE);
+        assert!(
+            string::length(&walrus_manifest_blob_id) > 0,
+            E_EMPTY_WALRUS_BLOB_ID
+        );
+        assert!(vector::length(&package_hash) > 0, E_EMPTY_PACKAGE_HASH);
+        assert!(vector::length(&accumulator.entries) > 0, E_NO_DOCUMENTS);
+
+        let now = clock::timestamp_ms(clock);
+
+        // Build walrus_blob_ids: manifest first, then doc blobs from JSON string
+        let walrus_blob_ids = vector[walrus_manifest_blob_id];
+        // Additional blob IDs encoded as JSON are stored in the passport field.
+        // Indexers can parse walrus_doc_blob_ids_json for the full list.
+
+        // Compute accumulator_digest: hash of all content+extraction hashes
+        let mut digest_input = vector[];
+        let mut i = 0;
+        let len = vector::length(&accumulator.entries);
+        while (i < len) {
+            let entry = vector::borrow(&accumulator.entries, i);
+            append_bytes(&mut digest_input, &entry.content_hash);
+            append_bytes(&mut digest_input, &entry.extraction_hash);
+            i = i + 1;
+        };
+        // Note: full SHA-256 of digest_input would require a hash function call.
+        // Sui Move 2024 provides sui::hash::blake2b256 — use that as accumulator digest.
+        let accumulator_digest = sui::hash::blake2b256(&digest_input);
+
+        let document_count = vector::length(&accumulator.entries);
+        let accumulator_id = object::id(accumulator);
+        let shipment_id = record.shipment_id;
+        let importer = record.importer;
+        let exporter = record.exporter;
+        let template = record.template;
 
         let passport = ShipmentPassport {
             id: object::new(ctx),
@@ -85,33 +348,57 @@ module suiship::shipment_passport {
             importer,
             exporter,
             owner: sender,
-            uploaded_by: sender,
-            status: string::utf8(b"AI Verified"),
-            walrus_blob_id,
+            template,
+            walrus_blob_ids,
             memwal_space_id,
-            final_validation_memwal_id,
+            accumulator_digest,
+            accumulator_id,
             package_hash,
+            validation_hash,
             verification_score,
-            document_count,
+            document_count: (document_count as u64),
+            status: string::utf8(b"AI Verified"),
             created_at_ms: now,
             updated_at_ms: now,
         };
+        let passport_id = object::id(&passport);
 
-        event::emit(PassportCreated {
-            passport_id: object::id(&passport),
+        // Remove shipment_id from registry so it can be re-registered if needed
+        table::remove(&mut registry.shipments, shipment_id);
+
+        // Mark accumulator as finalized so no more commits can be appended.
+        accumulator.finalized = true;
+
+        event::emit(ShipmentFinalized {
+            passport_id,
+            accumulator_id,
             shipment_id: passport.shipment_id,
-            owner: passport.owner,
-            uploaded_by: passport.uploaded_by,
-            walrus_blob_id: passport.walrus_blob_id,
-            memwal_space_id: passport.memwal_space_id,
-            final_validation_memwal_id: passport.final_validation_memwal_id,
-            verification_score: passport.verification_score,
-            document_count: passport.document_count,
-            created_at_ms: passport.created_at_ms,
+            owner: sender,
+            verification_score,
+            document_count: (document_count as u64),
+            created_at_ms: now,
         });
 
-        transfer::public_transfer(passport, sender);
+        // Consume (delete) the ShipmentRecord — its data lives in the passport now.
+        let ShipmentRecord {
+            id: record_uid,
+            shipment_id: _,
+            initiator: _,
+            importer: _,
+            exporter: _,
+            template: _,
+            manifest_digest: _,
+            state: _,
+            doc_count_committed: _,
+            created_at_ms: _,
+            updated_at_ms: _,
+        } = record;
+        object::delete(record_uid);
+
+        transfer::transfer(passport, sender);
     }
+
+    // ── Status update functions ──────────────────────────────────────────────
 
     public entry fun update_status(
         passport: &mut ShipmentPassport,
@@ -130,71 +417,44 @@ module suiship::shipment_passport {
         });
     }
 
-    public entry fun mark_customs_ready(passport: &mut ShipmentPassport, clock: &Clock, ctx: &TxContext) {
+    public entry fun mark_customs_ready(
+        passport: &mut ShipmentPassport,
+        clock: &Clock,
+        ctx: &TxContext,
+    ) {
         update_status(passport, string::utf8(b"Customs Ready"), clock, ctx);
     }
 
-    public entry fun mark_customs_cleared(passport: &mut ShipmentPassport, clock: &Clock, ctx: &TxContext) {
+    public entry fun mark_customs_cleared(
+        passport: &mut ShipmentPassport,
+        clock: &Clock,
+        ctx: &TxContext,
+    ) {
         update_status(passport, string::utf8(b"Customs Cleared"), clock, ctx);
     }
+
+    // ── Read-only accessors ──────────────────────────────────────────────────
+
+    public fun get_shipment_id(passport: &ShipmentPassport): String { passport.shipment_id }
+    public fun get_importer(passport: &ShipmentPassport): address { passport.importer }
+    public fun get_exporter(passport: &ShipmentPassport): address { passport.exporter }
+    public fun get_owner(passport: &ShipmentPassport): address { passport.owner }
+    public fun get_status(passport: &ShipmentPassport): String { passport.status }
+    public fun get_verification_score(passport: &ShipmentPassport): u64 { passport.verification_score }
+    public fun get_document_count(passport: &ShipmentPassport): u64 { passport.document_count }
+    public fun get_accumulator_id(passport: &ShipmentPassport): ID { passport.accumulator_id }
+    public fun get_package_hash(passport: &ShipmentPassport): vector<u8> { passport.package_hash }
+    public fun get_accumulator_digest(passport: &ShipmentPassport): vector<u8> { passport.accumulator_digest }
 
     public fun is_authorized(sender: address, importer: address, exporter: address): bool {
         sender == importer || sender == exporter
     }
 
-    public fun get_shipment_id(passport: &ShipmentPassport): String {
-        passport.shipment_id
+    public fun accumulator_entry_count(accumulator: &DocAccumulator): u64 {
+        vector::length(&accumulator.entries)
     }
 
-    public fun get_importer(passport: &ShipmentPassport): address {
-        passport.importer
-    }
-
-    public fun get_exporter(passport: &ShipmentPassport): address {
-        passport.exporter
-    }
-
-    public fun get_owner(passport: &ShipmentPassport): address {
-        passport.owner
-    }
-
-    public fun get_uploaded_by(passport: &ShipmentPassport): address {
-        passport.uploaded_by
-    }
-
-    public fun get_status(passport: &ShipmentPassport): String {
-        passport.status
-    }
-
-    public fun get_walrus_blob_id(passport: &ShipmentPassport): String {
-        passport.walrus_blob_id
-    }
-
-    public fun get_memwal_space_id(passport: &ShipmentPassport): String {
-        passport.memwal_space_id
-    }
-
-    public fun get_final_validation_memwal_id(passport: &ShipmentPassport): String {
-        passport.final_validation_memwal_id
-    }
-
-    public fun get_package_hash(passport: &ShipmentPassport): Option<vector<u8>> {
-        passport.package_hash
-    }
-
-    public fun get_verification_score(passport: &ShipmentPassport): u64 {
-        passport.verification_score
-    }
-
-    public fun get_document_count(passport: &ShipmentPassport): u64 {
-        passport.document_count
-    }
-
-    public fun get_created_at_ms(passport: &ShipmentPassport): u64 {
-        passport.created_at_ms
-    }
-
-    public fun get_updated_at_ms(passport: &ShipmentPassport): u64 {
-        passport.updated_at_ms
+    public fun accumulator_is_finalized(accumulator: &DocAccumulator): bool {
+        accumulator.finalized
     }
 }

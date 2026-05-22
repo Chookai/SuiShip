@@ -201,7 +201,8 @@ export async function llmCrossValidateCompact(
   compactManifest: string,
   newExtractionsJson: string,
   retrievedChunks: string,
-  client: Anthropic
+  client: Anthropic,
+  model: string = "claude-haiku-4-5"
 ): Promise<{ issues: ValidationIssue[]; overallVerdict: string; verdictReason: string; inputTokens: number; outputTokens: number }> {
   const userContent = [
     `## Existing documents (compact manifest from cache)\n${compactManifest}`,
@@ -215,7 +216,7 @@ export async function llmCrossValidateCompact(
   try {
     const response = await client.messages.create(
       {
-        model: "claude-haiku-4-5",
+        model,
         max_tokens: 2048,
         system: [
           {

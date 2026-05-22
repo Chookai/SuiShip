@@ -123,3 +123,20 @@ export function buildDocSummaryFromAggregate(agg: AggregateResult): string {
 
   return JSON.stringify(summary, null, 2);
 }
+
+/**
+ * Builds a compact grounding context string (≤1200 chars, ~300 tokens) from the
+ * latest extraction run. Injected into Haiku's user message when extracting
+ * subsequent documents so it can flag field mismatches against prior docs.
+ *
+ * Returns null if no prior extraction exists (first doc in the shipment).
+ */
+export function buildGroundingContext(
+  shipmentId: string,
+  db: Database.Database
+): string | null {
+  const manifest = buildCompactManifest(shipmentId, db);
+  if (!manifest) return null;
+  // Trim to keep prompt cost low
+  return manifest.length > 1200 ? manifest.slice(0, 1200) + "\n...}" : manifest;
+}

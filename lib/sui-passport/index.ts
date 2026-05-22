@@ -15,6 +15,7 @@ export type {
   RevokeAccessInput,
   TransferPassportInput,
 } from "./types";
+export { RealSuiPassportClient } from "./real-client";
 
 let _client: SuiPassportClient | null = null;
 
@@ -26,4 +27,13 @@ export function getSuiPassportClient(): SuiPassportClient {
     _client = new MockSuiPassportClient(getDb());
   }
   return _client;
+}
+
+export function isRealSuiConfigured(): boolean {
+  return !!(
+    process.env.SUI_CLIENT === "real" &&
+    process.env.SUI_PRIVATE_KEY &&
+    process.env.NEXT_PUBLIC_SUISHIP_PACKAGE_ID &&
+    process.env.NEXT_PUBLIC_REGISTRY_ID
+  );
 }

@@ -10,6 +10,30 @@ export type {
 export { memwalRemember, memwalRecall, memwalHealth, isMemWalConfigured } from "./client";
 
 /**
+ * Fire-and-forget doc event write. Never throws to the caller.
+ * Used to append per-doc events to the in-flight MemWal audit trail.
+ */
+export async function writeDocEvent(
+  shipmentId: string,
+  op: "doc_extracted" | "doc_validated" | "conflict_detected",
+  payload: Record<string, unknown>
+): Promise<void> {
+  const { isMemWalConfigured, memwalRemember } = await import("./client");
+  if (!isMemWalConfigured()) return;
+
+  const text = `SUISHIP DOC EVENT\n${JSON.stringify({
+    op,
+    shipment_id: shipmentId,
+    ...payload,
+    ts: new Date().toISOString(),
+  }, null, 2)}`;
+
+  memwalRemember(text, `${shipmentId}:docs`).catch(() => {
+    // Swallow — MemWal failure never blocks the upload flow
+  });
+}
+
+/**
  * Reads the manifest for a minted shipment.
  * Checks SQLite cache first; falls back to MemWal recall if cache is stale.
  */

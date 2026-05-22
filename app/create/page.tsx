@@ -43,11 +43,14 @@ const workflowTitles: Record<WorkflowKey, string> = {
   exporter: "Exporter"
 };
 
+// These four map exactly to the document types Haiku can detect and extract.
+// Customs Declaration is NOT included — the AI cannot classify it (no schema for it).
+// For Sea FOB: Exporter provides invoice + packing list + COO; Importer provides BOL.
 const documentCatalog: Array<{ name: string; defaultOwner: DocumentOwner; defaultRequired: boolean }> = [
   { name: "Commercial Invoice", defaultOwner: "Exporter", defaultRequired: true },
   { name: "Packing List", defaultOwner: "Exporter", defaultRequired: true },
-  { name: "Bill of Lading", defaultOwner: "Exporter", defaultRequired: true },
-  { name: "Customs Declaration", defaultOwner: "Importer", defaultRequired: true }
+  { name: "Bill of Lading", defaultOwner: "Importer", defaultRequired: true },
+  { name: "Certificate of Origin", defaultOwner: "Exporter", defaultRequired: true }
 ];
 
 const initialShipmentDetails = {
@@ -998,10 +1001,9 @@ function detectDocumentIndex(fileName: string, docs: DocumentRequirement[]) {
   const rules: Array<{ index: number; keywords: string[] }> = docs.map((doc, index) => {
     const name = doc.name.toLowerCase();
     if (name.includes("commercial invoice")) return { index, keywords: ["commercial", "invoice", "inv"] };
-    if (name.includes("packing list")) return { index, keywords: ["packing", "packlist", "packing-list"] };
-    if (name.includes("air waybill") || name.includes("bill of lading")) return { index, keywords: ["awb", "waybill", "bill-of-lading", "bol", "lading"] };
-    if (name.includes("certificate of origin")) return { index, keywords: ["origin", "coo", "certificate"] };
-    if (name.includes("customs declaration")) return { index, keywords: ["customs", "declaration"] };
+    if (name.includes("packing list")) return { index, keywords: ["packing", "packlist", "packing-list", "pack-list"] };
+    if (name.includes("bill of lading") || name.includes("air waybill")) return { index, keywords: ["awb", "waybill", "bill-of-lading", "bol", "lading", "bill_of_lading", "dhl"] };
+    if (name.includes("certificate of origin")) return { index, keywords: ["origin", "coo", "certificate", "certificate_of_origin"] };
     if (name.includes("insurance")) return { index, keywords: ["insurance"] };
     if (name.includes("permit")) return { index, keywords: ["permit", "import", "export"] };
     if (name.includes("dangerous")) return { index, keywords: ["dangerous", "dg", "hazmat"] };
@@ -1297,12 +1299,12 @@ function DocumentUploadStep({
       {/* Summary cards */}
       {isComplete && extractResult && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {[
+          {([
             { label: "Commercial Invoice", count: extractResult.detected.commercial_invoice.length },
             { label: "Packing List", count: extractResult.detected.packing_list.length },
             { label: "Bill of Lading", count: extractResult.detected.bill_of_lading.length },
             { label: "Certificate of Origin", count: extractResult.detected.certificate_of_origin.length },
-          ].map(({ label, count }) => (
+          ] as { label: string; count: number }[]).map(({ label, count }) => (
             <div
               key={label}
               className={cn(

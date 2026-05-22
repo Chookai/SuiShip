@@ -2,14 +2,20 @@ import Anthropic from "@anthropic-ai/sdk";
 import pLimit from "p-limit";
 import { extractFromPdf } from "./haiku-client";
 import { aggregate } from "./aggregator";
-import { llmCrossValidate } from "./llm-cross-validator";
 import { mockExtractPass, mockExtractFail } from "./mock-extractor";
 import type { AggregateResult } from "./schemas/aggregate-result";
 import type { PdfFile } from "../types";
 
 const CONCURRENCY_LIMIT = 5;
 
-export async function extract(files: PdfFile[]): Promise<AggregateResult> {
+/**
+ * Extracts documents using Haiku. Cross-validation is intentionally NOT performed
+ * here — it runs separately via /api/shipments/{id}/validate once all docs are uploaded.
+ */
+export async function extract(
+  files: PdfFile[],
+  groundingContext?: string | null
+): Promise<AggregateResult> {
   if (process.env.MOCK_DOC_AI === "true") {
     return process.env.MOCK_DOC_PASS === "true"
       ? mockExtractPass(files)
@@ -33,11 +39,9 @@ export async function extract(files: PdfFile[]): Promise<AggregateResult> {
   const limit = pLimit(CONCURRENCY_LIMIT);
 
   const extractedDocs = await Promise.all(
-    files.map((file) => limit(() => extractFromPdf(file, client)))
+    files.map((file) => limit(() => extractFromPdf(file, client, groundingContext)))
   );
 
-  const partialAggregate = aggregate(extractedDocs);
-  const crossValidation = await llmCrossValidate(partialAggregate.detected, client);
-
-  return { ...partialAggregate, cross_validation: crossValidation };
+  // cross_validation is empty — callers should invoke runShipmentValidation separately.
+  return aggregate(extractedDocs);
 }

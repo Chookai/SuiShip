@@ -22,12 +22,24 @@ function sleep(ms: number) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-export async function extractFromPdf(file: PdfFile, client: Anthropic): Promise<ExtractedDoc> {
+export async function extractFromPdf(
+  file: PdfFile,
+  client: Anthropic,
+  groundingContext?: string | null
+): Promise<ExtractedDoc> {
   const startMs = Date.now();
   const base64 = file.buffer.toString("base64");
 
-  // Build the user message with a PDF document block
+  // Build the user message. Grounding context is injected BEFORE the PDF so Haiku
+  // can cross-check extracted fields against prior documents in the same shipment.
+  // It goes in the user message (not the cached system prompt) to preserve the cache hit.
   const userContent: Anthropic.MessageParam["content"] = [
+    ...(groundingContext
+      ? [{
+          type: "text" as const,
+          text: `## Prior documents already uploaded for this shipment\nUse the following to cross-check consistency. If you find a conflict with any extracted field, add a note like "CONFLICT: field=X extracted=Y expected=Z" in extraction_notes.\n\n${groundingContext}`,
+        }]
+      : []),
     {
       type: "document",
       source: {

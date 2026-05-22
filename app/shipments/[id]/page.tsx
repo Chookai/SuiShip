@@ -1,6 +1,6 @@
 "use client";
 
-import { useCurrentAccount, useSignAndExecuteTransaction, useSuiClient } from "@mysten/dapp-kit";
+import { useCurrentAccount } from "@mysten/dapp-kit";
 import {
   AlertCircle,
   ArrowLeft,
@@ -38,11 +38,38 @@ import {
   type DocumentRequirement,
   type ProgressManifest,
   type ShipmentRecord,
-  type WalrusUpload
+  type WalrusUpload,
 } from "@/lib/shipments-store";
-import { buildCreateShipmentTx, canUsePublishedPackage, PACKAGE_ID } from "@/lib/sui";
 import { cn } from "@/lib/utils";
-import { aggregatorUrl } from "@/lib/walrus";
+import { aggregatorUrl, WALRUS_AGGREGATOR } from "@/lib/walrus";
+
+// ── Explorer URL helpers ───────────────────────────────────────────────────
+
+const SUISCAN_BASE = "https://suiscan.xyz/testnet";
+const WALRUSCAN_BASE = "https://walruscan.com/testnet";
+
+function suiObjectUrl(objectId: string) {
+  return `${SUISCAN_BASE}/object/${objectId}`;
+}
+function suiTxUrl(digest: string) {
+  return `${SUISCAN_BASE}/tx/${digest}`;
+}
+function walrusBlobUrl(blobId: string) {
+  return `${WALRUSCAN_BASE}/blob/${blobId}`;
+}
+function walrusDownloadUrl(blobId: string) {
+  return aggregatorUrl(blobId, WALRUS_AGGREGATOR);
+}
+function memwalUrl(spaceId: string) {
+  // MemWal doesn't have a public explorer yet — link to the staging relayer info
+  const namespace = spaceId.includes(":") ? spaceId.split(":").slice(1).join(":") : spaceId;
+  return `https://memwal.ai?space=${encodeURIComponent(namespace)}`;
+}
+
+function truncateId(id: string, chars = 8) {
+  if (!id || id.length <= chars * 2 + 3) return id;
+  return `${id.slice(0, chars)}...${id.slice(-chars)}`;
+}
 
 type AggregateLike = {
   extractedRef?: string;
@@ -73,11 +100,10 @@ export default function ShipmentDetailPage() {
   const stored = useMemo(() => shipments.find((shipment) => shipment.id === rawId), [shipments, rawId]);
   const demo = useMemo(() => (stored ? null : findShipment(rawId)), [rawId, stored]);
 
+  // Always fetch from server on mount (even when stored in localStorage) so that
+  // server-side passport mints (passportId, txDigest, walrusBlobIds) are synced back.
   useEffect(() => {
-    if (!ready || !rawId || stored || demo) {
-      setLookupComplete(false);
-      return;
-    }
+    if (!ready || !rawId || demo) return;
 
     let cancelled = false;
     setLookupComplete(false);
@@ -88,8 +114,30 @@ export default function ShipmentDetailPage() {
         return (await res.json()) as ShipmentRecord;
       })
       .then((record) => {
-        if (cancelled) return;
-        if (record) {
+        if (cancelled || !record) {
+          if (!cancelled) setLookupComplete(true);
+          return;
+        }
+        // Merge server passport fields into the local record so the UI reflects
+        // server-side mints even when the client store is stale.
+        const passportFields: Partial<ShipmentRecord> = {};
+        if (record.passportId)          passportFields.passportId = record.passportId;
+        if (record.txDigest)            passportFields.txDigest = record.txDigest;
+        if (record.mintedAt)            passportFields.mintedAt = record.mintedAt;
+        if (record.memWalSpaceId)       passportFields.memWalSpaceId = record.memWalSpaceId;
+        if (record.walrusManifestBlobId) passportFields.walrusManifestBlobId = record.walrusManifestBlobId;
+        if (record.walrusBlobIds?.length) passportFields.walrusBlobIds = record.walrusBlobIds;
+        if (record.manifestHash)        passportFields.manifestHash = record.manifestHash;
+        if (record.ai)                  passportFields.ai = record.ai;
+        if (record.status)              passportFields.status = record.status;
+
+        if (stored) {
+          // Shipment already in local store — just patch the passport fields
+          if (Object.keys(passportFields).length > 0) {
+            updateShipment(rawId, passportFields);
+          }
+        } else {
+          // Not in local store yet — add the full server record
           setServerShipment(record);
           addShipment(record);
         }
@@ -102,7 +150,8 @@ export default function ShipmentDetailPage() {
     return () => {
       cancelled = true;
     };
-  }, [ready, rawId, stored, demo, addShipment]);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [ready, rawId]);
 
   if (!ready || (!stored && !demo && !serverShipment && !lookupComplete)) {
     return (
@@ -169,8 +218,6 @@ function StoredShipmentView({
   onUpdate: (patch: Partial<ShipmentRecord>) => void;
 }) {
   const currentAccount = useCurrentAccount();
-  const suiClient = useSuiClient();
-  const { mutateAsync: signAndExecuteTransaction } = useSignAndExecuteTransaction();
   const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
   const [progressBusy, setProgressBusy] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
@@ -181,13 +228,14 @@ function StoredShipmentView({
   const requiredDocs = shipment.documents.filter((doc) => doc.required);
   const ai = shipment.ai ?? buildShipmentAiOverview(shipment);
   const requiredDocsComplete = requiredDocs.length > 0 && requiredDocs.every((doc) => doc.uploaded);
+  const mintedExists = Boolean(shipment.passportId || shipment.txDigest);
   const hasFinalManifest = (shipment.progressManifests ?? []).some((manifest) => manifest.stage === "final_manifest");
-  const documentsLocked = hasFinalManifest || Boolean(shipment.walrus);
+  const documentsLocked = mintedExists || hasFinalManifest || Boolean(shipment.walrus);
   const passportBusy = documentPhase === "validating" || documentPhase === "minting";
   const canFinalize =
     requiredDocsComplete &&
     shipment.extractionStatus === "complete" &&
-    !hasFinalManifest &&
+    !mintedExists &&
     documentPhase === "idle";
 
   function appendProgressManifest(manifest: ProgressManifest) {
@@ -208,8 +256,6 @@ function StoredShipmentView({
     summary: string;
     documents?: Array<{ name: string; fileName?: string; uploaded?: boolean }>;
     aiIssues?: Array<{ severity?: string; message?: string; field?: string }>;
-    walrusPackage?: WalrusUpload;
-    suiPassport?: SuiPassportProgress;
   }): Promise<ProgressManifest> {
     setProgressBusy(true);
     try {
@@ -326,10 +372,6 @@ function StoredShipmentView({
       setWorkflowError("Connect your Sui wallet before creating the passport.");
       return;
     }
-    if (!canUsePublishedPackage()) {
-      setWorkflowError("SuiShip package ID is not configured.");
-      return;
-    }
 
     try {
       setDocumentPhase("validating");
@@ -348,83 +390,28 @@ function StoredShipmentView({
       }
 
       setDocumentPhase("minting");
-      const packageRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/walrus-package`, { method: "POST" });
-      const packagePayload = await parseJsonResponse(packageRes);
-      if (!packageRes.ok) {
-        throw new Error(getErrorMessage(packagePayload, `Walrus package upload failed with HTTP ${packageRes.status}`));
+      const mintRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/mint`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ownerAddress: currentAccount.address }),
+      });
+      const mintPayload = await parseJsonResponse(mintRes);
+      if (!mintRes.ok) {
+        throw new Error(getErrorMessage(mintPayload, `Mint failed with HTTP ${mintRes.status}`));
       }
-      const walrusUpload = packagePayload as WalrusUpload & { documentCount?: number };
-
-      const walrusManifest = await recordProgressCheckpoint({
-        stage: "walrus_package_stored",
-        actor: currentRoleOwner,
-        summary: `Document package stored on Walrus as ${walrusUpload.fileName}. Blob ID: ${walrusUpload.blobId}.`,
-        documents: shipment.documents.map((doc) => ({ name: doc.name, fileName: doc.fileName, uploaded: doc.uploaded })),
-        aiIssues: issues,
-        walrusPackage: walrusUpload,
-      });
-
-      const finalManifest = await recordProgressCheckpoint({
-        stage: "final_manifest",
-        actor: currentRoleOwner,
-        summary: `Final AI validation passed. ${walrusUpload.documentCount ?? shipment.documents.filter((doc) => doc.uploaded).length} submitted PDF(s) were packaged and stored on Walrus.`,
-        documents: shipment.documents.map((doc) => ({ name: doc.name, fileName: doc.fileName, uploaded: doc.uploaded })),
-        aiIssues: issues,
-        walrusPackage: walrusUpload,
-      });
-      const signerAddress = currentAccount.address;
-      const mockCounterpartyAddress = "0x0";
-      const tx = buildCreateShipmentTx({
-        shipmentId: shipment.id,
-        importer: currentRoleOwner === "Importer" ? signerAddress : mockCounterpartyAddress,
-        exporter: currentRoleOwner === "Exporter" ? signerAddress : mockCounterpartyAddress,
-        walrusBlobId: walrusUpload.blobId,
-        memWalSpaceId: finalManifest.memwalNamespace,
-        finalValidationMemWalId: finalManifest.memwalBlobId ?? finalManifest.memwalNamespace,
-        packageHash: null,
-        verificationScore: Math.max(90, ai.score),
-        documentCount: walrusUpload.documentCount ?? shipment.documents.filter((doc) => doc.uploaded).length
-      });
-      const txResult = await signAndExecuteTransaction({ transaction: tx });
-      const txDigest = "digest" in txResult ? txResult.digest : "";
-      const finalizedTx = txDigest
-        ? await suiClient.waitForTransaction({
-            digest: txDigest,
-            options: { showObjectChanges: true, showEvents: true }
-          })
-        : null;
-      const passportObject = finalizedTx?.objectChanges?.find(
-        (change) =>
-          change.type === "created" &&
-          change.objectType.endsWith("::shipment_passport::ShipmentPassport")
-      );
-      const passportId = passportObject?.type === "created" ? passportObject.objectId : undefined;
-      const suiPassportManifest = await recordProgressCheckpoint({
-        stage: "sui_passport_created",
-        actor: currentRoleOwner,
-        summary: passportId
-          ? `Sui passport object created on testnet: ${passportId}.`
-          : `Sui passport transaction confirmed on testnet: ${txDigest}.`,
-        documents: shipment.documents.map((doc) => ({ name: doc.name, fileName: doc.fileName, uploaded: doc.uploaded })),
-        aiIssues: issues,
-        walrusPackage: walrusUpload,
-        suiPassport: {
-          passportId,
-          txDigest,
-          packageId: PACKAGE_ID,
-          network: "testnet"
-        }
-      });
-
+      const mintedShipment = mintPayload as ShipmentRecord;
       onUpdate({
-        status: "Passport Minted",
-        walrus: walrusUpload,
-        passportId,
-        txDigest,
-        memWalSpaceId: finalManifest.memwalNamespace,
-        walrusManifestBlobId: walrusUpload.blobId,
-        mintedAt: new Date().toISOString(),
-        progressManifests: [...(shipment.progressManifests ?? []), walrusManifest, finalManifest, suiPassportManifest]
+        status: mintedShipment.status,
+        ai: mintedShipment.ai,
+        walrus: mintedShipment.walrus,
+        passportId: mintedShipment.passportId,
+        txDigest: mintedShipment.txDigest,
+        memWalSpaceId: mintedShipment.memWalSpaceId,
+        walrusManifestBlobId: mintedShipment.walrusManifestBlobId,
+        walrusBlobIds: mintedShipment.walrusBlobIds,
+        manifestHash: mintedShipment.manifestHash,
+        mintedAt: mintedShipment.mintedAt,
+        progressManifests: mintedShipment.progressManifests ?? shipment.progressManifests,
       });
     } catch (err) {
       setWorkflowError(err instanceof Error ? err.message : "Final storage failed");
@@ -458,13 +445,20 @@ function StoredShipmentView({
             ) : (
               <Fingerprint className="h-4 w-4" />
             )}
-            {hasFinalManifest ? "Passport Created" : "Create Passport"}
+            {mintedExists ? "Passport Created" : "Create Passport"}
           </Button>
           {workflowError && (
             <p className="mt-2 max-w-64 text-right text-xs font-semibold text-red-600">{workflowError}</p>
           )}
         </div>
       </div>
+
+      {/* Passport minted card — shown prominently when passport exists */}
+      {(shipment.passportId?.length || shipment.txDigest?.length) ? (
+        <div className="mt-6">
+          <PassportMintedCard shipment={shipment} />
+        </div>
+      ) : null}
 
       <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
         <div className="grid gap-6">
@@ -688,6 +682,178 @@ function StoredShipmentView({
           <ProgressManifestPanel manifests={shipment.progressManifests ?? []} recording={progressBusy} />
         </aside>
       </div>
+    </div>
+  );
+}
+
+// ── Passport Minted Card ───────────────────────────────────────────────────
+
+function CopyButton({ value }: { value: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      title="Copy to clipboard"
+      onClick={() => {
+        navigator.clipboard.writeText(value).catch(() => {});
+        setCopied(true);
+        setTimeout(() => setCopied(false), 1500);
+      }}
+      className="rounded p-1 text-steel transition hover:text-pearl"
+    >
+      {copied
+        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
+        : <svg className="h-3.5 w-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth={2}><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+      }
+    </button>
+  );
+}
+
+function ExplorerLink({ href, label, icon: Icon, colour }: {
+  href: string;
+  label: string;
+  icon: React.ElementType;
+  colour: string;
+}) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className={cn(
+        "flex items-center gap-2.5 rounded-xl px-4 py-3 text-sm font-bold transition hover:brightness-105 active:scale-[0.98]",
+        colour
+      )}
+    >
+      <Icon className="h-4 w-4 shrink-0" />
+      <span className="truncate">{label}</span>
+      <ExternalLink className="ml-auto h-3.5 w-3.5 shrink-0 opacity-70" />
+    </a>
+  );
+}
+
+function PassportMintedCard({ shipment }: { shipment: ShipmentRecord }) {
+  const { passportId, txDigest, walrus, walrusManifestBlobId, walrusBlobIds, memWalSpaceId, mintedAt, ai } = shipment;
+  if (!passportId?.length && !txDigest?.length) return null;
+
+  const blobId = walrusManifestBlobId ?? walrusBlobIds?.[0];
+  const zipBlobId = walrus?.blobId;
+  const score = ai?.score ?? 0;
+  const scoreColour = score >= 85 ? "text-emerald-500" : score >= 65 ? "text-amber-500" : "text-red-500";
+  const memwalConfigured = memWalSpaceId && !memWalSpaceId.startsWith("memwal_mock_");
+
+  return (
+    <div className="rounded-2xl border border-emerald-200 bg-gradient-to-br from-emerald-50 via-white to-blue-50 p-5 shadow-sm">
+      {/* Header */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2.5">
+          <span className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 shadow-sm">
+            <CheckCircle2 className="h-5 w-5 text-white" />
+          </span>
+          <div>
+            <p className="text-xs font-bold uppercase tracking-widest text-emerald-600">Passport Minted</p>
+            <p className="text-lg font-extrabold text-pearl">ShipmentPassport NFT</p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 rounded-xl border border-emerald-200 bg-white px-3 py-1.5">
+          <ShieldCheck className={cn("h-4 w-4", scoreColour)} />
+          <span className={cn("text-sm font-extrabold", scoreColour)}>AI Score {score}/100</span>
+        </div>
+      </div>
+
+      {/* ID rows */}
+      <div className="mt-4 grid gap-2">
+        {passportId && (
+          <div className="flex items-center gap-2 rounded-xl border border-blue-100 bg-white px-3 py-2">
+            <Fingerprint className="h-4 w-4 shrink-0 text-[#4DA2FF]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase text-steel">Passport Object ID</p>
+              <p className="font-mono text-xs font-semibold text-pearl" title={passportId}>{truncateId(passportId, 10)}</p>
+            </div>
+            <CopyButton value={passportId} />
+          </div>
+        )}
+        {txDigest && (
+          <div className="flex items-center gap-2 rounded-xl border border-blue-100 bg-white px-3 py-2">
+            <Boxes className="h-4 w-4 shrink-0 text-[#4DA2FF]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase text-steel">Mint Transaction</p>
+              <p className="font-mono text-xs font-semibold text-pearl" title={txDigest}>{truncateId(txDigest, 10)}</p>
+            </div>
+            <CopyButton value={txDigest} />
+          </div>
+        )}
+        {blobId && (
+          <div className="flex items-center gap-2 rounded-xl border border-blue-100 bg-white px-3 py-2">
+            <Globe2 className="h-4 w-4 shrink-0 text-[#4DA2FF]" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase text-steel">Walrus Blob ID</p>
+              <p className="font-mono text-xs font-semibold text-pearl" title={blobId}>{truncateId(blobId, 10)}</p>
+            </div>
+            <CopyButton value={blobId} />
+          </div>
+        )}
+      </div>
+
+      {/* Explorer buttons */}
+      <div className="mt-4 grid gap-2 sm:grid-cols-2">
+        {passportId && (
+          <ExplorerLink
+            href={suiObjectUrl(passportId)}
+            label="Passport on SuiScan"
+            icon={Fingerprint}
+            colour="bg-[#4DA2FF] text-white"
+          />
+        )}
+        {txDigest && (
+          <ExplorerLink
+            href={suiTxUrl(txDigest)}
+            label="Mint Tx on SuiScan"
+            icon={Boxes}
+            colour="bg-pearl text-white"
+          />
+        )}
+        {blobId && (
+          <ExplorerLink
+            href={walrusBlobUrl(blobId)}
+            label="Manifest on WalrusScan"
+            icon={Globe2}
+            colour="bg-emerald-600 text-white"
+          />
+        )}
+        {zipBlobId && (
+          <ExplorerLink
+            href={walrusDownloadUrl(zipBlobId)}
+            label="Download ZIP from Walrus"
+            icon={Upload}
+            colour="bg-emerald-50 border border-emerald-200 text-emerald-700"
+          />
+        )}
+        {memwalConfigured && (
+          <ExplorerLink
+            href={memwalUrl(memWalSpaceId!)}
+            label="MemWal Audit Trail"
+            icon={Clock3}
+            colour="bg-amber-50 border border-amber-200 text-amber-700"
+          />
+        )}
+        {memWalSpaceId && (
+          <div className="flex items-center gap-2.5 rounded-xl border border-amber-100 bg-amber-50 px-4 py-3">
+            <Clock3 className="h-4 w-4 shrink-0 text-amber-600" />
+            <div className="min-w-0 flex-1">
+              <p className="text-[10px] font-bold uppercase text-amber-700">MemWal Space</p>
+              <p className="truncate font-mono text-xs font-semibold text-pearl" title={memWalSpaceId}>{truncateId(memWalSpaceId, 12)}</p>
+            </div>
+            <CopyButton value={memWalSpaceId} />
+          </div>
+        )}
+      </div>
+
+      {mintedAt && (
+        <p className="mt-3 text-right text-[10px] font-semibold text-steel">
+          Minted {formatDate(mintedAt)}
+        </p>
+      )}
     </div>
   );
 }
@@ -980,7 +1146,7 @@ function ProgressItem({ manifest }: { manifest: ProgressManifest }) {
         <p className="text-[10px] font-bold uppercase tracking-wide text-steel">
           #{manifest.sequence} · {formatStage(manifest.stage)}
         </p>
-        <p className="mt-1 text-sm font-bold text-pearl">{manifest.summary}</p>
+        <p className="mt-1 break-all text-sm font-bold text-pearl">{manifest.summary}</p>
       </div>
       <p className="mt-2 break-all font-mono text-[11px] text-steel">
         ID: {manifest.memwalBlobId ?? manifest.memwalNamespace}
@@ -997,15 +1163,28 @@ function ProgressItem({ manifest }: { manifest: ProgressManifest }) {
         </a>
       )}
       {suiPassport && (
-        <a
-          href={`https://suiscan.xyz/${suiPassport.network}/tx/${suiPassport.txDigest}`}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-3 inline-flex w-full items-center justify-center gap-2 rounded-xl bg-pearl px-3 py-2 text-xs font-extrabold text-white shadow-glow hover:brightness-105"
-        >
-          <ExternalLink className="h-3.5 w-3.5" />
-          View Sui transaction
-        </a>
+        <div className="mt-3 grid gap-2">
+          {suiPassport.passportId && (
+            <a
+              href={suiObjectUrl(suiPassport.passportId)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-[#4DA2FF] px-3 py-2 text-xs font-extrabold text-white shadow-glow hover:brightness-105"
+            >
+              <Fingerprint className="h-3.5 w-3.5" />
+              View Passport on SuiScan
+            </a>
+          )}
+          <a
+            href={suiTxUrl(suiPassport.txDigest)}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-pearl px-3 py-2 text-xs font-extrabold text-white shadow-glow hover:brightness-105"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+            View Mint Transaction
+          </a>
+        </div>
       )}
       <p className="mt-2 text-[10px] font-semibold text-steel">{formatDate(manifest.createdAt)}</p>
     </div>
@@ -1172,9 +1351,25 @@ function DemoShipmentView({ shipment }: { shipment: ReturnType<typeof findShipme
               <Boxes className="h-5 w-5 text-sui" />
               <h2 className="text-xl font-semibold text-pearl">On-chain proof</h2>
             </div>
-            <div className="mt-5 space-y-3 text-sm">
-              <p className="text-steel">Sui object ID</p>
-              <p className="break-all rounded-lg bg-blue-50 p-3 text-pearl">{shipment.objectId}</p>
+            <div className="mt-4 grid gap-2 text-sm">
+              <div className="flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 px-3 py-2">
+                <Fingerprint className="h-4 w-4 shrink-0 text-[#4DA2FF]" />
+                <div className="min-w-0 flex-1">
+                  <p className="text-[10px] font-bold uppercase text-steel">Passport Object</p>
+                  <p className="truncate font-mono text-xs text-pearl">{shipment.objectId}</p>
+                </div>
+                <CopyButton value={shipment.objectId ?? ""} />
+              </div>
+              <a
+                href={suiObjectUrl(shipment.objectId ?? "")}
+                target="_blank"
+                rel="noopener noreferrer"
+                className="flex items-center gap-2.5 rounded-xl bg-[#4DA2FF] px-4 py-2.5 text-sm font-bold text-white hover:brightness-105"
+              >
+                <Fingerprint className="h-4 w-4" />
+                View on SuiScan
+                <ExternalLink className="ml-auto h-3.5 w-3.5 opacity-70" />
+              </a>
             </div>
           </Panel>
 

@@ -108,6 +108,12 @@ function recordToParams(record: ShipmentRecord) {
     invite_token: record.inviteToken ?? null,
     extracted_ref: record.extractedRef ?? null,
     extraction_status: record.extractionStatus ?? null,
+    passport_id: record.passportId ?? null,
+    tx_digest: record.txDigest ?? null,
+    memwal_space_id: record.memWalSpaceId ?? null,
+    walrus_manifest_blob_id: record.walrusManifestBlobId ?? null,
+    manifest_hash: record.manifestHash ?? null,
+    minted_at: record.mintedAt ?? null,
     ai_json: record.ai ? JSON.stringify(record.ai) : null,
     walrus_json: record.walrus ? JSON.stringify(record.walrus) : null,
     created_at: record.createdAt,
@@ -129,6 +135,7 @@ export function upsertShipment(record: ShipmentRecord): void {
       broker, freight_forwarder,
       shipment_json, cargo_json, documents_json,
       invite_token, extracted_ref, extraction_status,
+      passport_id, tx_digest, memwal_space_id, walrus_manifest_blob_id, manifest_hash, minted_at,
       ai_json, walrus_json,
       created_at, updated_at
     ) VALUES (
@@ -137,6 +144,7 @@ export function upsertShipment(record: ShipmentRecord): void {
       @broker, @freight_forwarder,
       @shipment_json, @cargo_json, @documents_json,
       @invite_token, @extracted_ref, @extraction_status,
+      @passport_id, @tx_digest, @memwal_space_id, @walrus_manifest_blob_id, @manifest_hash, @minted_at,
       @ai_json, @walrus_json,
       @created_at, @updated_at
     )
@@ -154,8 +162,14 @@ export function upsertShipment(record: ShipmentRecord): void {
       invite_token = excluded.invite_token,
       extracted_ref = excluded.extracted_ref,
       extraction_status = excluded.extraction_status,
+      passport_id = COALESCE(excluded.passport_id, shipments.passport_id),
+      tx_digest = COALESCE(excluded.tx_digest, shipments.tx_digest),
+      memwal_space_id = COALESCE(excluded.memwal_space_id, shipments.memwal_space_id),
+      walrus_manifest_blob_id = COALESCE(excluded.walrus_manifest_blob_id, shipments.walrus_manifest_blob_id),
+      manifest_hash = COALESCE(excluded.manifest_hash, shipments.manifest_hash),
+      minted_at = COALESCE(excluded.minted_at, shipments.minted_at),
       ai_json = excluded.ai_json,
-      walrus_json = excluded.walrus_json,
+      walrus_json = COALESCE(excluded.walrus_json, shipments.walrus_json),
       updated_at = excluded.updated_at
   `).run(p);
 }
@@ -204,6 +218,7 @@ export function updateShipmentMintPointers(
     walrusManifestBlobId: string;
     manifestHash: string;
     mintedAt: string;
+    walrusJson?: string | null;
   }
 ): void {
   getDb().prepare(`
@@ -214,6 +229,7 @@ export function updateShipmentMintPointers(
       walrus_manifest_blob_id = @walrusManifestBlobId,
       manifest_hash = @manifestHash,
       minted_at = @mintedAt,
+      walrus_json = COALESCE(@walrusJson, walrus_json),
       status = 'Passport Minted',
       updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
     WHERE id = @id

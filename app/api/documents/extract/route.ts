@@ -5,10 +5,13 @@ import type { PdfFile } from "../../../../src/types";
 import type { ExtractedDoc } from "../../../../src/agent/schemas/extraction-result";
 import type { AggregateResult } from "../../../../src/agent/schemas/aggregate-result";
 import { computeSha256 } from "@/lib/file-hash";
+import { getCachedExtraction, cacheExtraction, ensureCachedRawPdf } from "@/lib/file-cache";
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db";
 
 export const runtime = "nodejs";
+
+const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
 
 function tryGetDb() {
   try {
@@ -18,82 +21,7 @@ function tryGetDb() {
   }
 }
 
-type FileCacheRow = {
-  sha256: string;
-  file_name: string;
-  size_bytes: number;
-  extraction_json: string;
-  haiku_input_tokens: number;
-  haiku_output_tokens: number;
-  haiku_latency_ms: number;
-};
-
-function getCachedExtraction(sha256: string): ExtractedDoc | null {
-  try {
-    const db = tryGetDb();
-    if (!db) return null;
-    const row = db
-      .prepare("SELECT * FROM file_cache WHERE sha256 = ?")
-      .get(sha256) as FileCacheRow | undefined;
-    if (!row) return null;
-    db.prepare("UPDATE file_cache SET last_hit_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE sha256 = ?").run(sha256);
-    return JSON.parse(row.extraction_json) as ExtractedDoc;
-  } catch {
-    return null;
-  }
-}
-
-function cacheExtraction(
-  sha256: string,
-  fileName: string,
-  sizeBytes: number,
-  rawPdf: Buffer,
-  doc: ExtractedDoc
-): void {
-  try {
-    const db = tryGetDb();
-    if (!db) return;
-    db.prepare(`
-      INSERT OR REPLACE INTO file_cache
-        (sha256, file_name, size_bytes, raw_pdf, extraction_json,
-         haiku_input_tokens, haiku_output_tokens, haiku_latency_ms)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      sha256,
-      fileName,
-      sizeBytes,
-      rawPdf,
-      JSON.stringify(doc),
-      doc.haiku_input_tokens,
-      doc.haiku_output_tokens,
-      doc.haiku_latency_ms
-    );
-  } catch {
-    // non-fatal — extraction still returned correctly
-  }
-}
-
-function ensureCachedRawPdf(
-  sha256: string,
-  fileName: string,
-  sizeBytes: number,
-  rawPdf: Buffer
-): void {
-  try {
-    const db = tryGetDb();
-    if (!db) return;
-    db.prepare(`
-      UPDATE file_cache
-      SET raw_pdf = COALESCE(raw_pdf, ?),
-          file_name = ?,
-          size_bytes = ?,
-          last_hit_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
-      WHERE sha256 = ?
-    `).run(rawPdf, fileName, sizeBytes, sha256);
-  } catch {
-    // non-fatal — extraction still returned correctly
-  }
-}
+// Cache helpers now live in lib/file-cache.ts — imported above.
 
 function recordExtractionRun(
   shipmentId: string,
@@ -231,6 +159,12 @@ export async function POST(request: NextRequest) {
 
   for (const entry of fileEntries) {
     if (!(entry instanceof File)) continue;
+    if (entry.size > MAX_FILE_SIZE) {
+      return NextResponse.json(
+        { error: `File "${entry.name}" exceeds 20MB limit (${(entry.size / 1024 / 1024).toFixed(1)}MB)` },
+        { status: 413 }
+      );
+    }
     const buffer = Buffer.from(await entry.arrayBuffer());
     const sha256 = computeSha256(buffer);
     sha256Map.set(entry.name, sha256);
