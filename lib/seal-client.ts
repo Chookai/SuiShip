@@ -53,6 +53,17 @@ function buildSealClient(): SealClient {
   });
 }
 
+function isExpiredSessionError(err: unknown): boolean {
+  const message = err instanceof Error ? err.message : String(err);
+  return /session key has expired/i.test(message);
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
 /**
  * Convert a 0x-prefixed Sui object ID to the raw hex bytes SEAL expects for the `id` param.
  */
@@ -181,24 +192,51 @@ export async function decryptPrivateManifest(
 
   const suiClient = getSuiClient();
   const signerKeypair = requesterKeypair ?? getServerKeypair();
-  const sessionKey = await createSessionKey(signerKeypair);
-  const tx = await buildSealApproveTx(
-    accumulatorId,
-    endorsementLogId,
-    encryptionId,
-    packageId,
-    signerKeypair.toSuiAddress(),
-    suiClient,
-  );
-  const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
-
   const encryptedBytes = await fetchBlobFromWalrus(encryptedWalrusBlobId);
+  const maxAttempts = 3;
 
-  logger.info(
-    { encryptionIdPrefix: encryptionId.slice(0, 16), accumulatorIdPrefix: accumulatorId.slice(0, 16) },
-    "[seal] requesting decryption keys"
-  );
-  return buildSealClient().decrypt({ data: encryptedBytes, sessionKey, txBytes });
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    const sessionKey = await createSessionKey(signerKeypair);
+    const tx = await buildSealApproveTx(
+      accumulatorId,
+      endorsementLogId,
+      encryptionId,
+      packageId,
+      signerKeypair.toSuiAddress(),
+      suiClient,
+    );
+    const txBytes = await tx.build({ client: suiClient, onlyTransactionKind: true });
+
+    logger.info(
+      {
+        attempt,
+        maxAttempts,
+        encryptionIdPrefix: encryptionId.slice(0, 16),
+        accumulatorIdPrefix: accumulatorId.slice(0, 16),
+      },
+      "[seal] requesting decryption keys"
+    );
+
+    try {
+      const plaintext = await buildSealClient().decrypt({ data: encryptedBytes, sessionKey, txBytes });
+      if (attempt > 1) {
+        logger.info({ attempt, maxAttempts }, "[seal] decryption succeeded after refreshing session");
+      }
+      return plaintext;
+    } catch (err) {
+      if (!isExpiredSessionError(err) || attempt >= maxAttempts) {
+        throw err;
+      }
+      const delayMs = attempt * 300;
+      logger.warn(
+        { err, attempt, maxAttempts, delayMs },
+        "[seal] session key expired during decrypt — refreshing session and retrying"
+      );
+      await sleep(delayMs);
+    }
+  }
+
+  throw new Error("SEAL decryption exhausted retries");
 }
 
 async function fetchBlobFromWalrus(blobId: string): Promise<Uint8Array> {

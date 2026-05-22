@@ -133,6 +133,7 @@ export class MockSuiPassportClient implements SuiPassportClient {
       grants: grantRows.map(rowToGrant),
       mintedAt: row.minted_at,
       txDigest: row.tx_digest,
+      endorsementLogId: undefined,
     };
   }
 

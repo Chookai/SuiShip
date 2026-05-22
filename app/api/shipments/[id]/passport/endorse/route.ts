@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db";
+import { validateDemoEndorsementAttempt } from "@/lib/endorsement-flow";
+import { writeProgressMemory } from "@/lib/memwal";
 import { getSuiPassportClient } from "@/lib/sui-passport";
 import { parseEd25519Keypair } from "@/lib/sui-keypair";
 
@@ -54,6 +56,42 @@ export async function POST(
         { status: 400 }
       );
     }
+
+    let importerAddress: string | null = null;
+    let exporterAddress: string | null = null;
+    try {
+      const passport = await client.getPassport(row.passport_id);
+      importerAddress = passport.importer ?? null;
+      exporterAddress = passport.exporter ?? null;
+    } catch {
+      // Best-effort enrichment only. The client/move call will still enforce signer auth.
+    }
+
+    const existingEndorsements = db.prepare(
+      `SELECT role, signer_address, action, signed_at_ms, tx_digest
+       FROM passport_endorsements
+       WHERE shipment_id = ?
+       ORDER BY signed_at_ms ASC, created_at ASC`
+    ).all(shipmentId) as Array<{
+      role: string;
+      signer_address: string;
+      action: string;
+      signed_at_ms: number;
+      tx_digest: string;
+    }>;
+
+    const flowCheck = validateDemoEndorsementAttempt({
+      role,
+      action,
+      endorsements: existingEndorsements,
+      signerAddress,
+      importerAddress,
+      exporterAddress,
+    });
+    if (!flowCheck.ok) {
+      return NextResponse.json({ error: flowCheck.error }, { status: 409 });
+    }
+
     let txDigest: string;
 
     if (role === "freight_forwarder") {
@@ -79,10 +117,11 @@ export async function POST(
         signerKeypair,
       }));
     } else {
-      ({ txDigest } = await client.endorseShipment({ logObjectId, role, action, noteHash }));
+      ({ txDigest } = await client.endorseShipment({ logObjectId, role, action, noteHash, signerKeypair }));
     }
 
     const signedAtMs = Date.now();
+    const timestamp = new Date(signedAtMs).toISOString();
     db.prepare(`
       INSERT OR IGNORE INTO passport_endorsements
         (id, shipment_id, passport_id, log_object_id, role, signer_address, action, note_hash, signed_at_ms, tx_digest)
@@ -92,6 +131,16 @@ export async function POST(
       role, signerAddress, action, noteHash ?? null,
       signedAtMs, txDigest
     );
+
+    void writeProgressMemory(shipmentId, {
+      kind: "endorsement_recorded",
+      passport_id: row.passport_id,
+      role,
+      action,
+      signer: signerAddress,
+      tx_digest: txDigest,
+      timestamp,
+    });
 
     return NextResponse.json({ txDigest, endorsement: { role, signer: signerAddress, action, signedAtMs } });
   } catch (err) {

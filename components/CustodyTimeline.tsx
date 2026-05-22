@@ -45,7 +45,7 @@ function roleTone(role: string) {
   }
 }
 
-export function CustodyTimeline({ shipmentId }: { shipmentId: string }) {
+export function CustodyTimeline({ shipmentId, refreshKey = 0 }: { shipmentId: string; refreshKey?: number }) {
   const [passport, setPassport] = useState<PassportResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -79,7 +79,7 @@ export function CustodyTimeline({ shipmentId }: { shipmentId: string }) {
       cancelled = true;
       window.clearInterval(intervalId);
     };
-  }, [shipmentId]);
+  }, [shipmentId, refreshKey]);
 
   const events = passport
     ? [
@@ -103,7 +103,7 @@ export function CustodyTimeline({ shipmentId }: { shipmentId: string }) {
     : [];
 
   return (
-    <Panel>
+    <Panel className="min-w-0">
       <div className="flex items-center gap-3">
         <Boxes className="h-5 w-5 text-sui" />
         <div>
@@ -116,7 +116,7 @@ export function CustodyTimeline({ shipmentId }: { shipmentId: string }) {
       {error ? <p className="mt-4 text-sm font-semibold text-red-600">{error}</p> : null}
 
       {!loading && !error && events.length > 0 ? (
-        <div className="mt-6 grid gap-4">
+        <div className="mt-6 grid min-w-0 gap-4">
           {events.map((event, index) => (
             <div key={event.key} className="relative pl-10">
               {index < events.length - 1 ? (

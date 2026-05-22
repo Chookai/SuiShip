@@ -78,6 +78,10 @@ function normalizeHex(hex: string): string {
   return normalized;
 }
 
+function normalizeAddress(address: string): string {
+  return address.trim().toLowerCase();
+}
+
 function hexToBytes(hex: string): number[] {
   const normalized = normalizeHex(hex);
   if (normalized.length % 2 !== 0) {
@@ -528,6 +532,7 @@ export class RealSuiPassportClient implements SuiPassportClient {
     role: string;
     action: string;
     noteHash?: string;
+    signerKeypair?: Ed25519Keypair;
   }): Promise<{ txDigest: string }> {
     const tx = new Transaction();
     const noteBytes = input.noteHash ? hexToBytes(input.noteHash) : [];
@@ -541,7 +546,7 @@ export class RealSuiPassportClient implements SuiPassportClient {
         tx.object("0x6"),
       ],
     });
-    const { digest } = await executeTransaction(tx);
+    const { digest } = await executeTransaction(tx, input.signerKeypair ?? getKeypair());
     return { txDigest: digest };
   }
 
@@ -668,6 +673,8 @@ export class RealSuiPassportClient implements SuiPassportClient {
     return {
       passportId,
       owner: f.owner as string,
+      importer: f.importer as string,
+      exporter: f.exporter as string,
       shipmentId: f.shipment_id as string,
       memWalSpaceId: f.memwal_space_id as string,
       walrusBlobIds: (f.walrus_blob_ids as string[]) ?? [],
@@ -675,6 +682,7 @@ export class RealSuiPassportClient implements SuiPassportClient {
       grants: [],
       mintedAt: new Date(Number(f.created_at_ms)).toISOString(),
       txDigest: passportId,
+      endorsementLogId: f.endorsement_log_id as string,
     };
   }
 
@@ -701,10 +709,71 @@ export class RealSuiPassportClient implements SuiPassportClient {
   }
 
   async checkScope(
-    _requestorAddress: string,
-    _passportId: string,
+    requestorAddress: string,
+    passportId: string,
     _scope: MemWalAccessScope
   ): Promise<boolean> {
+    const normalizedRequestor = normalizeAddress(requestorAddress);
+    const passport = await this.getPassport(passportId);
+
+    const directAddresses = [
+      passport.owner,
+      passport.importer,
+      passport.exporter,
+    ].filter((value): value is string => typeof value === "string" && value.length > 0);
+    if (directAddresses.some((address) => normalizeAddress(address) === normalizedRequestor)) {
+      return true;
+    }
+
+    if (passport.endorsementLogId) {
+      try {
+        const log = await this.getEndorsementLog(passport.endorsementLogId);
+        if (log.endorsements.some((endorsement) => normalizeAddress(endorsement.signer) === normalizedRequestor)) {
+          return true;
+        }
+      } catch (err) {
+        logger.warn(
+          { err, passportId, requestorAddress },
+          "[scope] failed to read endorsement log during checkScope"
+        );
+      }
+    }
+
+    const client = getClient();
+    const structTypes = [
+      `${getPackageId()}::shipment_passport::FreightForwarderCap`,
+      `${getPackageId()}::shipment_passport::CustomsCap`,
+    ];
+
+    for (const structType of structTypes) {
+      let cursor: string | null | undefined = null;
+      do {
+        const page = await client.getOwnedObjects({
+          owner: requestorAddress,
+          filter: { StructType: structType },
+          options: { showContent: true, showType: true },
+          cursor,
+          limit: 50,
+        });
+
+        for (const entry of page.data) {
+          const fields = entry.data?.content && "fields" in entry.data.content
+            ? entry.data.content.fields as Record<string, unknown>
+            : null;
+          const shipmentId = typeof fields?.shipment_id === "string" ? fields.shipment_id : "";
+          const grantee = typeof fields?.grantee === "string" ? fields.grantee : "";
+          if (
+            shipmentId === passport.shipmentId &&
+            (!grantee || normalizeAddress(grantee) === normalizedRequestor)
+          ) {
+            return true;
+          }
+        }
+
+        cursor = page.hasNextPage ? page.nextCursor : null;
+      } while (cursor);
+    }
+
     return false;
   }
 }

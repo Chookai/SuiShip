@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { buildTxDigestMap } from "@/lib/endorsement-flow";
 import { getSuiPassportClient } from "@/lib/sui-passport";
 
 export const runtime = "nodejs";
@@ -42,26 +43,35 @@ export async function GET(
       tx_digest: string;
       created_at: string;
     }>;
-    const txDigestByKey = new Map(
-      endorsements.map((endorsement) => [
-        `${endorsement.role}:${endorsement.signer_address}:${endorsement.action}:${endorsement.signed_at_ms}`,
-        endorsement.tx_digest,
-      ]),
-    );
+    const txDigestByKey = buildTxDigestMap(endorsements);
 
     // Optionally enrich from on-chain if endorsement log ID is known
     let onChainEndorsements: typeof endorsements | null = null;
+    let importerAddress: string | null = null;
+    let exporterAddress: string | null = null;
+    let ownerAddress: string | null = null;
+    try {
+      const client = getSuiPassportClient();
+      const passport = await client.getPassport(row.passport_id);
+      ownerAddress = passport.owner;
+      importerAddress = passport.importer ?? null;
+      exporterAddress = passport.exporter ?? null;
+    } catch {
+      // Optional enrichment only
+    }
     if (row.endorsement_log_object_id) {
       try {
         const client = getSuiPassportClient();
         const log = await client.getEndorsementLog(row.endorsement_log_object_id);
+        importerAddress = log.importer;
+        exporterAddress = log.exporter;
         onChainEndorsements = log.endorsements.map((e) => ({
           role: e.role,
           signer_address: e.signer,
           action: e.action,
           note_hash: e.noteHash || null,
           signed_at_ms: e.signedAtMs,
-          tx_digest: txDigestByKey.get(`${e.role}:${e.signer}:${e.action}:${e.signedAtMs}`) ?? "",
+          tx_digest: txDigestByKey.get(`${e.role}:${e.signer.toLowerCase()}:${e.action}`) ?? "",
           created_at: new Date(e.signedAtMs).toISOString(),
         }));
       } catch {
@@ -76,6 +86,9 @@ export async function GET(
       endorsementLogId: row.endorsement_log_object_id,
       sealObjectId: row.seal_object_id,
       encryptedWalrusBlobId: row.encrypted_walrus_blob_id,
+      ownerAddress,
+      importerAddress,
+      exporterAddress,
       endorsements: onChainEndorsements ?? endorsements,
     });
   } catch (err) {

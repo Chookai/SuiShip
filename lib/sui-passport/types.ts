@@ -20,6 +20,8 @@ export type Grant = {
 export type PassportRecord = {
   passportId: string;
   owner: string;
+  importer?: string;
+  exporter?: string;
   shipmentId: string;
   memWalSpaceId: string;
   walrusBlobIds: string[];
@@ -27,6 +29,7 @@ export type PassportRecord = {
   grants: Grant[];
   mintedAt: string;
   txDigest: string;
+  endorsementLogId?: string;
 };
 
 export type MintPassportInput = {
@@ -72,6 +75,7 @@ export type EndorseInput = {
   role: string;
   action: string;
   noteHash?: string;
+  signerKeypair?: Ed25519Keypair;
 };
 
 export type EndorseWithCapInput = {

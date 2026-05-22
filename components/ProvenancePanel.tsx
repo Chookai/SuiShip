@@ -24,7 +24,7 @@ function txUrl(digest: string) {
   return `${SUISCAN_BASE}/tx/${digest}`;
 }
 
-export function ProvenancePanel({ shipmentId }: { shipmentId: string }) {
+export function ProvenancePanel({ shipmentId, refreshKey = 0 }: { shipmentId: string; refreshKey?: number }) {
   const account = useCurrentAccount();
   const [question, setQuestion] = useState("What is the cargo?");
   const [requesterAddress, setRequesterAddress] = useState("");
@@ -32,6 +32,7 @@ export function ProvenancePanel({ shipmentId }: { shipmentId: string }) {
   const [result, setResult] = useState<ProvenanceResponse | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [hasAsked, setHasAsked] = useState(false);
 
   useEffect(() => {
     if (account?.address) {
@@ -56,14 +57,22 @@ export function ProvenancePanel({ shipmentId }: { shipmentId: string }) {
       if (!response.ok) {
         throw new Error(typeof payload?.error === "string" ? payload.error : `HTTP ${response.status}`);
       }
+      setHasAsked(true);
       setResult(payload as ProvenanceResponse);
     } catch (err) {
+      setHasAsked(true);
       setResult(null);
       setError(err instanceof Error ? err.message : "Could not query provenance");
     } finally {
       setLoading(false);
     }
   }
+
+  useEffect(() => {
+    if (!hasAsked || !question.trim() || !requesterAddress.trim()) return;
+    void askQuestion();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [refreshKey, shipmentId]);
 
   const statusTone = result?.authorized
     ? "border-emerald-100 bg-emerald-50 text-emerald-700"

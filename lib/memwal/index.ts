@@ -34,6 +34,26 @@ export async function writeDocEvent(
 }
 
 /**
+ * Fire-and-forget progress/event write for shipment timeline memories.
+ */
+export async function writeProgressMemory(
+  shipmentId: string,
+  payload: Record<string, unknown>
+): Promise<void> {
+  const { isMemWalConfigured, memwalRemember } = await import("./client");
+  if (!isMemWalConfigured()) return;
+
+  const text = `SUISHIP PROGRESS EVENT\n${JSON.stringify({
+    shipment_id: shipmentId,
+    ...payload,
+  }, null, 2)}`;
+
+  memwalRemember(text, `${shipmentId}:progress`).catch(() => {
+    // Swallow — MemWal failure never blocks the main request path
+  });
+}
+
+/**
  * Reads the manifest for a minted shipment.
  * Checks SQLite cache first; falls back to MemWal recall if cache is stale.
  */

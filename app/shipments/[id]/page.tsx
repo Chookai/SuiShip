@@ -27,6 +27,8 @@ import { useParams } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PassportActions } from "@/components/passport-actions";
 import { CustodyTimeline } from "@/components/CustodyTimeline";
+import { EndorsementPanel } from "@/components/EndorsementPanel";
+import { MemWalMemoryPanel } from "@/components/MemWalMemoryPanel";
 import { ProvenancePanel } from "@/components/ProvenancePanel";
 import { QrCard } from "@/components/qr-card";
 import { useRole } from "@/components/role-context";
@@ -213,6 +215,7 @@ function StoredShipmentView({
   const currentAccount = useCurrentAccount();
   const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
   const [passportAvailable, setPassportAvailable] = useState(false);
+  const [panelRefreshNonce, setPanelRefreshNonce] = useState(0);
   const [progressBusy, setProgressBusy] = useState(false);
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [newDocumentName, setNewDocumentName] = useState("");
@@ -483,9 +486,23 @@ function StoredShipmentView({
         </div>
       ) : null}
       {passportAvailable ? (
-        <div className="mt-6 grid gap-6">
-          <CustodyTimeline shipmentId={shipment.id} />
-          <ProvenancePanel shipmentId={shipment.id} />
+        <div className="mt-6 grid gap-6 lg:grid-cols-2 xl:grid-cols-[minmax(0,1fr)_minmax(0,1fr)]">
+          <div className="min-w-0">
+            <CustodyTimeline shipmentId={shipment.id} refreshKey={panelRefreshNonce} />
+          </div>
+          <div className="min-w-0">
+            <EndorsementPanel
+              shipmentId={shipment.id}
+              refreshKey={panelRefreshNonce}
+              onEndorsed={() => setPanelRefreshNonce((current: number) => current + 1)}
+            />
+          </div>
+          <div className="min-w-0">
+            <ProvenancePanel shipmentId={shipment.id} refreshKey={panelRefreshNonce} />
+          </div>
+          <div className="min-w-0">
+            <MemWalMemoryPanel shipmentId={shipment.id} refreshKey={panelRefreshNonce} />
+          </div>
         </div>
       ) : null}
 
