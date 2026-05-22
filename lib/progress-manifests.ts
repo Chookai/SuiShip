@@ -100,9 +100,7 @@ export async function recordProgressManifest(
   let memwalBlobId: string | null = null;
   let status = "stored_local";
   if (isMemWalConfigured()) {
-    const result = await memwalRemember(`SUISHIP PROGRESS MANIFEST\n${manifestJson}`, namespace);
-    memwalBlobId = result.blobId;
-    status = "stored_memwal";
+    status = "queued_memwal";
   } else {
     memwalBlobId = `local_${createHash("sha256").update(manifestJson).digest("hex").slice(0, 24)}`;
   }
@@ -113,9 +111,37 @@ export async function recordProgressManifest(
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(id, shipmentId, sequence, input.stage, input.actor, input.summary, manifestJson, memwalBlobId, namespace, status);
 
+  if (isMemWalConfigured()) {
+    queueProgressManifestMemWalSync(id, namespace, manifestJson, db);
+  }
+
   return rowToProgressManifest(
     db.prepare("SELECT * FROM progress_manifests WHERE id = ?").get(id) as ProgressManifestRow
   );
+}
+
+function queueProgressManifestMemWalSync(
+  id: string,
+  namespace: string,
+  manifestJson: string,
+  db: Database
+): void {
+  void (async () => {
+    try {
+      const result = await memwalRemember(`SUISHIP PROGRESS MANIFEST\n${manifestJson}`, namespace);
+      db.prepare(`
+        UPDATE progress_manifests
+        SET memwal_blob_id = ?, status = 'stored_memwal'
+        WHERE id = ?
+      `).run(result.blobId, id);
+    } catch {
+      db.prepare(`
+        UPDATE progress_manifests
+        SET status = 'memwal_failed'
+        WHERE id = ?
+      `).run(id);
+    }
+  })();
 }
 
 function getShipmentForProgress(shipmentId: string, db: Database): ShipmentRecord | null {

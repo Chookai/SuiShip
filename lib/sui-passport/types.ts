@@ -40,6 +40,7 @@ export type MintPassportResult = {
   passportId: string;
   txDigest: string;
   mintedAt: string;
+  endorsementLogId?: string;
 };
 
 export type GrantAccessInput = {
@@ -64,7 +65,58 @@ export type TransferPassportInput = {
   toAddress: string;
 };
 
+export type EndorseInput = {
+  logObjectId: string;
+  role: string;
+  action: string;
+  noteHash?: string;
+};
+
+export type EndorseWithCapInput = {
+  logObjectId: string;
+  capObjectId: string;
+  action: string;
+  noteHash?: string;
+};
+
+export type CreateShipmentInput = {
+  shipmentId: string;
+  initiator: string;
+  importer: string;
+  exporter: string;
+  template: string;
+  manifestDigest: string;
+};
+
+export type DocCommitInput = {
+  docId: string;
+  slotKey: string;
+  contentHash: string;
+  extractionHash: string;
+};
+
+export type GrantRoleInput = {
+  passportObjectId: string;
+  role: "freight_forwarder" | "customs";
+  granteeAddress: string;
+};
+
 export interface SuiPassportClient {
+  createShipment?(input: CreateShipmentInput): Promise<{ recordId: string; accumulatorId: string; txDigest: string }>;
+  primeRecoveredShipmentRecordRef?(shipmentId: string, recordId: string): Promise<void>;
+  commitDocument?(
+    shipmentId: string,
+    docId: string,
+    slotKey: string,
+    contentHash: string,
+    extractionHash: string,
+    accumulatorId?: string
+  ): Promise<{ txDigest: string }>;
+  commitDocumentBatch?(
+    shipmentId: string,
+    accumulatorId: string,
+    docs: DocCommitInput[]
+  ): Promise<{ txDigest: string }>;
   mintPassport(input: MintPassportInput): Promise<MintPassportResult>;
   getPassport(passportId: string): Promise<PassportRecord>;
   grantAccess(input: GrantAccessInput): Promise<GrantAccessResult>;
@@ -72,4 +124,15 @@ export interface SuiPassportClient {
   listGrants(passportId: string): Promise<Grant[]>;
   transferPassport(input: TransferPassportInput): Promise<{ txDigest: string }>;
   checkScope(requestorAddress: string, passportId: string, scope: MemWalAccessScope): Promise<boolean>;
+  endorseShipment(input: EndorseInput): Promise<{ txDigest: string }>;
+  endorseAsFreightForwarder(input: EndorseWithCapInput): Promise<{ txDigest: string }>;
+  endorseAsCustoms(input: EndorseWithCapInput): Promise<{ txDigest: string }>;
+  grantRole(input: GrantRoleInput): Promise<{ txDigest: string; capObjectId: string }>;
+  getEndorsementLog(logObjectId: string): Promise<{
+    passportId: string;
+    shipmentId: string;
+    importer: string;
+    exporter: string;
+    endorsements: Array<{ role: string; signer: string; action: string; noteHash: string; signedAtMs: number }>;
+  }>;
 }

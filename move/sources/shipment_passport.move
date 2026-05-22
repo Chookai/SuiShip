@@ -1,11 +1,12 @@
 /// SuiShip — on-chain shipping document verification.
 ///
-/// Three objects work together:
-///   1. ShipmentRecord   — lightweight metadata created at shipment creation.
-///   2. DocAccumulator   — shared object; each document upload appends a cheap
-///                         commitment (content_hash + extraction_hash) before mint.
-///   3. ShipmentPassport — final NFT created at mint; links Walrus blobs, MemWal
-///                         audit trail, and the frozen accumulator.
+/// Objects:
+///   1. ShipmentRecord        — lightweight metadata created at shipment creation.
+///   2. DocAccumulator        — shared; each document upload appends a commitment.
+///   3. ShipmentPassport      — final NFT minted at finalization.
+///   4. ShipmentEndorsementLog— shared custody-chain log; freight forwarder and
+///                              customs endorse here without touching the owned NFT.
+///   5. FreightForwarderCap / CustomsCap — capability objects granting role access.
 ///
 /// A ShipmentRegistry singleton prevents duplicate shipment IDs.
 #[allow(duplicate_alias, lint(public_entry))]
@@ -28,6 +29,7 @@ module suiship::shipment_passport {
     const E_DUPLICATE_SHIPMENT:   u64 = 5;
     const E_ALREADY_FINALIZED:    u64 = 6;
     const E_WRONG_SHIPMENT:       u64 = 7;
+    const E_WRONG_GRANTEE:        u64 = 8;
 
     const MIN_VERIFICATION_SCORE: u64 = 85;
 
@@ -37,6 +39,7 @@ module suiship::shipment_passport {
     /// Prevents duplicate shipment IDs on-chain.
     public struct ShipmentRegistry has key {
         id: UID,
+        admin: address,
         /// shipment_id (String) → ShipmentRecord object ID
         shipments: Table<String, ID>,
     }
@@ -75,6 +78,8 @@ module suiship::shipment_passport {
     public struct DocAccumulator has key {
         id: UID,
         shipment_id: String,
+        importer: address,
+        exporter: address,
         finalized: bool,
         entries: vector<DocEntry>,
     }
@@ -95,7 +100,7 @@ module suiship::shipment_passport {
         accumulator_digest: vector<u8>,
         /// ID of the (now frozen) DocAccumulator
         accumulator_id: ID,
-        /// SHA-256 of the Walrus ZIP blob (required — proves content integrity)
+        /// SHA-256 of the canonical public manifest bytes (reproducible)
         package_hash: vector<u8>,
         /// SHA-256 of the final cross-validation JSON stored in MemWal
         validation_hash: vector<u8>,
@@ -104,6 +109,49 @@ module suiship::shipment_passport {
         status: String,
         created_at_ms: u64,
         updated_at_ms: u64,
+        /// ID of the shared ShipmentEndorsementLog created alongside this passport
+        endorsement_log_id: ID,
+        /// SEAL encrypted object key ID (32 bytes, or empty before SEAL integration)
+        seal_object_id: vector<u8>,
+        /// Walrus blob ID of the SEAL-encrypted private payload (or empty before SEAL)
+        encrypted_blob_id: String,
+    }
+
+    /// Shared custody audit log. Created at finalize_shipment().
+    /// All parties (importer, exporter, freight forwarder, customs) write here.
+    /// Passport stays an owned NFT; this log is the mutable shared companion.
+    public struct ShipmentEndorsementLog has key {
+        id: UID,
+        passport_id: ID,
+        shipment_id: String,
+        importer: address,
+        exporter: address,
+        endorsements: vector<Endorsement>,
+    }
+
+    /// A single custody endorsement appended to the log.
+    public struct Endorsement has store, copy, drop {
+        role: String,          // "importer" | "exporter" | "freight_forwarder" | "customs"
+        signer: address,
+        action: String,        // e.g. "picked_up" | "customs_submitted" | "customs_cleared" | "delivered"
+        note_hash: vector<u8>, // SHA-256 of an off-chain note, or empty
+        signed_at_ms: u64,
+    }
+
+    /// Capability granting freight-forwarder endorsement rights for one shipment.
+    /// Minted by the passport owner via grant_freight_forwarder_role().
+    public struct FreightForwarderCap has key, store {
+        id: UID,
+        shipment_id: String,
+        grantee: address,
+    }
+
+    /// Capability granting customs endorsement rights for one shipment.
+    /// Minted by the passport owner via grant_customs_role().
+    public struct CustomsCap has key, store {
+        id: UID,
+        shipment_id: String,
+        grantee: address,
     }
 
     // ── Events ───────────────────────────────────────────────────────────────
@@ -144,11 +192,28 @@ module suiship::shipment_passport {
         updated_at_ms: u64,
     }
 
+    public struct EndorsementLogCreated has copy, drop {
+        log_id: ID,
+        passport_id: ID,
+        shipment_id: String,
+    }
+
+    public struct PassportEndorsed has copy, drop {
+        log_id: ID,
+        passport_id: ID,
+        shipment_id: String,
+        role: String,
+        signer: address,
+        action: String,
+        signed_at_ms: u64,
+    }
+
     // ── Module initializer ───────────────────────────────────────────────────
 
     fun init(ctx: &mut TxContext) {
         let registry = ShipmentRegistry {
             id: object::new(ctx),
+            admin: tx_context::sender(ctx),
             shipments: table::new(ctx),
         };
         transfer::share_object(registry);
@@ -170,6 +235,7 @@ module suiship::shipment_passport {
     public entry fun create_shipment(
         registry: &mut ShipmentRegistry,
         shipment_id: String,
+        initiator: address,
         importer: address,
         exporter: address,
         template: String,
@@ -179,7 +245,7 @@ module suiship::shipment_passport {
     ) {
         let sender = tx_context::sender(ctx);
         assert!(
-            sender == importer || sender == exporter,
+            sender == registry.admin || sender == initiator || sender == importer || sender == exporter,
             E_NOT_AUTHORIZED
         );
         assert!(importer != exporter, E_NOT_AUTHORIZED);
@@ -193,6 +259,8 @@ module suiship::shipment_passport {
         let accumulator = DocAccumulator {
             id: object::new(ctx),
             shipment_id,
+            importer,
+            exporter,
             finalized: false,
             entries: vector[],
         };
@@ -201,7 +269,7 @@ module suiship::shipment_passport {
         let record = ShipmentRecord {
             id: object::new(ctx),
             shipment_id,
-            initiator: sender,
+            initiator,
             importer,
             exporter,
             template,
@@ -234,7 +302,7 @@ module suiship::shipment_passport {
     /// Called once per document upload after Haiku extraction succeeds.
     /// ~2000 gas. Does not block the upload response.
     public entry fun commit_document(
-        record: &mut ShipmentRecord,
+        registry: &ShipmentRegistry,
         accumulator: &mut DocAccumulator,
         doc_id: String,
         slot_key: String,
@@ -245,12 +313,8 @@ module suiship::shipment_passport {
     ) {
         let sender = tx_context::sender(ctx);
         assert!(
-            sender == record.importer || sender == record.exporter,
+            sender == registry.admin || sender == accumulator.importer || sender == accumulator.exporter,
             E_NOT_AUTHORIZED
-        );
-        assert!(
-            record.shipment_id == accumulator.shipment_id,
-            E_WRONG_SHIPMENT
         );
         assert!(!accumulator.finalized, E_ALREADY_FINALIZED);
 
@@ -266,12 +330,10 @@ module suiship::shipment_passport {
         };
 
         vector::push_back(&mut accumulator.entries, entry);
-        record.doc_count_committed = record.doc_count_committed + 1;
-        record.updated_at_ms = now;
 
         event::emit(DocumentCommitted {
             accumulator_id: object::id(accumulator),
-            shipment_id: record.shipment_id,
+            shipment_id: accumulator.shipment_id,
             doc_id: entry.doc_id,
             slot_key: entry.slot_key,
             uploader: sender,
@@ -290,15 +352,18 @@ module suiship::shipment_passport {
         walrus_manifest_blob_id: String,
         _walrus_doc_blob_ids_json: String,
         memwal_space_id: String,
+        owner: address,
         package_hash: vector<u8>,
         validation_hash: vector<u8>,
         verification_score: u64,
+        seal_object_id: vector<u8>,
+        encrypted_blob_id: String,
         clock: &Clock,
         ctx: &mut TxContext,
     ) {
         let sender = tx_context::sender(ctx);
         assert!(
-            sender == record.importer || sender == record.exporter,
+            sender == registry.admin || sender == record.importer || sender == record.exporter,
             E_NOT_AUTHORIZED
         );
         assert!(
@@ -342,12 +407,18 @@ module suiship::shipment_passport {
         let exporter = record.exporter;
         let template = record.template;
 
+        // Create the endorsement log first so we can capture its ID for the passport
+        let log_uid = object::new(ctx);
+        let log_id = object::uid_to_inner(&log_uid);
+        // Save shipment_id copy for the log (shipment_id is moved into passport below)
+        let log_shipment_id = shipment_id;
+
         let passport = ShipmentPassport {
             id: object::new(ctx),
             shipment_id,
             importer,
             exporter,
-            owner: sender,
+            owner,
             template,
             walrus_blob_ids,
             memwal_space_id,
@@ -360,6 +431,9 @@ module suiship::shipment_passport {
             status: string::utf8(b"AI Verified"),
             created_at_ms: now,
             updated_at_ms: now,
+            endorsement_log_id: log_id,
+            seal_object_id,
+            encrypted_blob_id,
         };
         let passport_id = object::id(&passport);
 
@@ -373,7 +447,7 @@ module suiship::shipment_passport {
             passport_id,
             accumulator_id,
             shipment_id: passport.shipment_id,
-            owner: sender,
+            owner,
             verification_score,
             document_count: (document_count as u64),
             created_at_ms: now,
@@ -395,7 +469,158 @@ module suiship::shipment_passport {
         } = record;
         object::delete(record_uid);
 
-        transfer::transfer(passport, sender);
+        transfer::transfer(passport, owner);
+
+        // Create and share the endorsement log (separate shared object — passport stays owned NFT)
+        let log = ShipmentEndorsementLog {
+            id: log_uid,
+            passport_id,
+            shipment_id: log_shipment_id,
+            importer,
+            exporter,
+            endorsements: vector[],
+        };
+
+        event::emit(EndorsementLogCreated {
+            log_id,
+            passport_id,
+            shipment_id: log.shipment_id,
+        });
+
+        transfer::share_object(log);
+    }
+
+    // ── Endorsement functions ────────────────────────────────────────────────
+
+    /// Endorse by the importer or exporter (authorized by address on the log).
+    public entry fun endorse_shipment(
+        log: &mut ShipmentEndorsementLog,
+        role: String,
+        action: String,
+        note_hash: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        let sender = tx_context::sender(ctx);
+        assert!(sender == log.importer || sender == log.exporter, E_NOT_AUTHORIZED);
+        let signed_at_ms = clock::timestamp_ms(clock);
+        let e = Endorsement { role, signer: sender, action, note_hash, signed_at_ms };
+        vector::push_back(&mut log.endorsements, e);
+        event::emit(PassportEndorsed {
+            log_id: object::id(log),
+            passport_id: log.passport_id,
+            shipment_id: log.shipment_id,
+            role: e.role,
+            signer: sender,
+            action: e.action,
+            signed_at_ms,
+        });
+    }
+
+    /// Endorse as freight forwarder (requires FreightForwarderCap for this shipment).
+    public entry fun endorse_as_freight_forwarder(
+        log: &mut ShipmentEndorsementLog,
+        cap: &FreightForwarderCap,
+        action: String,
+        note_hash: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        assert!(cap.shipment_id == log.shipment_id, E_WRONG_SHIPMENT);
+        let sender = tx_context::sender(ctx);
+        assert!(sender == cap.grantee, E_WRONG_GRANTEE);
+        let role = string::utf8(b"freight_forwarder");
+        let signed_at_ms = clock::timestamp_ms(clock);
+        let e = Endorsement { role, signer: sender, action, note_hash, signed_at_ms };
+        vector::push_back(&mut log.endorsements, e);
+        event::emit(PassportEndorsed {
+            log_id: object::id(log),
+            passport_id: log.passport_id,
+            shipment_id: log.shipment_id,
+            role: e.role,
+            signer: sender,
+            action: e.action,
+            signed_at_ms,
+        });
+    }
+
+    /// Endorse as customs authority (requires CustomsCap for this shipment).
+    public entry fun endorse_as_customs(
+        log: &mut ShipmentEndorsementLog,
+        cap: &CustomsCap,
+        action: String,
+        note_hash: vector<u8>,
+        clock: &Clock,
+        ctx: &mut TxContext,
+    ) {
+        assert!(cap.shipment_id == log.shipment_id, E_WRONG_SHIPMENT);
+        let sender = tx_context::sender(ctx);
+        assert!(sender == cap.grantee, E_WRONG_GRANTEE);
+        let role = string::utf8(b"customs");
+        let signed_at_ms = clock::timestamp_ms(clock);
+        let e = Endorsement { role, signer: sender, action, note_hash, signed_at_ms };
+        vector::push_back(&mut log.endorsements, e);
+        event::emit(PassportEndorsed {
+            log_id: object::id(log),
+            passport_id: log.passport_id,
+            shipment_id: log.shipment_id,
+            role: e.role,
+            signer: sender,
+            action: e.action,
+            signed_at_ms,
+        });
+    }
+
+    /// Grant freight-forwarder capability for this shipment. Only the passport owner may call this.
+    public entry fun grant_freight_forwarder_role(
+        passport: &ShipmentPassport,
+        grantee: address,
+        ctx: &mut TxContext,
+    ) {
+        assert!(tx_context::sender(ctx) == passport.owner, E_NOT_AUTHORIZED);
+        let cap = FreightForwarderCap {
+            id: object::new(ctx),
+            shipment_id: passport.shipment_id,
+            grantee,
+        };
+        transfer::transfer(cap, grantee);
+    }
+
+    /// Grant customs capability for this shipment. Only the passport owner may call this.
+    public entry fun grant_customs_role(
+        passport: &ShipmentPassport,
+        grantee: address,
+        ctx: &mut TxContext,
+    ) {
+        assert!(tx_context::sender(ctx) == passport.owner, E_NOT_AUTHORIZED);
+        let cap = CustomsCap {
+            id: object::new(ctx),
+            shipment_id: passport.shipment_id,
+            grantee,
+        };
+        transfer::transfer(cap, grantee);
+    }
+
+    // ── SEAL access policy ───────────────────────────────────────────────────
+
+    /// Called by SEAL key servers to gate decryption of the private payload.
+    /// Approves if the caller is the importer, exporter, or any endorser on the log.
+    /// NOTE: exact seal_approve signature must be verified against @mysten/seal v1.1.3 docs.
+    public fun seal_approve(
+        id: vector<u8>,
+        log: &ShipmentEndorsementLog,
+        ctx: &TxContext,
+    ) {
+        let _ = id;
+        let sender = tx_context::sender(ctx);
+        if (sender == log.importer || sender == log.exporter) { return };
+        let mut i = 0;
+        let len = vector::length(&log.endorsements);
+        while (i < len) {
+            if (vector::borrow(&log.endorsements, i).signer == sender) { return };
+            i = i + 1;
+        };
+        abort E_NOT_AUTHORIZED
     }
 
     // ── Status update functions ──────────────────────────────────────────────
@@ -456,5 +681,12 @@ module suiship::shipment_passport {
 
     public fun accumulator_is_finalized(accumulator: &DocAccumulator): bool {
         accumulator.finalized
+    }
+
+    public fun get_endorsement_log_id(passport: &ShipmentPassport): ID { passport.endorsement_log_id }
+    public fun get_seal_object_id(passport: &ShipmentPassport): &vector<u8> { &passport.seal_object_id }
+    public fun get_encrypted_blob_id(passport: &ShipmentPassport): &String { &passport.encrypted_blob_id }
+    public fun endorsement_count(log: &ShipmentEndorsementLog): u64 {
+        vector::length(&log.endorsements)
     }
 }

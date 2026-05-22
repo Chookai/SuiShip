@@ -3,6 +3,7 @@ import pino from "pino";
 import type Database from "better-sqlite3";
 import type {
   SuiPassportClient,
+  DocCommitInput,
   Grant,
   GrantAccessInput,
   GrantAccessResult,
@@ -230,5 +231,39 @@ export class MockSuiPassportClient implements SuiPassportClient {
     `).get(passportId, requestorAddress, now, scope) as { grant_id: string } | undefined;
 
     return grant !== undefined;
+  }
+
+  async commitDocumentBatch(
+    _shipmentId: string,
+    _accumulatorId: string,
+    _docs: DocCommitInput[],
+  ): Promise<{ txDigest: string }> {
+    return { txDigest: `mock_batch_${Date.now()}` };
+  }
+
+  async endorseShipment(_input: import("./types").EndorseInput): Promise<{ txDigest: string }> {
+    return { txDigest: `mock_endorse_${Date.now()}` };
+  }
+
+  async endorseAsFreightForwarder(_input: import("./types").EndorseWithCapInput): Promise<{ txDigest: string }> {
+    return { txDigest: `mock_ff_endorse_${Date.now()}` };
+  }
+
+  async endorseAsCustoms(_input: import("./types").EndorseWithCapInput): Promise<{ txDigest: string }> {
+    return { txDigest: `mock_customs_endorse_${Date.now()}` };
+  }
+
+  async grantRole(_input: import("./types").GrantRoleInput): Promise<{ txDigest: string; capObjectId: string }> {
+    return { txDigest: `mock_grant_${Date.now()}`, capObjectId: `mock_cap_${Date.now()}` };
+  }
+
+  async getEndorsementLog(_logObjectId: string): Promise<{
+    passportId: string;
+    shipmentId: string;
+    importer: string;
+    exporter: string;
+    endorsements: Array<{ role: string; signer: string; action: string; noteHash: string; signedAtMs: number }>;
+  }> {
+    return { passportId: "", shipmentId: "", importer: "", exporter: "", endorsements: [] };
   }
 }

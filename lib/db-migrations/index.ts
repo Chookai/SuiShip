@@ -6,6 +6,61 @@ import path from "node:path";
 // Next.js webpack compilation (it can resolve to "/" or the bundle root).
 const MIGRATIONS_DIR = path.join(process.cwd(), "lib", "db-migrations");
 
+function reconcileTemplateSlots(db: Database.Database): void {
+  db.exec(`
+    DELETE FROM template_slots
+    WHERE template_id = 'air'
+      AND slot_key = 'air_waybill'
+      AND EXISTS (
+        SELECT 1
+        FROM template_slots existing
+        WHERE existing.template_id = 'air'
+          AND existing.slot_key = 'bill_of_lading'
+      );
+
+    UPDATE template_slots
+    SET slot_key = 'bill_of_lading',
+        display_name = 'Air Waybill (AWB)',
+        is_required = 1,
+        assigned_role = 'importer',
+        sort_order = 3
+    WHERE template_id = 'air'
+      AND slot_key = 'air_waybill';
+
+    INSERT OR IGNORE INTO template_slots
+      (id, template_id, slot_key, display_name, is_required, assigned_role, sort_order)
+    VALUES
+      ('a3', 'air', 'bill_of_lading', 'Air Waybill (AWB)', 1, 'importer', 3);
+
+    UPDATE template_slots
+    SET display_name = 'Air Waybill (AWB)',
+        is_required = 1,
+        assigned_role = 'importer',
+        sort_order = 3
+    WHERE template_id = 'air'
+      AND slot_key = 'bill_of_lading';
+  `);
+}
+
+function reconcileCommitmentTracking(db: Database.Database): void {
+  const cols = (db.prepare("PRAGMA table_info(shipment_files)").all() as Array<{ name: string }>).map(
+    (col) => col.name
+  );
+  if (!cols.includes("on_chain_commitment_status")) return;
+
+  db.exec(`
+    UPDATE shipment_files
+    SET on_chain_commitment_status = 'committed',
+        on_chain_commitment_error = NULL
+    WHERE on_chain_commitment_tx IS NOT NULL;
+
+    UPDATE shipment_files
+    SET on_chain_commitment_status = 'pending'
+    WHERE on_chain_commitment_tx IS NULL
+      AND on_chain_commitment_status = 'in_flight';
+  `);
+}
+
 export function runMigrations(db: Database.Database): void {
   db.exec(`
     CREATE TABLE IF NOT EXISTS schema_migrations (
@@ -33,4 +88,7 @@ export function runMigrations(db: Database.Database): void {
     db.exec(sql);
     db.prepare("INSERT INTO schema_migrations (version) VALUES (?)").run(version);
   }
+
+  reconcileTemplateSlots(db);
+  reconcileCommitmentTracking(db);
 }

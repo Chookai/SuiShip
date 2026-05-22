@@ -1,11 +1,16 @@
 import { createHash } from "node:crypto";
 import JSZip from "jszip";
+import pLimit from "p-limit";
 import pino from "pino";
 import { getDb } from "./db";
-import { getShipmentById, updateShipmentMintPointers } from "./shipments-server";
+import { getShipmentById, updateShipmentMemWalSync, updateShipmentMintPointers } from "./shipments-server";
 import { storeBlobServer, WALRUS_AGGREGATOR, WALRUS_MINT_EPOCHS, aggregatorUrl } from "./walrus";
 import { getSuiPassportClient } from "./sui-passport";
 import { isMemWalConfigured, memwalRemember } from "./memwal/client";
+import { backfillOnChainDocumentCommitments, ensureOnChainShipmentInitialized } from "./real-sui-bootstrap";
+import { runShipmentSuiMutation } from "./sui-mutation-coordinator";
+import { canonicalJson } from "./canonical-json";
+import { resetSuiTxMetrics, takeSuiTxMetrics } from "./sui-passport/real-client";
 import type { AggregateResult } from "@/src/agent/schemas/aggregate-result";
 import type { MemWalManifest } from "./memwal/types";
 import type { WalrusUpload } from "./shipments-store";
@@ -29,8 +34,18 @@ export type MintError = {
   partialState?: { walrusBlobIds?: string[]; memWalSpaceId?: string };
 };
 
-type FileCacheRow = { raw_pdf: Buffer | null };
-type ShipmentFileRow = { sha256: string; doc_type: string; file_name: string; size_bytes: number };
+type FileCacheRow = { raw_pdf: Buffer | null; extraction_json: string | null };
+type ShipmentFileRow = {
+  sha256: string;
+  doc_type: string;
+  file_name: string;
+  size_bytes: number;
+  slot_key: string | null;
+  uploaded_by_role: string | null;
+  on_chain_commitment_tx: string | null;
+  version: number | null;
+  uploaded_at: string | null;
+};
 type ExtractionRunRow = { aggregate_json: string };
 type MintPointerRow = {
   passport_id: string | null;
@@ -40,6 +55,21 @@ type MintPointerRow = {
   manifest_hash: string | null;
   minted_at: string | null;
 };
+
+type MintLatencyBreakdown = {
+  walrusDocumentsMs: number;
+  walrusManifestMs: number;
+  walrusPackageMs: number;
+  memwalManifestMs: number;
+  memwalSummaryMs: number;
+  memwalTotalMs: number;
+  suiBootstrapMs: number;
+  suiCommitLoopMs: number;
+  suiFinalizeMs: number;
+  mintE2eMs: number;
+};
+
+const WALRUS_UPLOAD_CONCURRENCY = Math.max(1, parseInt(process.env.WALRUS_UPLOAD_CONCURRENCY ?? "2", 10) || 2);
 
 // ── Hardened mint gate ─────────────────────────────────────────────────────
 
@@ -129,9 +159,31 @@ export async function executeMintSequence(
   ownerAddress: string
 ): Promise<MintResult | MintError> {
   const db = getDb();
+  const mintStartedAt = Date.now();
+  const latency: MintLatencyBreakdown = {
+    walrusDocumentsMs: 0,
+    walrusManifestMs: 0,
+    walrusPackageMs: 0,
+    memwalManifestMs: 0,
+    memwalSummaryMs: 0,
+    memwalTotalMs: 0,
+    suiBootstrapMs: 0,
+    suiCommitLoopMs: 0,
+    suiFinalizeMs: 0,
+    mintE2eMs: 0,
+  };
 
   if (!getShipmentById(shipmentId)) {
     return { error: `Shipment ${shipmentId} not found`, step: "gate", retriable: false };
+  }
+
+  const existingShipment = getShipmentById(shipmentId);
+  if (existingShipment?.passportId?.startsWith("0xmock_") || existingShipment?.txDigest?.startsWith("0xmocktx_")) {
+    return {
+      error: "This shipment was previously minted in mock mode. Create a fresh shipment before using real Sui mode.",
+      step: "gate",
+      retriable: false,
+    };
   }
 
   // ── Gate: hardened 4-check gate ───────────────────────────────────────────
@@ -173,6 +225,15 @@ export async function executeMintSequence(
     const walrusResult = await uploadDocumentsToWalrus(shipmentId, ownerAddress, db);
     if ("error" in walrusResult) return walrusResult;
     walrusBlobIds = walrusResult.blobIds;
+    latency.walrusDocumentsMs = walrusResult.timings.documentsMs;
+    latency.walrusManifestMs = walrusResult.timings.manifestMs;
+    logger.info({
+      shipmentId,
+      walrusDocUploadCount: Math.max(0, walrusBlobIds.length - 1),
+      documentsMs: latency.walrusDocumentsMs,
+      manifestMs: latency.walrusManifestMs,
+      concurrency: WALRUS_UPLOAD_CONCURRENCY,
+    }, "Walrus uploads complete");
   }
 
   // ── Step c: MemWal ─────────────────────────────────────────────────────────
@@ -182,15 +243,10 @@ export async function executeMintSequence(
     memWalSpaceId = pointers.memwal_space_id;
     logger.info({ shipmentId }, "MemWal space already created — skipping");
   } else {
-    const memWalResult = await writeToMemWal(shipmentId, ownerAddress, walrusBlobIds, db);
-    if ("error" in memWalResult) {
-      return { ...memWalResult, partialState: { walrusBlobIds } };
-    }
+    const memWalResult = queueMemWalSync(shipmentId, ownerAddress, walrusBlobIds, db);
     memWalSpaceId = memWalResult.spaceId;
-
-    db.prepare(
-      "UPDATE shipments SET memwal_space_id = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now') WHERE id = ?"
-    ).run(memWalSpaceId, shipmentId);
+    latency.memwalTotalMs = memWalResult.queuedMs;
+    logger.info({ shipmentId, memWalSpaceId, queuedMs: latency.memwalTotalMs }, "MemWal sync queued");
   }
 
   // ── Step d: Sui finalize_shipment ────────────────────────────────────────
@@ -199,7 +255,10 @@ export async function executeMintSequence(
   if ("error" in walrusPackage) {
     return { ...walrusPackage, partialState: { walrusBlobIds, memWalSpaceId } };
   }
+  latency.walrusPackageMs = walrusPackage.timingMs;
+  logger.info({ shipmentId, walrusPackageMs: latency.walrusPackageMs }, "Walrus package upload complete");
   const suiClient = getSuiPassportClient();
+  resetSuiTxMetrics(shipmentId);
 
   // Fetch on-chain IDs for real SUI client
   const shipmentOnChainRow = db.prepare(
@@ -209,65 +268,82 @@ export async function executeMintSequence(
     on_chain_accumulator_id: string | null;
   } | undefined;
 
-  if (
-    process.env.SUI_CLIENT === "real" &&
-    (!shipmentOnChainRow?.on_chain_record_id || !shipmentOnChainRow?.on_chain_accumulator_id)
-  ) {
-    return {
-      error: "Sui mint blocked: on-chain ShipmentRecord/DocAccumulator IDs are missing for this shipment.",
-      step: "sui",
-      retriable: false,
-      partialState: { walrusBlobIds, memWalSpaceId },
-    };
-  }
-
-  // Get latest validation hash for the passport
-  const latestValidation = db.prepare(
-    `SELECT doc_set_hash FROM validation_runs
-     WHERE shipment_id = ? AND is_superseded = 0
-     ORDER BY created_at DESC LIMIT 1`
-  ).get(shipmentId) as { doc_set_hash: string | null } | undefined;
-
-  const validationHash = createHash("sha256")
-    .update(latestValidation?.doc_set_hash ?? shipmentId)
-    .digest("hex");
-
-  // Verification score from ai_json
-  const aiRow = db.prepare("SELECT ai_json FROM shipments WHERE id = ?")
-    .get(shipmentId) as { ai_json: string | null } | undefined;
-  const verificationScore = (() => {
-    try {
-      return (JSON.parse(aiRow?.ai_json ?? "{}") as { score?: number }).score ?? 85;
-    } catch { return 85; }
-  })();
-  const packageHash = walrusPackage.sha256;
-
-  let passportId: string;
-  let txDigest: string;
-  let mintedAt: string;
-
+  let finalizedMint: { passportId: string; txDigest: string; mintedAt: string };
   try {
-    const result = await suiClient.mintPassport({
-      owner: ownerAddress,
-      shipmentId,
-      memWalSpaceId,
-      walrusBlobIds,
-      manifestHash,
-      metadata: {
-        recordId: shipmentOnChainRow?.on_chain_record_id ?? "",
-        accumulatorId: shipmentOnChainRow?.on_chain_accumulator_id ?? "",
-        packageHash,
-        validationHash,
-        verificationScore: String(verificationScore),
-      },
+    finalizedMint = await runShipmentSuiMutation(shipmentId, "mintShipment", async () => {
+      let resolvedChainRow = shipmentOnChainRow;
+      if (process.env.SUI_CLIENT === "real") {
+        try {
+          const bootstrapStartedAt = Date.now();
+          const initialized = await ensureOnChainShipmentInitialized(shipmentId, ownerAddress, db);
+          latency.suiBootstrapMs += Date.now() - bootstrapStartedAt;
+          resolvedChainRow = {
+            on_chain_record_id: initialized.onChainRecordId,
+            on_chain_accumulator_id: initialized.onChainAccumulatorId,
+          };
+          const commitLoopStartedAt = Date.now();
+          await backfillOnChainDocumentCommitments(shipmentId, initialized, db);
+          latency.suiCommitLoopMs += Date.now() - commitLoopStartedAt;
+        } catch (err) {
+          throw new Error(`Sui bootstrap failed: ${err instanceof Error ? err.message : String(err)}`);
+        }
+      }
+
+      const latestValidation = db.prepare(
+        `SELECT doc_set_hash FROM validation_runs
+         WHERE shipment_id = ? AND is_superseded = 0
+         ORDER BY created_at DESC LIMIT 1`
+      ).get(shipmentId) as { doc_set_hash: string | null } | undefined;
+
+      const validationHash = createHash("sha256")
+        .update(latestValidation?.doc_set_hash ?? shipmentId)
+        .digest("hex");
+
+      const aiRow = db.prepare("SELECT ai_json FROM shipments WHERE id = ?")
+        .get(shipmentId) as { ai_json: string | null } | undefined;
+      const verificationScore = (() => {
+        try {
+          return (JSON.parse(aiRow?.ai_json ?? "{}") as { score?: number }).score ?? 85;
+        } catch { return 85; }
+      })();
+      const packageHash = walrusPackage.sha256;
+
+      const finalizeStartedAt = Date.now();
+      const result = await suiClient.mintPassport({
+        owner: ownerAddress,
+        shipmentId,
+        memWalSpaceId,
+        walrusBlobIds,
+        manifestHash,
+        metadata: {
+          recordId: resolvedChainRow?.on_chain_record_id ?? "",
+          accumulatorId: resolvedChainRow?.on_chain_accumulator_id ?? "",
+          packageHash,
+          validationHash,
+          verificationScore: String(verificationScore),
+        },
+      });
+      latency.suiFinalizeMs += Date.now() - finalizeStartedAt;
+      const mintOutcome = {
+        passportId: result.passportId,
+        txDigest: result.txDigest,
+        mintedAt: result.mintedAt,
+      };
+      if (result.endorsementLogId) {
+        db.prepare(
+          "UPDATE shipments SET endorsement_log_object_id = ? WHERE id = ?"
+        ).run(result.endorsementLogId, shipmentId);
+      }
+      return mintOutcome;
     });
-    passportId = result.passportId;
-    txDigest = result.txDigest;
-    mintedAt = result.mintedAt;
   } catch (err) {
-    logger.error({ err, shipmentId }, "Sui finalize_shipment failed");
+    const errorMessage = err instanceof Error ? err.message : String(err);
+    const suiMetrics = takeSuiTxMetrics(shipmentId);
+    logger.error({ err, shipmentId, suiMetrics }, "Sui shipment mutation failed");
     return {
-      error: `Sui mint failed: ${err instanceof Error ? err.message : String(err)}`,
+      error: errorMessage.startsWith("Sui bootstrap failed:")
+        ? errorMessage
+        : `Sui mint failed: ${errorMessage}`,
       step: "sui",
       retriable: true,
       partialState: { walrusBlobIds, memWalSpaceId },
@@ -282,33 +358,49 @@ export async function executeMintSequence(
   // ── Step e: Update SQLite ─────────────────────────────────────────────────
   try {
     updateShipmentMintPointers(shipmentId, {
-      passportId,
-      txDigest,
+      passportId: finalizedMint.passportId,
+      txDigest: finalizedMint.txDigest,
       memwalSpaceId: memWalSpaceId,
       walrusManifestBlobId: walrusBlobIds[0] ?? "",
       manifestHash,
-      mintedAt,
+      mintedAt: finalizedMint.mintedAt,
       walrusJson: JSON.stringify(walrusPackage.upload),
     });
   } catch (err) {
-    logger.error({ err, shipmentId, passportId }, "SQLite update failed after mint");
+    logger.error({ err, shipmentId, passportId: finalizedMint.passportId }, "SQLite update failed after mint");
     return {
-      error: `Passport ${passportId} minted but SQLite update failed. Manual reconciliation needed.`,
+      error: `Passport ${finalizedMint.passportId} minted but SQLite update failed. Manual reconciliation needed.`,
       step: "db",
       retriable: true,
       partialState: { walrusBlobIds, memWalSpaceId },
     };
   }
 
+  const suiMetrics = takeSuiTxMetrics(shipmentId);
+  latency.mintE2eMs = Date.now() - mintStartedAt;
+
   logger.info({
     shipmentId,
-    passportId,
-    txDigest,
+    passportId: finalizedMint.passportId,
+    txDigest: finalizedMint.txDigest,
     memWalSpaceId,
     walrusBlobIds,
     manifestHash,
+    docCount: Math.max(0, walrusBlobIds.length - 1),
+    perStageLatencyMs: latency,
+    suiMutableTxCount: suiMetrics.mutableTxCount,
+    suiRetriesConsumed: suiMetrics.retryCountTotal,
+    suiRetriesByLabel: suiMetrics.retryCountByLabel,
   }, "Mint sequence complete");
-  return { passportId, txDigest, mintedAt, walrusBlobIds, memWalSpaceId, manifestHash, walrus: walrusPackage.upload };
+  return {
+    passportId: finalizedMint.passportId,
+    txDigest: finalizedMint.txDigest,
+    mintedAt: finalizedMint.mintedAt,
+    walrusBlobIds,
+    memWalSpaceId,
+    manifestHash,
+    walrus: walrusPackage.upload,
+  };
 }
 
 // ── Private helpers ────────────────────────────────────────────────────────────
@@ -340,7 +432,7 @@ async function uploadDocumentsToWalrus(
   shipmentId: string,
   ownerAddress: string,
   db: ReturnType<typeof getDb>
-): Promise<{ blobIds: string[] } | MintError> {
+): Promise<{ blobIds: string[]; timings: { documentsMs: number; manifestMs: number } } | MintError> {
   const files = db
     .prepare(
       `SELECT sha256, doc_type, file_name, size_bytes
@@ -356,26 +448,26 @@ async function uploadDocumentsToWalrus(
     };
   }
 
-  const blobIds: string[] = [];
+  const documentsStartedAt = Date.now();
+  const limiter = pLimit(WALRUS_UPLOAD_CONCURRENCY);
+  let uploadResults: Array<{ blobId: string; index: number } | null>;
+  try {
+    uploadResults = await Promise.all(files.map((file, index) => limiter(async () => {
+      const cached = db
+        .prepare("SELECT raw_pdf FROM file_cache WHERE sha256 = ?")
+        .get(file.sha256) as FileCacheRow | undefined;
 
-  for (const file of files) {
-    const cached = db
-      .prepare("SELECT raw_pdf FROM file_cache WHERE sha256 = ?")
-      .get(file.sha256) as FileCacheRow | undefined;
+      if (!cached?.raw_pdf) {
+        logger.warn({ sha256: file.sha256 }, "raw_pdf not found in file_cache — skipping");
+        return null;
+      }
 
-    if (!cached?.raw_pdf) {
-      logger.warn({ sha256: file.sha256 }, "raw_pdf not found in file_cache — skipping");
-      continue;
-    }
-
-    try {
       const result = await storeBlobServer({
         data: cached.raw_pdf,
         fileName: `${shipmentId}/${file.doc_type}/${file.sha256.slice(0, 8)}.pdf`,
         epochs: WALRUS_MINT_EPOCHS,
       });
 
-      blobIds.push(result.blobId);
       logger.info({
         blobId: result.blobId,
         endEpoch: result.endEpoch,
@@ -397,14 +489,24 @@ async function uploadDocumentsToWalrus(
       db.prepare(
         "UPDATE shipment_files SET walrus_blob_id = ?, is_final = 1 WHERE shipment_id = ? AND sha256 = ?"
       ).run(result.blobId, shipmentId, file.sha256);
-    } catch (err) {
-      return {
-        error: `Walrus upload failed for ${file.file_name}: ${err instanceof Error ? err.message : String(err)}`,
-        step: "walrus",
-        retriable: true,
-      };
-    }
+
+      return { blobId: result.blobId, index };
+    }).catch((err) => {
+      throw new Error(`Walrus upload failed for ${file.file_name}: ${err instanceof Error ? err.message : String(err)}`);
+    })));
+  } catch (err) {
+    return {
+      error: err instanceof Error ? err.message : String(err),
+      step: "walrus",
+      retriable: true,
+    };
   }
+
+  const blobIds = uploadResults
+    .filter((result): result is { blobId: string; index: number } => result !== null)
+    .sort((a, b) => a.index - b.index)
+    .map((result) => result.blobId);
+  const documentsMs = Date.now() - documentsStartedAt;
 
   if (blobIds.length === 0) {
     return {
@@ -416,6 +518,7 @@ async function uploadDocumentsToWalrus(
 
   // Upload manifest JSON as a Walrus blob (slot 0 per plan convention)
   const manifestJson = buildManifestJson(shipmentId, ownerAddress, blobIds, db);
+  const manifestStartedAt = Date.now();
   try {
     const manifestResult = await storeBlobServer({
       data: Buffer.from(manifestJson, "utf-8"),
@@ -452,16 +555,19 @@ async function uploadDocumentsToWalrus(
     };
   }
 
-  return { blobIds };
+  return { blobIds, timings: { documentsMs, manifestMs: Date.now() - manifestStartedAt } };
 }
 
 async function ensureWalrusPackage(
   shipmentId: string,
   db: ReturnType<typeof getDb>
-): Promise<{ upload: WalrusUpload; sha256: string } | MintError> {
+): Promise<{ upload: WalrusUpload; sha256: string; timingMs: number } | MintError> {
   const files = db
     .prepare(
-      `SELECT sf.sha256, sf.doc_type, sf.file_name, sf.size_bytes, fc.raw_pdf
+      `SELECT sf.sha256, sf.doc_type, sf.file_name, sf.size_bytes,
+              sf.slot_key, sf.uploaded_by_role, sf.on_chain_commitment_tx,
+              sf.version, sf.uploaded_at,
+              fc.raw_pdf, fc.extraction_json
        FROM shipment_files sf
        JOIN file_cache fc ON fc.sha256 = sf.sha256
        WHERE sf.shipment_id = ?
@@ -486,28 +592,136 @@ async function ensureWalrusPackage(
     };
   }
 
+  // Fetch validation run data for the public manifest
+  const validationRow = db.prepare(
+    `SELECT overall_verdict, verdict_reason, doc_set_hash, model, issues_json,
+            strftime('%s', created_at) * 1000 AS created_at_ms
+     FROM validation_runs WHERE shipment_id = ? AND is_superseded = 0
+     ORDER BY created_at DESC LIMIT 1`
+  ).get(shipmentId) as {
+    overall_verdict: string | null;
+    verdict_reason: string | null;
+    doc_set_hash: string | null;
+    model: string | null;
+    issues_json: string | null;
+    created_at_ms: number | null;
+  } | undefined;
+
+  // Fetch on-chain IDs for chain linkage in the manifest
+  const chainRow = db.prepare(
+    `SELECT on_chain_record_id, on_chain_accumulator_id, ai_json
+     FROM shipments WHERE id = ?`
+  ).get(shipmentId) as {
+    on_chain_record_id: string | null;
+    on_chain_accumulator_id: string | null;
+    ai_json: string | null;
+  } | undefined;
+
+  const verificationScore = (() => {
+    try { return (JSON.parse(chainRow?.ai_json ?? "{}") as { score?: number }).score ?? 85; }
+    catch { return 85; }
+  })();
+
+  // Parse finding counts from issues_json
+  const findingCounts = { error: 0, warning: 0, info: 0 };
+  if (validationRow?.issues_json) {
+    try {
+      const issues = JSON.parse(validationRow.issues_json) as { severity: string }[];
+      for (const issue of issues) {
+        if (issue.severity === "error") findingCounts.error++;
+        else if (issue.severity === "warning") findingCounts.warning++;
+        else if (issue.severity === "info") findingCounts.info++;
+      }
+    } catch { /* leave zeros */ }
+  }
+
+  const sealedAtMs = validationRow?.created_at_ms ?? Date.now();
   const zip = new JSZip();
   const usedNames = new Set<string>();
-  const documents = files.map((file, index) => {
+
+  // Build per-doc entries for both manifests
+  const publicDocuments: object[] = [];
+  const privateDocuments: object[] = [];
+
+  files.forEach((file, index) => {
     const docType = file.doc_type || "document";
-    const fileName = uniqueZipPath(usedNames, `${docType}/${index + 1}-${file.file_name}`);
-    zip.file(fileName, file.raw_pdf as Buffer);
-    return {
-      name: file.file_name,
-      zip_path: fileName,
+    const zipPath = uniqueZipPath(usedNames, `${docType}/${index + 1}-${file.file_name}`);
+    zip.file(zipPath, file.raw_pdf as Buffer);
+
+    const extractionHash = file.extraction_json
+      ? createHash("sha256").update(file.extraction_json).digest("hex")
+      : null;
+
+    const committedAtMs = file.uploaded_at
+      ? new Date(file.uploaded_at).getTime()
+      : null;
+
+    publicDocuments.push({
+      committed_at_ms: committedAtMs,
+      content_hash: file.sha256,
       doc_type: docType,
+      extraction_hash: extractionHash,
+      file_name: file.file_name,
+      on_chain_commitment_tx: file.on_chain_commitment_tx ?? null,
       size_bytes: file.size_bytes,
-    };
+      slot_key: file.slot_key ?? null,
+      uploaded_by_role: file.uploaded_by_role ?? null,
+      version: file.version ?? 1,
+      zip_path: zipPath,
+    });
+
+    let extractionData: unknown = null;
+    if (file.extraction_json) {
+      try { extractionData = JSON.parse(file.extraction_json); } catch { /* leave null */ }
+    }
+    privateDocuments.push({
+      doc_type: docType,
+      extraction: extractionData,
+      file_name: file.file_name,
+    });
   });
 
+  // Build manifest.public.json (deterministic — no new Date())
+  const publicManifestBase = {
+    documents: publicDocuments,
+    migration_note: "v1 had no hashes, no chain refs, no validation block; created_at was non-deterministic",
+    on_chain: {
+      accumulator_id: chainRow?.on_chain_accumulator_id ?? null,
+      passport_id: null,   // backfilled by updateShipmentMintPointers after mint
+      record_id: chainRow?.on_chain_record_id ?? null,
+      registry_id: process.env.NEXT_PUBLIC_REGISTRY_ID ?? null,
+    },
+    schema_version: "suiship.walrus_package.v2",
+    sealed_at_ms: sealedAtMs,
+    shipment_id: shipmentId,
+    validation: {
+      finding_counts: findingCounts,
+      model: validationRow?.model ?? null,
+      overall_verdict: validationRow?.overall_verdict ?? null,
+      validated_at_ms: sealedAtMs,
+      validation_hash: validationRow?.doc_set_hash ?? null,
+      verification_score: verificationScore,
+    },
+  };
+
+  // public_manifest_hash = SHA256(canonicalJson of the base object, without the hash field itself)
+  const publicManifestHash = createHash("sha256").update(canonicalJson(publicManifestBase)).digest("hex");
+  const publicManifest = { ...publicManifestBase, public_manifest_hash: publicManifestHash };
+
+  zip.file("manifest.public.json", canonicalJson(publicManifest));
   zip.file(
-    "suiship_manifest.json",
+    "manifest.private.json",
     JSON.stringify(
       {
-        schema_version: "suiship.walrus_package.v1",
+        documents: privateDocuments,
+        schema_version: "suiship.walrus_package.v2",
         shipment_id: shipmentId,
-        created_at: new Date().toISOString(),
-        documents,
+        validation: {
+          issues: (() => {
+            try { return JSON.parse(validationRow?.issues_json ?? "[]"); } catch { return []; }
+          })(),
+          verdict_reason: validationRow?.verdict_reason ?? null,
+        },
       },
       null,
       2
@@ -519,8 +733,10 @@ async function ensureWalrusPackage(
     compression: "DEFLATE",
     compressionOptions: { level: 6 },
   });
-  const packageHash = createHash("sha256").update(zipBuffer).digest("hex");
+  // package_hash is over the canonical public manifest bytes — reproducible given the same DB rows
+  const packageHash = publicManifestHash;
   const packageFileName = `${shipmentId}-documents.zip`;
+  const walrusPackageStartedAt = Date.now();
 
   try {
     const result = await storeBlobServer({
@@ -545,7 +761,7 @@ async function ensureWalrusPackage(
       publisher: result.publisher,
       aggregator: WALRUS_AGGREGATOR,
     };
-    return { upload, sha256: packageHash };
+    return { upload, sha256: packageHash, timingMs: Date.now() - walrusPackageStartedAt };
   } catch (err) {
     return {
       error: `Walrus package upload failed: ${err instanceof Error ? err.message : String(err)}`,
@@ -555,12 +771,13 @@ async function ensureWalrusPackage(
   }
 }
 
-async function writeToMemWal(
+function queueMemWalSync(
   shipmentId: string,
   ownerAddress: string,
   walrusBlobIds: string[],
   db: ReturnType<typeof getDb>
-): Promise<{ spaceId: string } | MintError> {
+): { spaceId: string; queuedMs: number } {
+  const queuedStartedAt = Date.now();
   const manifestJson = buildManifestJson(shipmentId, ownerAddress, walrusBlobIds, db);
 
   // Always cache locally for fast reads
@@ -572,48 +789,62 @@ async function writeToMemWal(
   if (!isMemWalConfigured()) {
     const spaceId = `memwal_mock_${createHash("sha256").update(shipmentId + ownerAddress).digest("hex").slice(0, 24)}`;
     logger.info({ shipmentId, spaceId }, "MemWal not configured — using mock space ID");
-    return { spaceId };
+    updateShipmentMemWalSync(shipmentId, { memWalSpaceId: spaceId, status: "synced", error: null, syncedAt: new Date().toISOString() });
+    return { spaceId, queuedMs: Date.now() - queuedStartedAt };
   }
 
-  // Use shipmentId as the namespace for isolation per shipment
   const namespace = shipmentId;
+  const spaceId = `${process.env.MEMWAL_ACCOUNT_ID!}:${namespace}`;
+  updateShipmentMemWalSync(shipmentId, { memWalSpaceId: spaceId, status: "pending", error: null, syncedAt: null });
 
-  try {
-    // Write manifest as the primary queryable memory
-    const manifestResult = await memwalRemember(`SHIPMENT MANIFEST\n${manifestJson}`, namespace);
-    logger.info({ shipmentId, blobId: manifestResult.blobId, namespace }, "MemWal manifest written");
+  const shipment = getShipmentById(shipmentId);
+  const summary = shipment
+    ? `Shipment ${shipmentId}: exporter ${shipment.exporter.company} → importer ${shipment.importer.company}. ` +
+      `Route: ${shipment.shipment.origin} → ${shipment.shipment.destination}. ` +
+      `Carrier: ${shipment.shipment.carrier}. Cargo: ${shipment.cargo.description}, HS ${shipment.cargo.hsCode}. ` +
+      `Declared value: ${shipment.shipment.declaredValue} ${shipment.shipment.currency}. ` +
+      `Walrus evidence blobs: ${walrusBlobIds.join(", ")}`
+    : null;
 
-    // Write a searchable summary for recall queries
-    const shipment = getShipmentById(shipmentId);
-    if (shipment) {
-      const summary =
-        `Shipment ${shipmentId}: exporter ${shipment.exporter.company} → importer ${shipment.importer.company}. ` +
-        `Route: ${shipment.shipment.origin} → ${shipment.shipment.destination}. ` +
-        `Carrier: ${shipment.shipment.carrier}. Cargo: ${shipment.cargo.description}, HS ${shipment.cargo.hsCode}. ` +
-        `Declared value: ${shipment.shipment.declaredValue} ${shipment.shipment.currency}. ` +
-        `Walrus evidence blobs: ${walrusBlobIds.join(", ")}`;
-      try {
-        await memwalRemember(summary, namespace);
-        logger.info({ shipmentId, namespace }, "MemWal summary written");
-      } catch (err) {
-        logger.warn(
-          { err, shipmentId, namespace },
-          "MemWal summary write failed after manifest success — continuing"
-        );
-      }
+  void (async () => {
+    const memwalStartedAt = Date.now();
+    const manifestStartedAt = Date.now();
+    try {
+      const [manifestResult, summaryResult] = await Promise.all([
+        memwalRemember(`SHIPMENT MANIFEST\n${manifestJson}`, namespace),
+        summary ? memwalRemember(summary, namespace) : Promise.resolve(null),
+      ]);
+      const manifestMs = Date.now() - manifestStartedAt;
+      const totalMs = Date.now() - memwalStartedAt;
+      logger.info({ shipmentId, blobId: manifestResult.blobId, namespace, latencyMs: manifestMs }, "MemWal manifest written");
+      logger.info({
+        shipmentId,
+        namespace,
+        blobId: summaryResult?.blobId ?? null,
+        manifestMs,
+        summaryMs: totalMs - manifestMs,
+        totalMs,
+      }, "MemWal sync complete");
+      updateShipmentMemWalSync(shipmentId, {
+        memWalSpaceId: spaceId,
+        manifestBlobId: manifestResult.blobId,
+        summaryBlobId: summaryResult?.blobId ?? null,
+        status: "synced",
+        error: null,
+        syncedAt: new Date().toISOString(),
+      });
+    } catch (err) {
+      logger.warn({ err, shipmentId, namespace }, "MemWal sync failed after mint response returned");
+      updateShipmentMemWalSync(shipmentId, {
+        memWalSpaceId: spaceId,
+        status: "failed",
+        error: err instanceof Error ? err.message : String(err),
+        syncedAt: null,
+      });
     }
+  })();
 
-    // spaceId encodes accountId + namespace so recall can reconstruct the query params
-    const accountId = process.env.MEMWAL_ACCOUNT_ID!;
-    return { spaceId: `${accountId}:${namespace}` };
-  } catch (err) {
-    logger.error({ err, shipmentId }, "MemWal write failed");
-    return {
-      error: `MemWal write failed: ${err instanceof Error ? err.message : String(err)}`,
-      step: "memwal",
-      retriable: true,
-    };
-  }
+  return { spaceId, queuedMs: Date.now() - queuedStartedAt };
 }
 
 function buildManifestJson(

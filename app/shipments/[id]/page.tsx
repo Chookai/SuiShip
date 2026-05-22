@@ -89,6 +89,14 @@ type SuiPassportProgress = {
   network: "testnet";
 };
 
+function isAirTransportMode(mode?: string) {
+  return mode?.trim().toLowerCase() === "air";
+}
+
+function transportDocumentLabel(mode?: string) {
+  return isAirTransportMode(mode) ? "Air Waybill (AWB)" : "Bill of Lading";
+}
+
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
   const { shipments, ready, addShipment, updateShipment } = useShipments();
@@ -118,26 +126,9 @@ export default function ShipmentDetailPage() {
           if (!cancelled) setLookupComplete(true);
           return;
         }
-        // Merge server passport fields into the local record so the UI reflects
-        // server-side mints even when the client store is stale.
-        const passportFields: Partial<ShipmentRecord> = {};
-        if (record.passportId)          passportFields.passportId = record.passportId;
-        if (record.txDigest)            passportFields.txDigest = record.txDigest;
-        if (record.mintedAt)            passportFields.mintedAt = record.mintedAt;
-        if (record.memWalSpaceId)       passportFields.memWalSpaceId = record.memWalSpaceId;
-        if (record.walrusManifestBlobId) passportFields.walrusManifestBlobId = record.walrusManifestBlobId;
-        if (record.walrusBlobIds?.length) passportFields.walrusBlobIds = record.walrusBlobIds;
-        if (record.manifestHash)        passportFields.manifestHash = record.manifestHash;
-        if (record.ai)                  passportFields.ai = record.ai;
-        if (record.status)              passportFields.status = record.status;
-
         if (stored) {
-          // Shipment already in local store — just patch the passport fields
-          if (Object.keys(passportFields).length > 0) {
-            updateShipment(rawId, passportFields);
-          }
+          updateShipment(rawId, record);
         } else {
-          // Not in local store yet — add the full server record
           setServerShipment(record);
           addShipment(record);
         }
@@ -307,7 +298,12 @@ function StoredShipmentView({
       if (!res.ok) {
         throw new Error(getErrorMessage(payload, `Extraction failed with HTTP ${res.status}`));
       }
-      const detectedDocs = docsWithExtractionResult(shipment.documents, payload as AggregateLike, currentRoleOwner);
+      const detectedDocs = docsWithExtractionResult(
+        shipment.documents,
+        payload as AggregateLike,
+        shipment.shipment.transportMode,
+        currentRoleOwner
+      );
       const allRequiredUploaded = detectedDocs.filter((doc) => doc.required).every((doc) => doc.uploaded);
       const issues = (payload as AggregateLike).cross_validation ?? [];
       const blockingIssues = issues.filter((issue) => issue.severity === "error");
@@ -1028,6 +1024,7 @@ function getErrorMessage(payload: unknown, fallback: string): string {
 function docsWithExtractionResult(
   docs: DocumentRequirement[],
   result: AggregateLike,
+  transportMode?: string,
   defaultOwner: DocumentOwner = "Importer"
 ): DocumentRequirement[] {
   const now = new Date().toISOString();
@@ -1058,7 +1055,7 @@ function docsWithExtractionResult(
   });
   const existingFiles = new Set(nextDocs.map((doc) => doc.fileName).filter(Boolean));
   const existingNames = new Set(nextDocs.map((doc) => doc.name.toLowerCase()));
-  const extras = detectedDocumentFiles(result)
+  const extras = detectedDocumentFiles(result, transportMode)
     .filter((item) => !usedFileNames.has(item.fileName) && !existingFiles.has(item.fileName))
     .map((item, index) => {
       let name = item.label;
@@ -1077,11 +1074,11 @@ function docsWithExtractionResult(
   return [...nextDocs, ...extras];
 }
 
-function detectedDocumentFiles(result: AggregateLike) {
+function detectedDocumentFiles(result: AggregateLike, transportMode?: string) {
   return [
     ...(result.detected?.commercial_invoice ?? []).map((doc) => ({ label: "Commercial Invoice", fileName: doc.file_name })),
     ...(result.detected?.packing_list ?? []).map((doc) => ({ label: "Packing List", fileName: doc.file_name })),
-    ...(result.detected?.bill_of_lading ?? []).map((doc) => ({ label: "Bill of Lading / Air Waybill", fileName: doc.file_name })),
+    ...(result.detected?.bill_of_lading ?? []).map((doc) => ({ label: transportDocumentLabel(transportMode), fileName: doc.file_name })),
     ...(result.detected?.certificate_of_origin ?? []).map((doc) => ({ label: "Certificate of Origin", fileName: doc.file_name }))
   ];
 }

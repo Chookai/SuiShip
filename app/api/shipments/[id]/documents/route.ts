@@ -10,6 +10,14 @@ import { buildGroundingContext } from "@/lib/compact-manifest";
 import { verifyDoc } from "@/lib/doc-verifier";
 import { writeDocEvent } from "@/lib/memwal";
 import { storeChunks } from "@/lib/chunk-extractor";
+import {
+  markShipmentFileCommitmentCommitted,
+  markShipmentFileCommitmentFailed,
+  markShipmentFileCommitmentInFlight,
+  markShipmentFileCommitmentPending,
+} from "@/lib/shipment-file-commitments";
+import { getSuiPassportClient } from "@/lib/sui-passport";
+import { runShipmentSuiMutation } from "@/lib/sui-mutation-coordinator";
 import { runShipmentValidation } from "@/lib/validate-shipment";
 import { extractFromPdf } from "@/src/agent/haiku-client";
 import { aggregate } from "@/src/agent/aggregator";
@@ -407,38 +415,52 @@ function commitDocumentOnChain(
   if (isMockSui) {
     // Mock: write a fake tx digest immediately
     const mockTx = `0xmock_commit_${docId.slice(0, 8)}_${Date.now().toString(16)}`;
-    db.prepare(
-      "UPDATE shipment_files SET on_chain_commitment_tx = ? WHERE id = ?"
-    ).run(mockTx, docId);
+    markShipmentFileCommitmentCommitted(docId, mockTx);
     return;
   }
+  markShipmentFileCommitmentPending(docId);
 
-  // Real SUI: fire-and-forget
-  import("@/lib/sui-passport")
-    .then(({ getSuiPassportClient }) => {
-      const client = getSuiPassportClient() as unknown as {
-        commitDocument?: (
-          shipmentId: string,
-          docId: string,
-          slotKey: string,
-          sha256: string,
-          extractionHash: string
-        ) => Promise<{ txDigest: string }>;
-      };
-      if (typeof client.commitDocument !== "function") return;
-      return client.commitDocument(shipmentId, docId, slotKey, sha256, extractionHash);
-    })
-    .then((result) => {
-      if (result?.txDigest) {
-        db.prepare(
-          "UPDATE shipment_files SET on_chain_commitment_tx = ? WHERE id = ?"
-        ).run(result.txDigest, docId);
-        logger.info({ docId, txDigest: result.txDigest }, "SUI commitDocument success");
-      }
-    })
-    .catch((err) => {
+  void runShipmentSuiMutation(shipmentId, "commitDocument", async () => {
+    const fileRow = db.prepare(
+      "SELECT state FROM shipment_files WHERE id = ?"
+    ).get(docId) as { state: string } | undefined;
+    if (!fileRow || fileRow.state === "superseded") {
+      return;
+    }
+
+    const chainRow = db.prepare(
+      `SELECT on_chain_record_id, on_chain_accumulator_id
+       FROM shipments WHERE id = ?`
+    ).get(shipmentId) as {
+      on_chain_record_id: string | null;
+      on_chain_accumulator_id: string | null;
+    } | undefined;
+
+    if (!chainRow?.on_chain_record_id || !chainRow.on_chain_accumulator_id) {
+      logger.info({ shipmentId, docId }, "SUI commitDocument deferred until mint-time bootstrap");
+      return;
+    }
+
+    const client = getSuiPassportClient();
+    if (typeof client.commitDocument !== "function") return;
+
+    markShipmentFileCommitmentInFlight(docId);
+    try {
+      const result = await client.commitDocument(
+        shipmentId,
+        docId,
+        slotKey,
+        sha256,
+        extractionHash,
+        chainRow.on_chain_accumulator_id ?? undefined
+      );
+      markShipmentFileCommitmentCommitted(docId, result.txDigest);
+      logger.info({ docId, txDigest: result.txDigest }, "SUI commitDocument success");
+    } catch (err) {
+      markShipmentFileCommitmentFailed(docId, err instanceof Error ? err.message : String(err));
       logger.error({ err, docId }, "SUI commitDocument failed — doc still usable");
-    });
+    }
+  });
 }
 
 function triggerAutoValidate(shipmentId: string, db: ReturnType<typeof getDb>) {

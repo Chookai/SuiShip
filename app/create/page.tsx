@@ -1,5 +1,6 @@
 "use client";
 
+import { useCurrentAccount } from "@mysten/dapp-kit";
 import {
   AlertCircle,
   AlertTriangle,
@@ -86,8 +87,29 @@ const initialCargo = {
   temperatureControlled: "No"
 };
 
+function isAirTransportMode(mode?: string) {
+  return mode?.trim().toLowerCase() === "air";
+}
+
+function transportDocumentLabel(mode?: string) {
+  return isAirTransportMode(mode) ? "Air Waybill (AWB)" : "Bill of Lading";
+}
+
+function transportDocumentNumberLabel(mode?: string) {
+  return isAirTransportMode(mode) ? "AWB Number" : "B/L Number";
+}
+
+function displayDocumentName(name: string, mode?: string) {
+  const normalized = name.trim().toLowerCase();
+  if (normalized.includes("bill of lading") || normalized.includes("air waybill")) {
+    return transportDocumentLabel(mode);
+  }
+  return name;
+}
+
 export default function CreateShipmentPage() {
   const router = useRouter();
+  const currentAccount = useCurrentAccount();
   const { role, profile, profiles } = useRole();
   const { addShipment, updateShipment } = useShipments();
 
@@ -221,6 +243,7 @@ export default function CreateShipmentPage() {
       createdAt: now,
       updatedAt: now,
       createdBy: workflow,
+      initiatorAddress: currentAccount?.address,
       workflow,
       status,
       importer,
@@ -844,6 +867,7 @@ export default function CreateShipmentPage() {
             {activeStep === 4 && (
               <DocumentUploadStep
                 docs={docs}
+                transportMode={details.transportMode}
                 onFilesSelected={handleFilesSelected}
                 onAddDocument={addDocumentRequirement}
                 onRemoveDocument={removeDocumentRequirement}
@@ -1017,6 +1041,7 @@ function detectDocumentIndex(fileName: string, docs: DocumentRequirement[]) {
 
 function DocumentUploadStep({
   docs,
+  transportMode,
   onFilesSelected,
   onAddDocument,
   onRemoveDocument,
@@ -1026,6 +1051,7 @@ function DocumentUploadStep({
   hasValidationErrors
 }: {
   docs: DocumentRequirement[];
+  transportMode: string;
   onFilesSelected: (files: File[]) => void;
   onAddDocument: (name: string) => boolean;
   onRemoveDocument: (name: string) => void;
@@ -1130,7 +1156,7 @@ function DocumentUploadStep({
               <div key={doc.name} className={cn("rounded-2xl border p-4 transition", borderClass)}>
                 <div className="flex items-start justify-between gap-2">
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-extrabold text-pearl leading-tight">{doc.name}</p>
+                    <p className="text-sm font-extrabold text-pearl leading-tight">{displayDocumentName(doc.name, transportMode)}</p>
                     {doc.fileName && (
                       <p className="mt-0.5 truncate text-xs text-steel" title={doc.fileName}>{doc.fileName}</p>
                     )}
@@ -1165,7 +1191,7 @@ function DocumentUploadStep({
                       onClick={() => onRemoveDocument(doc.name)}
                       disabled={isExtracting}
                       className="flex h-6 w-6 items-center justify-center rounded-full text-steel transition hover:bg-red-50 hover:text-red-500 disabled:cursor-not-allowed disabled:opacity-40"
-                      aria-label={`Remove ${doc.name}`}
+                      aria-label={`Remove ${displayDocumentName(doc.name, transportMode)}`}
                     >
                       <X className="h-3.5 w-3.5" />
                     </button>
@@ -1302,7 +1328,7 @@ function DocumentUploadStep({
           {([
             { label: "Commercial Invoice", count: extractResult.detected.commercial_invoice.length },
             { label: "Packing List", count: extractResult.detected.packing_list.length },
-            { label: "Bill of Lading", count: extractResult.detected.bill_of_lading.length },
+            { label: transportDocumentLabel(transportMode), count: extractResult.detected.bill_of_lading.length },
             { label: "Certificate of Origin", count: extractResult.detected.certificate_of_origin.length },
           ] as { label: string; count: number }[]).map(({ label, count }) => (
             <div
@@ -1445,7 +1471,7 @@ function DocumentUploadStep({
                   <div className="flex items-center gap-3">
                     <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
                     <div>
-                      <p className="text-xs font-bold uppercase text-steel">Bill of Lading</p>
+                      <p className="text-xs font-bold uppercase text-steel">{transportDocumentLabel(transportMode)}</p>
                       <p className="font-extrabold text-pearl">{doc.file_name}</p>
                     </div>
                   </div>
@@ -1454,7 +1480,7 @@ function DocumentUploadStep({
                 {open && (
                   <div className="border-t border-blue-50 px-5 py-4">
                     {([
-                      ["B/L Number", d.bl_number],
+                      [transportDocumentNumberLabel(transportMode), d.bl_number],
                       ["B/L Type", d.bl_type],
                       ["Vessel / Voyage", d.vessel_voyage],
                       ["Port of Loading", d.port_of_loading],

@@ -98,6 +98,7 @@ export type ShipmentRecord = {
   createdAt: string;
   updatedAt: string;
   createdBy: WorkflowKey;
+  initiatorAddress?: string;
   workflow: WorkflowKey;
   status:
     | "Draft"
@@ -151,10 +152,20 @@ export type ShipmentRecord = {
   passportId?: string;
   txDigest?: string;
   memWalSpaceId?: string;
+  memWalManifestBlobId?: string;
+  memWalSummaryBlobId?: string;
+  memWalSyncStatus?: "pending" | "synced" | "failed";
+  memWalSyncError?: string;
+  memWalSyncedAt?: string;
   walrusManifestBlobId?: string;
   walrusBlobIds?: string[];
   manifestHash?: string;
   mintedAt?: string;
+  templateId?: string;
+  onChainRecordId?: string;
+  onChainAccumulatorId?: string;
+  onChainPackageId?: string;
+  onChainNetwork?: string;
   progressManifests?: ProgressManifest[];
 };
 

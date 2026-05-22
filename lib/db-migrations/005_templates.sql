@@ -39,7 +39,7 @@ INSERT OR IGNORE INTO template_slots VALUES
   ('sc4','sea-cif','certificate_of_origin','Certificate of Origin',1,'exporter',4),
   ('a1', 'air',    'commercial_invoice',   'Commercial Invoice',   1,'exporter',1),
   ('a2', 'air',    'packing_list',         'Packing List',         1,'exporter',2),
-  ('a3', 'air',    'air_waybill',          'Air Waybill (AWB)',    1,'importer',3),
+  ('a3', 'air',    'bill_of_lading',       'Air Waybill (AWB)',    1,'importer',3),
   ('a4', 'air',    'certificate_of_origin','Certificate of Origin',0,'exporter',4);
 
 -- Add template + on-chain columns to shipments

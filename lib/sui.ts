@@ -1,7 +1,7 @@
 import { Transaction } from "@mysten/sui/transactions";
 
 export const SUI_NETWORK = "testnet";
-const DEPLOYED_PACKAGE_ID = "0xa6a570d7d1036900903210098785a7e296ddca8dc5674f1136f156ce6ceb52da";
+const DEPLOYED_PACKAGE_ID = "";
 const configuredPackageId = process.env.NEXT_PUBLIC_SUISHIP_PACKAGE_ID;
 
 export const PACKAGE_ID =
