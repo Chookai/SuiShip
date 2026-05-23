@@ -46,5 +46,16 @@ export const AggregateResultSchema = z.object({
   }),
   // Extracted reference from invoice_number or bl_number
   extractedRef: z.string().optional(),
+  extractionProvenance: z.array(z.object({
+    fileId: z.string(),
+    fileName: z.string(),
+    sha256: z.string().optional(),
+    mode: z.enum(["live_haiku", "cached_haiku", "mock"]),
+    model: z.string().nullable(),
+    latencyMs: z.number().nullable(),
+    inputTokens: z.number().nullable(),
+    outputTokens: z.number().nullable(),
+    extractedAt: z.string(),
+  })).optional(),
 });
 export type AggregateResult = z.infer<typeof AggregateResultSchema>;

@@ -1,0 +1,52 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - navigation [ref=e4]:
+        - link "Dashboard" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - generic [ref=e6]:
+            - img [ref=e8]
+            - generic [ref=e13]: Dashboard
+        - link "Shipments" [ref=e14] [cursor=pointer]:
+          - /url: /shipments
+          - generic [ref=e15]:
+            - img [ref=e17]
+            - generic [ref=e21]: Shipments
+        - link "Create" [ref=e22] [cursor=pointer]:
+          - /url: /create
+          - generic [ref=e23]:
+            - img [ref=e25]
+            - generic [ref=e28]: Create
+        - link "Customs" [ref=e29] [cursor=pointer]:
+          - /url: /customs
+          - generic [ref=e30]:
+            - img [ref=e32]
+            - generic [ref=e37]: Customs
+      - button "Importer Trade operator" [ref=e39] [cursor=pointer]:
+        - generic [ref=e41]:
+          - paragraph [ref=e42]: Importer
+          - paragraph [ref=e43]: Trade operator
+    - generic [ref=e44]:
+      - banner [ref=e45]:
+        - generic [ref=e46]:
+          - link "SuiShip home" [ref=e48] [cursor=pointer]:
+            - /url: /
+            - img "SuiShip" [ref=e49]
+          - generic [ref=e50]:
+            - generic [ref=e51]:
+              - img [ref=e52]
+              - textbox [ref=e55]:
+                - /placeholder: Search
+            - button "Notifications" [ref=e57] [cursor=pointer]:
+              - img [ref=e58]
+            - button "Theme" [ref=e61] [cursor=pointer]:
+              - img [ref=e62]
+            - generic [ref=e64]:
+              - img [ref=e65]
+              - generic [ref=e75]: Testnet
+              - generic [ref=e76]: Not connected
+            - button "Connect Wallet" [ref=e77] [cursor=pointer]
+      - main [ref=e78]:
+        - paragraph [ref=e81]: Loading shipment...
+  - button "Open Next.js Dev Tools" [ref=e87] [cursor=pointer]:
+    - img [ref=e88]

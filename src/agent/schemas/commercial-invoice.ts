@@ -33,6 +33,11 @@ export const CommercialInvoiceDataSchema = z.object({
   payment_terms: z.string().nullable(),
   incoterms: z.string().nullable(),        // "FOB", "CIF", "EXW", etc.
   terms_of_trade: z.string().nullable(),   // longer "FCA - Free Carrier" form
+  bank_name: z.string().nullable().optional().default(null),
+  bank_beneficiary_name: z.string().nullable().optional().default(null),
+  bank_account_number: z.string().nullable().optional().default(null),
+  bank_iban: z.string().nullable().optional().default(null),
+  bank_swift: z.string().nullable().optional().default(null),
   type_of_export: z.string().nullable(),   // "Permanent", "Temporary"
   reason_for_export: z.string().nullable(),
   city_of_liability: z.string().nullable(),

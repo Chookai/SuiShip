@@ -20,6 +20,22 @@ export type MemWalWriteResult = {
   namespace: string;
 };
 
+export type MemWalBulkWriteResult = {
+  succeeded: number;
+  failed: number;
+  results: Array<{
+    jobId: string;
+    blobId: string;
+    namespace: string;
+    status: "done" | "failed" | "timeout";
+    error?: string;
+  }>;
+};
+
+export type MemWalAnalyzeResult = MemWalBulkWriteResult & {
+  facts: string[];
+};
+
 export type MemWalRecallItem = {
   blobId: string;
   text: string;
@@ -33,6 +49,14 @@ export type MemWalRecallItem = {
 export async function memwalRemember(
   text: string,
   namespace: string
+): Promise<MemWalWriteResult> {
+  return memwalRememberAndWait(text, namespace);
+}
+
+export async function memwalRememberAndWait(
+  text: string,
+  namespace: string,
+  timeoutMs = 60_000
 ): Promise<MemWalWriteResult> {
   const MemWal = await getMemWalClass();
   const client = MemWal.create({
@@ -50,7 +74,7 @@ export async function memwalRemember(
 
         const result = await client.waitForRememberJob(accepted.job_id, {
           pollIntervalMs: 1500,
-          timeoutMs: 60_000,
+          timeoutMs,
         });
 
         logger.info({ jobId: result.id, blobId: result.blob_id, namespace, attempt }, "MemWal remember complete");
@@ -60,13 +84,107 @@ export async function memwalRemember(
           throw err;
         }
 
-        const delayMs = attempt * 1500;
+        const delayMs = getRetryDelayMs(err) ?? attempt * 1500;
         logger.warn({ err, namespace, attempt, delayMs }, "MemWal remember failed transiently — retrying");
         await sleep(delayMs);
       }
     }
 
     throw new Error("MemWal remember exhausted retries");
+  } finally {
+    client.destroy();
+  }
+}
+
+export async function memwalRememberBulkAndWait(
+  items: Array<{ text: string; namespace: string }>,
+  timeoutMs = 120_000
+): Promise<MemWalBulkWriteResult> {
+  if (items.length === 0) {
+    return { succeeded: 0, failed: 0, results: [] };
+  }
+
+  const MemWal = await getMemWalClass();
+  const client = MemWal.create({
+    key: process.env.MEMWAL_ED25519_KEY!,
+    accountId: process.env.MEMWAL_ACCOUNT_ID!,
+    serverUrl: process.env.MEMWAL_SERVER_URL ?? DEFAULT_MEMWAL_RELAYER_URL,
+    namespace: items[0]?.namespace ?? "default",
+  });
+
+  try {
+    const result = await client.rememberBulkAndWait(items, {
+      pollIntervalMs: 1500,
+      timeoutMs,
+    });
+    return {
+      succeeded: result.succeeded,
+      failed: result.failed,
+      results: result.results.map((item) => ({
+        jobId: item.id,
+        blobId: item.blob_id,
+        namespace: item.namespace,
+        status: item.status,
+        error: item.error,
+      })),
+    };
+  } finally {
+    client.destroy();
+  }
+}
+
+export async function memwalAnalyzeAndWait(
+  text: string,
+  namespace: string,
+  timeoutMs = 120_000
+): Promise<MemWalAnalyzeResult> {
+  const MemWal = await getMemWalClass();
+  const client = MemWal.create({
+    key: process.env.MEMWAL_ED25519_KEY!,
+    accountId: process.env.MEMWAL_ACCOUNT_ID!,
+    serverUrl: process.env.MEMWAL_SERVER_URL ?? DEFAULT_MEMWAL_RELAYER_URL,
+    namespace,
+  });
+
+  try {
+    const result = await client.analyzeAndWait(text, namespace, {
+      pollIntervalMs: 1500,
+      timeoutMs,
+    });
+    return {
+      succeeded: result.succeeded,
+      failed: result.failed,
+      facts: result.facts.map((fact) => fact.text),
+      results: result.results.map((item) => ({
+        jobId: item.id,
+        blobId: item.blob_id,
+        namespace: item.namespace,
+        status: item.status,
+        error: item.error,
+      })),
+    };
+  } finally {
+    client.destroy();
+  }
+}
+
+export async function memwalRestore(namespace: string, limit = 10): Promise<{ restored: number; skipped: number; total: number; namespace: string }> {
+  const MemWal = await getMemWalClass();
+  const client = MemWal.create({
+    key: process.env.MEMWAL_ED25519_KEY!,
+    accountId: process.env.MEMWAL_ACCOUNT_ID!,
+    serverUrl: process.env.MEMWAL_SERVER_URL ?? DEFAULT_MEMWAL_RELAYER_URL,
+    namespace,
+  });
+
+  try {
+    const result = await client.restore(namespace, limit);
+    return {
+      restored: result.restored,
+      skipped: result.skipped,
+      total: result.total,
+      namespace: result.namespace,
+    };
   } finally {
     client.destroy();
   }
@@ -134,6 +252,15 @@ export function isMemWalConfigured(): boolean {
 function isRetriableMemWalError(err: unknown): boolean {
   const message = err instanceof Error ? err.message : String(err);
   return /(502|503|504|429|timeout|timed out|temporar)/i.test(message);
+}
+
+function getRetryDelayMs(err: unknown): number | null {
+  const message = err instanceof Error ? err.message : String(err);
+  const match = message.match(/"retry_after_seconds"\s*:\s*(\d+)/i);
+  if (!match) return null;
+  const seconds = Number(match[1]);
+  if (!Number.isFinite(seconds) || seconds <= 0) return null;
+  return Math.min(seconds * 1000, 120_000);
 }
 
 function sleep(ms: number): Promise<void> {

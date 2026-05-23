@@ -19,6 +19,8 @@ import {
 import { getSuiPassportClient } from "@/lib/sui-passport";
 import { runShipmentSuiMutation } from "@/lib/sui-mutation-coordinator";
 import { runShipmentValidation } from "@/lib/validate-shipment";
+import { ensureAgentRun, recordAgentStep, recordWaitingForDocuments, updateAgentRun } from "@/lib/agent-runs";
+import { registerArtifact } from "@/lib/artifacts";
 import { extractFromPdf } from "@/src/agent/haiku-client";
 import { aggregate } from "@/src/agent/aggregator";
 import { mockExtractPass } from "@/src/agent/mock-extractor";
@@ -235,6 +237,16 @@ export async function POST(
     const buffer = Buffer.from(await fileEntry.arrayBuffer());
     const sha256 = computeSha256(buffer);
     const docId = randomUUID();
+    const agentRun = ensureAgentRun(shipmentId, "extracting", "Extracting uploaded shipment document", db);
+    updateAgentRun(agentRun.id, { status: "extracting", currentStep: `Extracting ${fileEntry.name}` }, db);
+    recordAgentStep({
+      runId: agentRun.id,
+      shipmentId,
+      agentName: "Document Agent",
+      stepName: "Document received; agent resumed validation",
+      message: `Received ${fileEntry.name}${slotKey ? ` for ${slotKey}` : ""}.`,
+      inputArtifacts: [{ fileName: fileEntry.name, sizeBytes: fileEntry.size, slotKey }],
+    }, db);
 
     // Supersede any previous non-committed file in the same slot
     const existingInSlot = db.prepare(
@@ -263,6 +275,7 @@ export async function POST(
     // ── Extraction ────────────────────────────────────────────────────────
     let doc: ExtractedDoc;
     const isMock = process.env.MOCK_DOC_AI === "true";
+    let extractionSource: "live_haiku" | "cached_haiku" | "mock" = isMock ? "mock" : "live_haiku";
 
     if (isMock) {
       const pdfFile: PdfFile = { id: docId, name: fileEntry.name, buffer, sizeBytes: fileEntry.size };
@@ -280,6 +293,7 @@ export async function POST(
       if (cached && cached.error === null) {
         ensureCachedRawPdf(sha256, fileEntry.name, fileEntry.size, buffer);
         doc = { ...cached, file_id: docId, file_name: fileEntry.name };
+        extractionSource = "cached_haiku";
       } else {
         // Build grounding context from prior docs in this shipment
         const groundingCtx = buildGroundingContext(shipmentId, db);
@@ -288,6 +302,7 @@ export async function POST(
 
         doc = await extractFromPdf(pdfFile, client, groundingCtx);
         cacheExtraction(sha256, fileEntry.name, fileEntry.size, buffer, doc);
+        extractionSource = "live_haiku";
       }
     }
 
@@ -314,6 +329,45 @@ export async function POST(
     db.prepare(
       "UPDATE shipment_files SET state = ?, doc_type = ? WHERE id = ?"
     ).run(newState, detectedDocType, docId);
+
+    const uploadedArtifact = registerArtifact({
+      shipmentId,
+      type: "uploaded_document",
+      label: fileEntry.name,
+      status: "local",
+      localPathOrId: docId,
+      relatedAgentRunId: agentRun.id,
+      metadata: {
+        slotKey,
+        docType: detectedDocType,
+        sha256,
+        sizeBytes: fileEntry.size,
+      },
+    }, db);
+    const extractionArtifact = registerArtifact({
+      shipmentId,
+      type: "extracted_facts",
+      label: `${fileEntry.name} extracted facts`,
+      status: "local",
+      localPathOrId: sha256,
+      relatedAgentRunId: agentRun.id,
+      metadata: {
+        documentId: docId,
+        docType: detectedDocType,
+        confidence: doc.extraction_result.confidence,
+      },
+    }, db);
+    recordAgentStep({
+      runId: agentRun.id,
+      shipmentId,
+      agentName: "Document Agent",
+      stepName: "Extraction completed",
+      status: newState === "verified" ? "completed" : "failed",
+      message: newState === "verified"
+        ? `${detectedDocType} extracted and verified.`
+        : `Extraction failed verification for ${fileEntry.name}.`,
+      outputArtifacts: [uploadedArtifact, extractionArtifact],
+    }, db);
 
     // Store embedding chunks
     storeChunks(doc, sha256, shipmentId, db);
@@ -352,6 +406,11 @@ export async function POST(
       }
     }
 
+    const missingAfterUpload = getMissingRequiredDocuments(shipmentId, db);
+    if (missingAfterUpload.length > 0) {
+      recordWaitingForDocuments(shipmentId, missingAfterUpload, db);
+    }
+
     return NextResponse.json({
       documentId: docId,
       slotKey,
@@ -361,6 +420,17 @@ export async function POST(
       fileName: fileEntry.name,
       sha256,
       extractionHash,
+      extractionProvenance: {
+        fileId: doc.file_id,
+        fileName: doc.file_name,
+        sha256,
+        mode: extractionSource,
+        model: extractionSource === "mock" ? null : "claude-haiku-4-5",
+        latencyMs: doc.haiku_latency_ms,
+        inputTokens: doc.haiku_input_tokens,
+        outputTokens: doc.haiku_output_tokens,
+        extractedAt: new Date().toISOString(),
+      },
       verifyFailures: verifyResult.failures,
       onChainCommitmentTx: null, // filled async — poll GET /documents
     });
@@ -368,6 +438,32 @@ export async function POST(
     logger.error({ err }, "Document upload failed");
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
+}
+
+function getMissingRequiredDocuments(shipmentId: string, db: ReturnType<typeof getDb>): string[] {
+  const row = db.prepare("SELECT documents_json FROM shipments WHERE id = ?").get(shipmentId) as { documents_json: string } | undefined;
+  if (!row) return [];
+  try {
+    const docs = JSON.parse(row.documents_json) as Array<{ name: string; required?: boolean; uploaded?: boolean }>;
+    const uploadedSlots = new Set((db.prepare(
+      "SELECT COALESCE(slot_key, doc_type) AS slot_key FROM shipment_files WHERE shipment_id = ? AND state NOT IN ('superseded', 'extraction_failed')"
+    ).all(shipmentId) as Array<{ slot_key: string | null }>).map((item) => item.slot_key));
+    return docs
+      .filter((doc) => doc.required !== false)
+      .filter((doc) => !doc.uploaded && !uploadedSlots.has(canonicalDocumentKey(doc.name)))
+      .map((doc) => doc.name);
+  } catch {
+    return [];
+  }
+}
+
+function canonicalDocumentKey(value: string): string {
+  const normalized = value.toLowerCase();
+  if (normalized.includes("commercial invoice")) return "commercial_invoice";
+  if (normalized.includes("packing list")) return "packing_list";
+  if (normalized.includes("certificate of origin")) return "certificate_of_origin";
+  if (normalized.includes("bill of lading") || normalized.includes("air waybill")) return "bill_of_lading";
+  return normalized.replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "");
 }
 
 // ── Helpers ────────────────────────────────────────────────────────────────

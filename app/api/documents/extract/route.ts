@@ -8,10 +8,15 @@ import { computeSha256 } from "@/lib/file-hash";
 import { getCachedExtraction, cacheExtraction, ensureCachedRawPdf } from "@/lib/file-cache";
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db";
+import { ensureAgentRun, recordAgentStep, recordWaitingForDocuments, updateAgentRun } from "@/lib/agent-runs";
+import { registerArtifact } from "@/lib/artifacts";
 
 export const runtime = "nodejs";
 
 const MAX_FILE_SIZE = 20 * 1024 * 1024; // 20MB
+const HAIKU_MODEL = "claude-haiku-4-5";
+
+type ExtractionProvenance = NonNullable<AggregateResult["extractionProvenance"]>[number];
 
 function tryGetDb() {
   try {
@@ -185,6 +190,7 @@ export async function POST(request: NextRequest) {
   const cachedDocs = new Map<string, ExtractedDoc>(); // file id → cached doc
   const uncachedFiles: PdfFile[] = [];
   const useExtractionCache = process.env.MOCK_DOC_AI !== "true";
+  const provenanceByFileId = new Map<string, ExtractionProvenance>();
 
   for (const pdfFile of pdfFiles) {
     const sha256 = sha256Map.get(pdfFile.id);
@@ -198,6 +204,17 @@ export async function POST(request: NextRequest) {
       }
       // Return cached result with original file name (id may differ across uploads)
       cachedDocs.set(pdfFile.id, { ...cached, file_id: pdfFile.id, file_name: pdfFile.name });
+      provenanceByFileId.set(pdfFile.id, {
+        fileId: pdfFile.id,
+        fileName: pdfFile.name,
+        sha256,
+        mode: "cached_haiku",
+        model: HAIKU_MODEL,
+        latencyMs: cached.haiku_latency_ms,
+        inputTokens: cached.haiku_input_tokens,
+        outputTokens: cached.haiku_output_tokens,
+        extractedAt: new Date().toISOString(),
+      });
     } else {
       uncachedFiles.push(pdfFile);
     }
@@ -215,6 +232,17 @@ export async function POST(request: NextRequest) {
       for (const doc of docList as ExtractedDoc[]) {
         const sha256 = sha256Map.get(doc.file_id);
         const buf = sha256 ? bufferMap.get(sha256) : undefined;
+        provenanceByFileId.set(doc.file_id, {
+          fileId: doc.file_id,
+          fileName: doc.file_name,
+          sha256: sha256 ?? undefined,
+          mode: process.env.MOCK_DOC_AI === "true" ? "mock" : "live_haiku",
+          model: process.env.MOCK_DOC_AI === "true" ? null : HAIKU_MODEL,
+          latencyMs: doc.haiku_latency_ms,
+          inputTokens: doc.haiku_input_tokens,
+          outputTokens: doc.haiku_output_tokens,
+          extractedAt: new Date().toISOString(),
+        });
         if (sha256 && buf) {
           cacheExtraction(sha256, doc.file_name, doc.file_size_bytes, buf, doc);
         }
@@ -228,6 +256,17 @@ export async function POST(request: NextRequest) {
     for (const doc of otherDocs) {
       const sha256 = sha256Map.get(doc.file_id);
       const buf = sha256 ? bufferMap.get(sha256) : undefined;
+      provenanceByFileId.set(doc.file_id, {
+        fileId: doc.file_id,
+        fileName: doc.file_name,
+        sha256: sha256 ?? undefined,
+        mode: process.env.MOCK_DOC_AI === "true" ? "mock" : "live_haiku",
+        model: process.env.MOCK_DOC_AI === "true" ? null : HAIKU_MODEL,
+        latencyMs: doc.haiku_latency_ms,
+        inputTokens: doc.haiku_input_tokens,
+        outputTokens: doc.haiku_output_tokens,
+        extractedAt: new Date().toISOString(),
+      });
       if (sha256 && buf) {
         cacheExtraction(sha256, doc.file_name, doc.file_size_bytes, buf, doc);
       }
@@ -243,13 +282,51 @@ export async function POST(request: NextRequest) {
     if (shipmentId) {
       const existing = getLatestAggregate(shipmentId);
       if (existing) {
+        for (const item of existing.extractionProvenance ?? []) {
+          provenanceByFileId.set(item.fileId, item);
+        }
         result = mergeAggregateRuns(existing, result);
       }
     }
 
+    result = {
+      ...result,
+      extractionProvenance: aggregateDocs(result).map((doc) => provenanceByFileId.get(doc.file_id)).filter(Boolean) as ExtractionProvenance[],
+    };
+
     // Record extraction run + shipment files after cached docs are merged.
     if (shipmentId) {
       recordExtractionRun(shipmentId, sha256Map, result, pdfFiles);
+      const db = tryGetDb();
+      if (db) {
+        const run = ensureAgentRun(shipmentId, "extracting", "Extracting staged shipment documents", db);
+        updateAgentRun(run.id, { status: "extracting", currentStep: "Document Agent extracted uploaded PDFs" }, db);
+        const extractedDocs = aggregateDocs(result).filter((doc) => !doc.error);
+        const outputArtifacts = extractedDocs.map((doc) => registerArtifact({
+          shipmentId,
+          type: "extracted_facts",
+          label: `${doc.file_name} extracted facts`,
+          status: "local",
+          localPathOrId: sha256Map.get(doc.file_id) ?? doc.file_id,
+          relatedAgentRunId: run.id,
+          metadata: {
+            docType: doc.extraction_result.document_type,
+            confidence: doc.extraction_result.confidence,
+          },
+        }, db));
+        recordAgentStep({
+          runId: run.id,
+          shipmentId,
+          agentName: "Document Agent",
+          stepName: "Extract uploaded shipment documents",
+          message: `Extracted ${extractedDocs.length} document(s); missing ${result.missing.length}.`,
+          inputArtifacts: pdfFiles.map((file) => ({ fileName: file.name, sizeBytes: file.sizeBytes })),
+          outputArtifacts,
+        }, db);
+        if (result.missing.length > 0) {
+          recordWaitingForDocuments(shipmentId, result.missing.map((item) => item.replace(/_/g, " ")), db);
+        }
+      }
     }
 
     return NextResponse.json(result);

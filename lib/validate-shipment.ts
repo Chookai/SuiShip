@@ -7,6 +7,26 @@ import { buildCompactManifest } from "./compact-manifest";
 import { retrieveRelevantChunks } from "./chunk-retriever";
 import { llmCrossValidateCompact } from "@/src/agent/llm-cross-validator";
 import type { ValidationIssue } from "@/src/agent/schemas/aggregate-result";
+import { getShipmentById } from "./shipments-server";
+import {
+  buildCrossShipmentContext,
+  buildShipmentMemoryFacts,
+  detectAnomalies,
+  parseRememberedFacts,
+  readCrossShipmentMemory,
+  type MemoryAnomalyFinding,
+} from "./agents/memory-agent";
+import { runValidationMemoryAgent, type ValidationAgentResult } from "./agents/validation-agent";
+import type { ToolEvent } from "./agents/agent-loop";
+import {
+  buildFieldComparisons,
+  type AgentMemoryTraceStep,
+  type FieldComparison,
+} from "./agents/field-comparisons";
+import { ensureAgentRun, recordAgentStep, updateAgentRun, recordWaitingForDocuments } from "./agent-runs";
+import { registerArtifact } from "./artifacts";
+import { generateShipmentCaseFile, type ShipmentCaseFileArtifact } from "./case-files";
+import { isMemWalConfigured } from "./memwal/client";
 
 const logger = pino({ name: "validate-shipment" });
 
@@ -18,6 +38,7 @@ export type ValidationFinding = {
   affected_doc_ids: string[];
   values: Record<string, unknown>;
   status: "unresolved" | "waived";
+  finding_type?: "consistency" | "anomaly";
 };
 
 export type ValidateResult = {
@@ -29,10 +50,15 @@ export type ValidateResult = {
   model: string;
   inputTokens: number;
   outputTokens: number;
+  fieldComparisons: FieldComparison[];
+  memoryTrace: AgentMemoryTraceStep[];
+  baselineStatus: "baseline_established" | "prior_memory_found";
+  agentToolEvents: ToolEvent[];
+  agentRunId?: string;
+  caseFile?: ShipmentCaseFileArtifact | null;
 };
 
 type ExtractionRunRow = { aggregate_json: string; created_at: string };
-type ShipmentFileRow = { sha256: string; slot_key: string | null; doc_type: string | null };
 
 export function computeDocSetHash(shipmentId: string, db: Database.Database): string {
   const rows = db.prepare(
@@ -59,6 +85,16 @@ export async function runShipmentValidation(
   shipmentId: string,
   db: Database.Database
 ): Promise<ValidateResult | null> {
+  const agentRun = ensureAgentRun(shipmentId, "validating", "Validating shipment documents", db);
+  updateAgentRun(agentRun.id, { status: "validating", currentStep: "Cross-validating extracted shipment facts" }, db);
+  recordAgentStep({
+    runId: agentRun.id,
+    shipmentId,
+    agentName: "Orchestrator",
+    stepName: "Validation requested",
+    message: "Shipment compliance workflow resumed for validation.",
+  }, db);
+
   // Mock mode: return a clean passing result
   if (process.env.MOCK_DOC_AI === "true") {
     const docSetHash = computeDocSetHash(shipmentId, db);
@@ -82,7 +118,14 @@ export async function runShipmentValidation(
       "UPDATE shipment_files SET state = 'validated' WHERE shipment_id = ? AND state = 'verified'"
     ).run(shipmentId);
 
-    return {
+    recordAgentStep({
+      runId: agentRun.id,
+      shipmentId,
+      agentName: "Risk Agent",
+      stepName: "Mock validation completed",
+      message: "Demo Mode validation returned aligned documents.",
+    }, db);
+    const mockResult: ValidateResult = {
       issues: [],
       findings: [],
       overallVerdict: "aligned",
@@ -91,12 +134,26 @@ export async function runShipmentValidation(
       model: "mock",
       inputTokens: 0,
       outputTokens: 0,
+      fieldComparisons: [],
+      memoryTrace: [],
+      baselineStatus: "baseline_established",
+      agentToolEvents: [],
+      agentRunId: agentRun.id,
+      caseFile: null,
     };
+    updateAgentRun(agentRun.id, { status: "completed", currentStep: "Mock validation complete", riskLevel: "low", completed: true }, db);
+    return mockResult;
   }
 
   // Build compact manifest from latest extraction
   const compactManifest = buildCompactManifest(shipmentId, db);
-  if (!compactManifest) return null;
+  if (!compactManifest) {
+    const missing = getMissingRequiredDocuments(shipmentId);
+    if (missing.length > 0) {
+      recordWaitingForDocuments(shipmentId, missing, db);
+    }
+    return null;
+  }
 
   // Latest extraction JSON for new docs
   const latestRun = db.prepare(
@@ -128,6 +185,15 @@ export async function runShipmentValidation(
 
   logger.info({ shipmentId, model, priorErrors }, "Running shipment validation");
 
+  recordAgentStep({
+    runId: agentRun.id,
+    shipmentId,
+    agentName: "Document Agent",
+    stepName: "Documents normalized",
+    message: "Built compact manifest and retrieved relevant extraction chunks.",
+    inputArtifacts: [{ type: "compact_manifest", docSetHash: computeDocSetHash(shipmentId, db) }],
+  }, db);
+
   const result = await llmCrossValidateCompact(
     compactManifest,
     newExtractionsJson,
@@ -135,6 +201,51 @@ export async function runShipmentValidation(
     client,
     model
   );
+
+  const shipment = getShipmentById(shipmentId);
+  const facts = shipment ? buildShipmentMemoryFacts(shipment, compactManifest) : null;
+  updateAgentRun(agentRun.id, { status: "recalling_memory", currentStep: "Recalling MemWal party and document memory" }, db);
+  const memory = facts ? await readCrossShipmentMemory(facts) : { exporterHistory: [], importerHistory: [], documentFingerprints: [] };
+  const rememberedFacts = parseRememberedFacts(memory.exporterHistory);
+  recordAgentStep({
+    runId: agentRun.id,
+    shipmentId,
+    agentName: "Memory Agent",
+    stepName: "Recall cross-shipment memory",
+    message: memory.exporterHistory.length > 0
+      ? `Recalled ${memory.exporterHistory.length} exporter memory record(s) and ${memory.documentFingerprints.length} document fingerprint record(s).`
+      : "No prior exporter memory was recalled; this shipment can establish a baseline after mint.",
+    memoryReads: [...memory.exporterHistory, ...memory.documentFingerprints].map((item) => ({
+      namespace: item.namespace,
+      blobId: item.blobId,
+      distance: item.distance,
+    })),
+  }, db);
+  const comparisonBundle = shipment
+    ? buildFieldComparisons({
+        shipment,
+        compactManifest,
+        rememberedFacts,
+        documentFingerprints: memory.documentFingerprints,
+      })
+    : { comparisons: [], trace: [], baselineStatus: "baseline_established" as const };
+  const deterministicAnomalies = facts ? detectAnomalies(facts, memory) : [];
+  const crossShipmentContext = facts ? buildCrossShipmentContext(facts, memory, deterministicAnomalies) : "";
+  const hasRecalledMemory = memory.exporterHistory.length > 0 || memory.importerHistory.length > 0 || memory.documentFingerprints.length > 0;
+  let agentResult: ValidationAgentResult = { anomalies: deterministicAnomalies, toolEvents: [] };
+  updateAgentRun(agentRun.id, { status: "detecting_anomalies", currentStep: "Comparing entered, extracted, and remembered facts" }, db);
+  if (facts && hasRecalledMemory) {
+    agentResult = await runValidationMemoryAgent({ facts, deterministicAnomalies, crossShipmentContext });
+  }
+  const agentAnomalies = agentResult.anomalies;
+  const anomalyIssues = mapAnomaliesToIssues(agentAnomalies);
+  const comparisonIssues = mapComparisonsToIssues(comparisonBundle.comparisons);
+  const allIssues = [...result.issues, ...anomalyIssues, ...comparisonIssues];
+  const hasError = allIssues.some((issue) => issue.severity === "error");
+  const overallVerdict = hasError ? "mismatched" : result.overallVerdict;
+  const verdictReason = anomalyIssues.length > 0
+    ? `${result.verdictReason} Historical MemWal anomaly check found ${anomalyIssues.length} issue(s).`.trim()
+    : result.verdictReason;
 
   const docSetHash = computeDocSetHash(shipmentId, db);
   const runId = randomUUID();
@@ -150,9 +261,9 @@ export async function runShipmentValidation(
   `).run(
     runId,
     shipmentId,
-    JSON.stringify(result.issues),
-    result.overallVerdict,
-    result.verdictReason,
+    JSON.stringify(allIssues),
+    overallVerdict,
+    verdictReason,
     compactManifest,
     result.inputTokens,
     result.outputTokens,
@@ -161,7 +272,7 @@ export async function runShipmentValidation(
   );
 
   // Write structured findings
-  const findings: ValidationFinding[] = result.issues.map(issue => ({
+  const consistencyFindings: ValidationFinding[] = result.issues.map(issue => ({
     id: randomUUID(),
     severity: issue.severity as "error" | "warning" | "info",
     field_path: issue.field,
@@ -169,49 +280,200 @@ export async function runShipmentValidation(
     affected_doc_ids: issue.affected_files ?? [],
     values: (issue.values ?? {}) as Record<string, unknown>,
     status: "unresolved",
+    finding_type: "consistency",
   }));
+  const anomalyFindings = mapAnomaliesToFindings(agentAnomalies);
+  const comparisonFindings = mapComparisonsToFindings(comparisonBundle.comparisons);
+  const findings: ValidationFinding[] = [...consistencyFindings, ...anomalyFindings, ...comparisonFindings];
 
   for (const f of findings) {
     db.prepare(`
       INSERT INTO validation_findings
         (id, validation_run_id, shipment_id, severity, field_path, message,
-         affected_doc_ids_json, values_json, status)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+         affected_doc_ids_json, values_json, status, finding_type)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       f.id, runId, shipmentId, f.severity, f.field_path, f.message,
-      JSON.stringify(f.affected_doc_ids), JSON.stringify(f.values), f.status
+      JSON.stringify(f.affected_doc_ids), JSON.stringify(f.values), f.status, f.finding_type ?? "consistency"
     );
   }
 
   // Promote verified → validated on clean run
-  if (result.overallVerdict !== "mismatched") {
+  if (overallVerdict !== "mismatched") {
     db.prepare(
       "UPDATE shipment_files SET state = 'validated' WHERE shipment_id = ? AND state = 'verified'"
     ).run(shipmentId);
   }
 
-  const score = scoreFromVerdict(result.overallVerdict, findings);
-  // Update shipment ai score
+  const score = scoreFromVerdict(overallVerdict, findings);
+  const riskLevel = score >= 85 ? "Low" : score >= 65 ? "Medium" : "High";
+  const aiSummary = findings.length > 0
+    ? `Validation found ${findings.length} finding${findings.length === 1 ? "" : "s"}, including ${findings.filter((f) => f.finding_type === "anomaly").length} memory anomaly finding${findings.filter((f) => f.finding_type === "anomaly").length === 1 ? "" : "s"}.`
+    : "AI validation found no blocking issues.";
+  const aiChecks = findings.map((finding) => ({
+    field: finding.field_path,
+    status: finding.severity === "error" ? "mismatch" : finding.severity === "warning" ? "info" : "matched",
+    detail: finding.message,
+    documents: finding.affected_doc_ids,
+  }));
+
   db.prepare(
-    `UPDATE shipments SET ai_json = json_patch(COALESCE(ai_json,'{}'),
-      json_object('score', ?, 'riskLevel', ?, 'ranAt', datetime('now')))
+    `UPDATE shipments SET ai_json = ?
      WHERE id = ?`
   ).run(
-    score,
-    score >= 85 ? "Low" : score >= 65 ? "Medium" : "High",
+    JSON.stringify({
+      score,
+      riskLevel,
+      ranAt: new Date().toISOString(),
+      summary: aiSummary,
+      checks: aiChecks,
+    }),
     shipmentId
   );
+
+  const validationArtifact = registerArtifact({
+    shipmentId,
+    type: "validation_report",
+    label: "Validation Report",
+    status: "local",
+    localPathOrId: runId,
+    relatedAgentRunId: agentRun.id,
+    metadata: {
+      overallVerdict,
+      docSetHash,
+      findingCount: findings.length,
+      model,
+    },
+  }, db);
+  recordAgentStep({
+    runId: agentRun.id,
+    shipmentId,
+    agentName: "Risk Agent",
+    stepName: "Risk assessment completed",
+    message: aiSummary,
+    outputArtifacts: [validationArtifact],
+    memoryReads: comparisonBundle.comparisons
+      .filter((comparison) => comparison.rememberedValue !== null && comparison.rememberedValue !== undefined)
+      .map((comparison) => ({ field: comparison.field, rememberedValue: comparison.rememberedValue })),
+  }, db);
+
+  const caseFile = await generateShipmentCaseFile({
+    shipmentId,
+    agentRunId: agentRun.id,
+    compactManifest,
+    fieldComparisons: comparisonBundle.comparisons,
+    baselineStatus: comparisonBundle.baselineStatus,
+    overallVerdict,
+    verdictReason,
+    findings,
+    memory,
+    rememberedFacts,
+    memwalConfigured: isMemWalConfigured(),
+    db,
+  });
+
+  updateAgentRun(agentRun.id, {
+    status: overallVerdict === "mismatched" ? "blocked_for_review" : "ready_for_customs",
+    currentStep: overallVerdict === "mismatched" ? "Blocked for human review" : "Ready for customs evidence review",
+    riskLevel,
+    completed: true,
+  }, db);
 
   logger.info({ shipmentId, overallVerdict: result.overallVerdict, findingCount: findings.length, score }, "Validation complete");
 
   return {
-    issues: result.issues,
+    issues: allIssues,
     findings,
-    overallVerdict: result.overallVerdict,
-    verdictReason: result.verdictReason,
+    overallVerdict,
+    verdictReason,
     docSetHash,
     model,
     inputTokens: result.inputTokens,
     outputTokens: result.outputTokens,
+    fieldComparisons: comparisonBundle.comparisons,
+    memoryTrace: comparisonBundle.trace,
+    baselineStatus: comparisonBundle.baselineStatus,
+    agentToolEvents: agentResult.toolEvents,
+    agentRunId: agentRun.id,
+    caseFile,
   };
+}
+
+function getMissingRequiredDocuments(shipmentId: string): string[] {
+  const shipment = getShipmentById(shipmentId);
+  if (!shipment) return [];
+  return shipment.documents
+    .filter((doc) => doc.required && !doc.uploaded)
+    .map((doc) => doc.name);
+}
+
+function actionableComparisons(comparisons: FieldComparison[]): FieldComparison[] {
+  return comparisons.filter((comparison) =>
+    comparison.findingType !== "consistency" &&
+    !(comparison.findingType === "missing_data" && comparison.severity === "info")
+  );
+}
+
+function comparisonSeverityToValidation(severity: FieldComparison["severity"]): "error" | "warning" | "info" {
+  if (severity === "critical") return "error";
+  if (severity === "warning") return "warning";
+  return "info";
+}
+
+function mapComparisonsToIssues(comparisons: FieldComparison[]): ValidationIssue[] {
+  return actionableComparisons(comparisons).map((comparison) => ({
+    severity: comparisonSeverityToValidation(comparison.severity),
+    field: comparison.field,
+    message: comparison.explanation,
+    affected_files: comparison.sourceDocuments,
+    values: { field_comparison: comparison },
+  }));
+}
+
+function mapComparisonsToFindings(comparisons: FieldComparison[]): ValidationFinding[] {
+  return actionableComparisons(comparisons).map((comparison) => ({
+    id: randomUUID(),
+    severity: comparisonSeverityToValidation(comparison.severity),
+    field_path: comparison.field,
+    message: comparison.explanation,
+    affected_doc_ids: comparison.sourceDocuments,
+    values: { field_comparison: comparison },
+    status: "unresolved",
+    finding_type: comparison.findingType === "entered_vs_extracted" ? "consistency" : "anomaly",
+  }));
+}
+
+function mapAnomaliesToIssues(anomalies: MemoryAnomalyFinding[]): ValidationIssue[] {
+  return anomalies.map((anomaly) => ({
+    severity: anomaly.severity,
+    field: anomaly.fieldPath,
+    message: anomaly.message,
+    affected_files: [],
+    values: {
+      anomaly_type: anomaly.anomalyType,
+      recalled_value: anomaly.recalledValue,
+      current_value: anomaly.currentValue,
+      prior_shipment_reference: anomaly.priorShipmentReference,
+      memory_blob_id: anomaly.memoryBlobId,
+    },
+  }));
+}
+
+function mapAnomaliesToFindings(anomalies: MemoryAnomalyFinding[]): ValidationFinding[] {
+  return anomalies.map((anomaly) => ({
+    id: randomUUID(),
+    severity: anomaly.severity,
+    field_path: anomaly.fieldPath,
+    message: anomaly.message,
+    affected_doc_ids: [],
+    values: {
+      anomaly_type: anomaly.anomalyType,
+      recalled_value: anomaly.recalledValue,
+      current_value: anomaly.currentValue,
+      prior_shipment_reference: anomaly.priorShipmentReference,
+      memory_blob_id: anomaly.memoryBlobId,
+    },
+    status: "unresolved",
+    finding_type: "anomaly",
+  }));
 }

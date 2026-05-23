@@ -24,6 +24,8 @@ function makeDoc(
         invoice_number: "INV-001",
         invoice_date: null, currency: null, payment_terms: null, incoterms: null,
         terms_of_trade: null, type_of_export: null, reason_for_export: null,
+        bank_name: null, bank_beneficiary_name: null, bank_account_number: null,
+        bank_iban: null, bank_swift: null,
         city_of_liability: null, carrier: null, waybill_number: null,
         sender_reference: null, recipient_reference: null, general_notes: null,
         sender: makeAddress(), sold_to: makeAddress(), recipient: makeAddress(),

@@ -12,6 +12,10 @@ import { backfillOnChainDocumentCommitments, ensureOnChainShipmentInitialized } 
 import { runShipmentSuiMutation } from "./sui-mutation-coordinator";
 import { canonicalJson } from "./canonical-json";
 import { resetSuiTxMetrics, takeSuiTxMetrics } from "./sui-passport/real-client";
+import { buildCompactManifest } from "./compact-manifest";
+import { writeShipmentMemoryAfterMint } from "./agents/memory-agent";
+import { ensureAgentRun, recordAgentStep, updateAgentRun } from "./agent-runs";
+import { registerArtifact, upsertWalrusArtifact } from "./artifacts";
 import type { AggregateResult } from "@/src/agent/schemas/aggregate-result";
 import type { MemWalManifest } from "./memwal/types";
 import type { WalrusUpload } from "./shipments-store";
@@ -160,6 +164,8 @@ export async function executeMintSequence(
   ownerAddress: string
 ): Promise<MintResult | MintError> {
   const db = getDb();
+  const agentRun = ensureAgentRun(shipmentId, "storing_artifacts", "Preparing proof artifacts", db);
+  updateAgentRun(agentRun.id, { status: "storing_artifacts", currentStep: "Preparing Walrus, MemWal, and Sui proof" }, db);
   const mintStartedAt = Date.now();
   const latency: MintLatencyBreakdown = {
     walrusDocumentsMs: 0,
@@ -240,6 +246,14 @@ export async function executeMintSequence(
       manifestMs: latency.walrusManifestMs,
       concurrency: WALRUS_UPLOAD_CONCURRENCY,
     }, "Walrus uploads complete");
+    recordAgentStep({
+      runId: agentRun.id,
+      shipmentId,
+      agentName: "Proof Agent",
+      stepName: "Store documents and public manifest on Walrus",
+      message: `Stored ${Math.max(0, walrusBlobIds.length - 1)} document artifact(s) and one public manifest on Walrus.`,
+      walrusBlobIds,
+    }, db);
   }
 
   // ── Step c: MemWal ─────────────────────────────────────────────────────────
@@ -263,6 +277,23 @@ export async function executeMintSequence(
   }
   latency.walrusPackageMs = walrusPackage.timingMs;
   logger.info({ shipmentId, walrusPackageMs: latency.walrusPackageMs }, "Walrus package upload complete");
+  const packageArtifact = upsertWalrusArtifact({
+    shipmentId,
+    type: "walrus_package_zip",
+    label: "Shipment document package ZIP",
+    walrusBlobId: walrusPackage.upload.blobId,
+    relatedAgentRunId: agentRun.id,
+    metadata: { fileName: walrusPackage.upload.fileName, sizeBytes: walrusPackage.upload.sizeBytes },
+  }, db);
+  recordAgentStep({
+    runId: agentRun.id,
+    shipmentId,
+    agentName: "Proof Agent",
+    stepName: "Store document package on Walrus",
+    message: "Stored reusable shipment document package ZIP on Walrus.",
+    outputArtifacts: [packageArtifact],
+    walrusBlobIds: [walrusPackage.upload.blobId],
+  }, db);
   const suiClient = getSuiPassportClient();
   resetSuiTxMetrics(shipmentId);
 
@@ -343,6 +374,15 @@ export async function executeMintSequence(
       }
       return mintOutcome;
     });
+    recordAgentStep({
+      runId: agentRun.id,
+      shipmentId,
+      agentName: "Proof Agent",
+      stepName: "Anchor shipment passport on Sui",
+      message: "Minted shipment passport and anchored Walrus evidence references on Sui.",
+      walrusBlobIds,
+      suiTxDigests: [finalizedMint.txDigest],
+    }, db);
   } catch (err) {
     const errorMessage = err instanceof Error ? err.message : String(err);
     const suiMetrics = takeSuiTxMetrics(shipmentId);
@@ -373,6 +413,25 @@ export async function executeMintSequence(
       mintedAt: finalizedMint.mintedAt,
       walrusJson: JSON.stringify(walrusPackage.upload),
     });
+    registerArtifact({
+      shipmentId,
+      type: "sui_passport_reference",
+      label: "Sui Shipment Passport",
+      status: "local",
+      relatedAgentRunId: agentRun.id,
+      relatedSuiTxDigest: finalizedMint.txDigest,
+      metadata: { passportId: finalizedMint.passportId, txDigest: finalizedMint.txDigest },
+    }, db);
+    void writeCrossShipmentMemoryAfterMint(shipmentId, finalizedMint.passportId, finalizedMint.txDigest, walrusBlobIds, db);
+    updateAgentRun(agentRun.id, { status: "writing_memory", currentStep: "Writing cross-shipment memory to MemWal" }, db);
+    recordAgentStep({
+      runId: agentRun.id,
+      shipmentId,
+      agentName: "Memory Agent",
+      stepName: "Write baseline memory after mint",
+      message: "Queued exporter identity and document fingerprint memory writes to MemWal.",
+      memoryWrites: [{ namespace: shipmentId }, { namespace: "global:documents" }],
+    }, db);
   } catch (err) {
     logger.error({ err, shipmentId, passportId: finalizedMint.passportId }, "SQLite update failed after mint");
     return {
@@ -399,6 +458,11 @@ export async function executeMintSequence(
     suiRetriesConsumed: suiMetrics.retryCountTotal,
     suiRetriesByLabel: suiMetrics.retryCountByLabel,
   }, "Mint sequence complete");
+  updateAgentRun(agentRun.id, {
+    status: "completed",
+    currentStep: "Sui proof, Walrus artifacts, and MemWal memory writes completed or queued",
+    completed: true,
+  }, db);
   return {
     passportId: finalizedMint.passportId,
     txDigest: finalizedMint.txDigest,
@@ -411,6 +475,28 @@ export async function executeMintSequence(
 }
 
 // ── Private helpers ────────────────────────────────────────────────────────────
+
+async function writeCrossShipmentMemoryAfterMint(
+  shipmentId: string,
+  passportId: string,
+  txDigest: string,
+  walrusBlobIds: string[],
+  db: ReturnType<typeof getDb>
+): Promise<void> {
+  const shipment = getShipmentById(shipmentId);
+  if (!shipment) return;
+  try {
+    await writeShipmentMemoryAfterMint({
+      shipment,
+      compactManifest: buildCompactManifest(shipmentId, db),
+      passportId,
+      txDigest,
+      walrusBlobIds,
+    });
+  } catch (err) {
+    logger.warn({ err, shipmentId, passportId }, "Cross-shipment MemWal memory write failed after mint");
+  }
+}
 
 function getStoredWalrusBlobIds(shipmentId: string, db: ReturnType<typeof getDb>): string[] {
   const manifestRows = db
@@ -496,6 +582,13 @@ async function uploadDocumentsToWalrus(
       db.prepare(
         "UPDATE shipment_files SET walrus_blob_id = ?, is_final = 1 WHERE shipment_id = ? AND sha256 = ?"
       ).run(result.blobId, shipmentId, file.sha256);
+      upsertWalrusArtifact({
+        shipmentId,
+        type: "uploaded_document",
+        label: file.file_name,
+        walrusBlobId: result.blobId,
+        metadata: { docType: file.doc_type, sha256: file.sha256, sizeBytes: file.size_bytes },
+      }, db);
 
       return { blobId: result.blobId, index };
     }).catch((err) => {
@@ -553,6 +646,13 @@ async function uploadDocumentsToWalrus(
       INSERT OR REPLACE INTO manifest_cache (shipment_id, manifest_json, fetched_from)
       VALUES (?, ?, 'local')
     `).run(shipmentId, manifestJson);
+    upsertWalrusArtifact({
+      shipmentId,
+      type: "public_manifest",
+      label: "Public shipment manifest",
+      walrusBlobId: manifestResult.blobId,
+      metadata: { sizeBytes: manifestResult.sizeBytes },
+    }, db);
   } catch (err) {
     // Manifest is the integrity anchor — if it fails the mint must not proceed.
     return {
@@ -804,42 +904,39 @@ function queueMemWalSync(
   const spaceId = `${process.env.MEMWAL_ACCOUNT_ID!}:${namespace}`;
   updateShipmentMemWalSync(shipmentId, { memWalSpaceId: spaceId, status: "pending", error: null, syncedAt: null });
 
-  const shipment = getShipmentById(shipmentId);
-  const summary = shipment
-    ? `Shipment ${shipmentId}: exporter ${shipment.exporter.company} → importer ${shipment.importer.company}. ` +
-      `Route: ${shipment.shipment.origin} → ${shipment.shipment.destination}. ` +
-      `Carrier: ${shipment.shipment.carrier}. Cargo: ${shipment.cargo.description}, HS ${shipment.cargo.hsCode}. ` +
-      `Declared value: ${shipment.shipment.declaredValue} ${shipment.shipment.currency}. ` +
-      `Walrus evidence blobs: ${walrusBlobIds.join(", ")}`
-    : null;
-
   void (async () => {
     const memwalStartedAt = Date.now();
     const manifestStartedAt = Date.now();
     try {
-      const [manifestResult, summaryResult] = await Promise.all([
-        memwalRemember(`SHIPMENT MANIFEST\n${manifestJson}`, namespace),
-        summary ? memwalRemember(summary, namespace) : Promise.resolve(null),
-      ]);
+      const manifestResult = await memwalRemember(`SHIPMENT MANIFEST\n${manifestJson}`, namespace);
       const manifestMs = Date.now() - manifestStartedAt;
       const totalMs = Date.now() - memwalStartedAt;
       logger.info({ shipmentId, blobId: manifestResult.blobId, namespace, latencyMs: manifestMs }, "MemWal manifest written");
       logger.info({
         shipmentId,
         namespace,
-        blobId: summaryResult?.blobId ?? null,
+        blobId: null,
         manifestMs,
-        summaryMs: totalMs - manifestMs,
+        summaryMs: 0,
         totalMs,
       }, "MemWal sync complete");
       updateShipmentMemWalSync(shipmentId, {
         memWalSpaceId: spaceId,
         manifestBlobId: manifestResult.blobId,
-        summaryBlobId: summaryResult?.blobId ?? null,
+        summaryBlobId: null,
         status: "synced",
         error: null,
         syncedAt: new Date().toISOString(),
       });
+      registerArtifact({
+        shipmentId,
+        type: "memwal_memory_reference",
+        label: "MemWal shipment manifest memory",
+        status: "local",
+        localPathOrId: manifestResult.blobId,
+        relatedMemWalNamespace: namespace,
+        metadata: { memwalBlobId: manifestResult.blobId, namespace },
+      }, db);
     } catch (err) {
       logger.warn({ err, shipmentId, namespace }, "MemWal sync failed after mint response returned");
       updateShipmentMemWalSync(shipmentId, {
@@ -919,6 +1016,12 @@ function buildManifestJson(
       etd: shipment.shipment.etd,
       eta: shipment.shipment.eta,
       booking_ref: shipment.shipment.bookingRef,
+      bl_number: (() => {
+        const bol = agg?.detected.bill_of_lading[0];
+        return bol?.extraction_result.document_type === "bill_of_lading"
+          ? bol.extraction_result.data.bl_number ?? undefined
+          : undefined;
+      })(),
       bl_type: shipment.shipment.blType,
       payment_terms: shipment.shipment.paymentTerms,
     },
@@ -1226,6 +1329,7 @@ async function sealMintPath(
       mintedAt: finalizedMint.mintedAt,
       walrusJson: JSON.stringify({ publicBlobId: finalizedMint.resolvedWalrusBlobIds[0], encryptedBlobId: finalizedMint.resolvedWalrusBlobIds[1], sealEnabled: true }),
     });
+    void writeCrossShipmentMemoryAfterMint(shipmentId, finalizedMint.passportId, finalizedMint.txDigest, finalizedMint.resolvedWalrusBlobIds, db);
   } catch (err) {
     logger.error({ err, shipmentId, passportId: finalizedMint.passportId }, "[seal] SQLite update failed after mint");
     return {

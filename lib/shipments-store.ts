@@ -33,6 +33,12 @@ export type DocumentRequirement = {
   uploaded: boolean;
   fileName?: string;
   uploadedAt?: string;
+  extractionSource?: "live_haiku" | "cached_haiku" | "mock";
+  extractionModel?: string;
+  extractionLatencyMs?: number;
+  extractionInputTokens?: number;
+  extractionOutputTokens?: number;
+  extractedAt?: string;
 };
 
 export type PartyInfo = {
@@ -41,6 +47,11 @@ export type PartyInfo = {
   email: string;
   phone: string;
   taxId?: string;
+  registeredAddress?: string;
+  bankBeneficiaryName?: string;
+  bankAccountNumber?: string;
+  bankIban?: string;
+  bankSwift?: string;
 };
 
 export type AiCheckStatus = "matched" | "mismatch" | "missing" | "info";
@@ -207,25 +218,38 @@ export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
   const [ready, setReady] = useState(false);
 
   useEffect(() => {
-    let local: ShipmentRecord[] = [];
     const deletedIds = loadDeletedIds();
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY);
-      if (raw) {
-        const parsed = JSON.parse(raw) as ShipmentRecord[];
-        if (Array.isArray(parsed)) local = parsed.filter((shipment) => !deletedIds.has(shipment.id));
-      }
-    } catch {}
 
     fetch("/api/shipments")
       .then((res) => (res.ok ? res.json() : Promise.reject()))
       .then((server: ShipmentRecord[]) => {
-        const visibleServer = server.filter((shipment) => !deletedIds.has(shipment.id));
-        setShipments(visibleServer);
-        try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(visibleServer)); } catch {}
+        // Prune stale deletedIds — entries absent from server were already deleted server-side
+        const serverIds = new Set(server.map((s) => s.id));
+        const stale = [...deletedIds].filter((id) => !serverIds.has(id));
+        if (stale.length > 0) {
+          stale.forEach((id) => deletedIds.delete(id));
+          saveDeletedIds(deletedIds);
+        }
+        // Only suppress items server still has but we're optimistically deleting locally
+        const visible = server.filter((s) => !deletedIds.has(s.id));
+        setShipments(visible);
+        try { window.localStorage.setItem(STORAGE_KEY, JSON.stringify(visible)); } catch {}
+        if (process.env.NODE_ENV === "development") {
+          console.log(`[SuiShip] Loaded ${visible.length} shipment(s) from server`);
+          if (stale.length > 0) console.log(`[SuiShip] Cleared ${stale.length} stale deleted ID(s) from localStorage`);
+        }
       })
       .catch(() => {
-        setShipments(local);
+        // Server unavailable — fall back to localStorage cache
+        try {
+          const raw = window.localStorage.getItem(STORAGE_KEY);
+          const parsed = raw ? (JSON.parse(raw) as ShipmentRecord[]) : [];
+          const local = Array.isArray(parsed) ? parsed.filter((s) => !deletedIds.has(s.id)) : [];
+          setShipments(local);
+          if (process.env.NODE_ENV === "development") {
+            console.warn(`[SuiShip] Server unavailable — showing ${local.length} shipment(s) from localStorage cache`);
+          }
+        } catch {}
       })
       .finally(() => setReady(true));
   }, []);

@@ -6,3 +6,8 @@ dist/
 out/
 move/build/
 .DS_Store
+
+# SQLite database and WAL files — use SEED_DEMO_SHIPMENTS=true to populate a fresh DB
+data/*.db
+data/*.db-wal
+data/*.db-shm

@@ -3,7 +3,9 @@ import JSZip from "jszip";
 import type { Ed25519Keypair } from "@mysten/sui/keypairs/ed25519";
 import pino from "pino";
 import { getDb } from "@/lib/db";
+import { getShipmentById } from "@/lib/shipments-server";
 import { getSuiPassportClient } from "@/lib/sui-passport";
+import { normalizeNamespaceKey, readPartyMemory } from "@/lib/agents/memory-agent";
 import {
   SEAL_ENABLED,
   decryptPrivateManifest,
@@ -16,7 +18,7 @@ const logger = pino({ name: "provenance-agent" });
 
 const MODEL = "claude-haiku-4-5-20251001";
 
-const SYSTEM_PROMPT = `You are a shipping document provenance assistant for SuiShip.
+const SYSTEM_PROMPT = `You are a shipping document provenance assistant for SuiShip running as a Claude Haiku 4.5 evidence agent.
 Answer the user's question using ONLY the provided evidence. Cite specific documents, field names, and values for each claim.
 If the evidence does not contain enough information to answer, say so explicitly.
 Do not invent values or make assumptions beyond what is in the evidence.`;
@@ -326,6 +328,35 @@ export async function answerProvenanceQuestion(
     ? `Verdict: ${validationRow.overall_verdict}. ${validationRow.verdict_reason ?? ""}`
     : "No validation data available.";
 
+  let partyHistoryContext = "";
+  if (shouldRecallPartyHistory(question)) {
+    const shipment = getShipmentById(shipmentId);
+    const partyQueries = [
+      shipment?.exporter ? { label: "Exporter history", key: normalizeNamespaceKey(shipment.exporter.taxId, shipment.exporter.company) } : null,
+      shipment?.importer ? { label: "Importer history", key: normalizeNamespaceKey(shipment.importer.taxId, shipment.importer.company) } : null,
+    ].filter((item): item is { label: string; key: string } => Boolean(item));
+
+    const historyBlocks: string[] = [];
+    for (const party of partyQueries) {
+      try {
+        const recalled = await readPartyMemory(party.key, question, 5);
+        if (recalled.length > 0) {
+          historyBlocks.push(`## ${party.label} (${party.key})\n${recalled.map((item, index) => {
+            evidence.push({
+              type: "chain_ref",
+              label: `${party.label} MemWal memory ${index + 1}`,
+              value: `blob=${item.blobId}; distance=${item.distance}`,
+            });
+            return `[${index + 1}] ${item.text}`;
+          }).join("\n")}`);
+        }
+      } catch (err) {
+        logger.warn({ err, shipmentId, partyKey: party.key }, "Party history recall failed");
+      }
+    }
+    partyHistoryContext = historyBlocks.join("\n\n");
+  }
+
   const userContext = `
 ## Shipment ID
 ${shipmentId}
@@ -338,6 +369,9 @@ ${validationSummary}
 
 ## Extracted Document Data
 ${extractionContext || "No extracted data available."}
+
+## Cross-Shipment Party History
+${partyHistoryContext || "No party history recalled for this question."}
 `.trim();
 
   const client = new Anthropic();
@@ -361,4 +395,8 @@ ${extractionContext || "No extracted data available."}
   }
 
   return { answer, evidence, authorized: true, decryptionSucceeded };
+}
+
+function shouldRecallPartyHistory(question: string): boolean {
+  return /\b(history|before|previous|prior|shipped|shipments|exporter|importer|party|memory)\b/i.test(question);
 }

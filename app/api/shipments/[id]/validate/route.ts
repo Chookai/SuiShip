@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { runShipmentValidation } from "@/lib/validate-shipment";
+import { getLatestCaseFile } from "@/lib/case-files";
+import { getLatestAgentRun } from "@/lib/agent-runs";
 
 export const runtime = "nodejs";
 
@@ -40,6 +42,12 @@ export async function POST(
       verdictReason: result.verdictReason,
       docSetHash: result.docSetHash,
       model: result.model,
+      fieldComparisons: result.fieldComparisons,
+      memoryTrace: result.memoryTrace,
+      baselineStatus: result.baselineStatus,
+      agentToolEvents: result.agentToolEvents,
+      agentRunId: result.agentRunId,
+      caseFile: result.caseFile,
       tokenEfficiency: {
         totalInputTokens: result.inputTokens,
         totalOutputTokens: result.outputTokens,
@@ -71,7 +79,7 @@ export async function GET(
     }
 
     const findings = db.prepare(
-      `SELECT id, severity, field_path, message, affected_doc_ids_json, values_json, status
+      `SELECT id, severity, field_path, message, affected_doc_ids_json, values_json, status, finding_type
        FROM validation_findings WHERE validation_run_id = ? ORDER BY severity DESC`
     ).all(run.id) as {
       id: string;
@@ -81,23 +89,39 @@ export async function GET(
       affected_doc_ids_json: string;
       values_json: string;
       status: string;
+      finding_type?: string;
     }[];
 
+    const mappedFindings = findings.map(f => ({
+      id: f.id,
+      severity: f.severity,
+      fieldPath: f.field_path,
+      message: f.message,
+      affectedDocIds: JSON.parse(f.affected_doc_ids_json),
+      values: JSON.parse(f.values_json),
+      status: f.status,
+      findingType: f.finding_type ?? "consistency",
+    }));
+    const fieldComparisons = mappedFindings
+      .map((finding) => (finding.values as { field_comparison?: unknown }).field_comparison)
+      .filter(Boolean) as Record<string, unknown>[];
+    const baselineStatus = fieldComparisons.some(
+      (c) => c.rememberedValue !== null && c.rememberedValue !== undefined
+    ) ? "prior_memory_found" : "baseline_established";
+    const latestCaseFile = getLatestCaseFile(shipmentId, db);
+    const latestRun = getLatestAgentRun(shipmentId, db);
     return NextResponse.json({
       overallVerdict: run.overall_verdict,
       verdictReason: run.verdict_reason,
       docSetHash: run.doc_set_hash,
       model: run.model,
       issues: JSON.parse(run.issues_json),
-      findings: findings.map(f => ({
-        id: f.id,
-        severity: f.severity,
-        fieldPath: f.field_path,
-        message: f.message,
-        affectedDocIds: JSON.parse(f.affected_doc_ids_json),
-        values: JSON.parse(f.values_json),
-        status: f.status,
-      })),
+      findings: mappedFindings,
+      fieldComparisons,
+      baselineStatus,
+      agentToolEvents: [],
+      agentRunId: latestRun?.id,
+      caseFile: latestCaseFile?.artifact ?? null,
       tokenEfficiency: {
         totalInputTokens: run.token_count_in ?? 0,
         totalOutputTokens: run.token_count_out ?? 0,

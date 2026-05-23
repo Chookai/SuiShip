@@ -23,12 +23,14 @@ import {
   XCircle
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { PassportActions } from "@/components/passport-actions";
+import { AgentWorkflowCenter } from "@/components/AgentWorkflowCenter";
 import { CustodyTimeline } from "@/components/CustodyTimeline";
 import { EndorsementPanel } from "@/components/EndorsementPanel";
 import { MemWalMemoryPanel } from "@/components/MemWalMemoryPanel";
+import { ShipmentCaseFile, type SimulatedChanges } from "@/components/ShipmentCaseFile";
 import { ProvenancePanel } from "@/components/ProvenancePanel";
 import { QrCard } from "@/components/qr-card";
 import { useRole } from "@/components/role-context";
@@ -43,6 +45,7 @@ import {
   type ProgressManifest,
   type ShipmentRecord,
   type WalrusUpload,
+  generateShipmentId,
 } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
 import { aggregatorUrl, WALRUS_AGGREGATOR } from "@/lib/walrus";
@@ -78,6 +81,16 @@ function truncateId(id: string, chars = 8) {
 type AggregateLike = {
   extractedRef?: string;
   cross_validation?: Array<{ severity?: string; message?: string; field?: string }>;
+  extractionProvenance?: Array<{
+    fileId: string;
+    fileName: string;
+    mode: "live_haiku" | "cached_haiku" | "mock";
+    model: string | null;
+    latencyMs: number | null;
+    inputTokens: number | null;
+    outputTokens: number | null;
+    extractedAt: string;
+  }>;
   detected?: {
     commercial_invoice?: Array<{ file_name: string }>;
     packing_list?: Array<{ file_name: string }>;
@@ -93,6 +106,126 @@ type SuiPassportProgress = {
   network: "testnet";
 };
 
+function createFollowupShipment(
+  baseline: ShipmentRecord,
+  addShipment: (record: ShipmentRecord) => void,
+  navigate: (href: string) => void
+) {
+  const now = new Date().toISOString();
+  const id = generateShipmentId(baseline.workflow);
+  const record: ShipmentRecord = {
+    ...baseline,
+    id,
+    createdAt: now,
+    updatedAt: now,
+    status: "Draft",
+    documents: baseline.documents.map((doc) => ({
+      name: doc.name,
+      owner: doc.owner,
+      required: doc.required,
+      uploaded: false,
+    })),
+    ai: undefined,
+    walrus: undefined,
+    extractedRef: undefined,
+    extractionStatus: undefined,
+    passportId: undefined,
+    txDigest: undefined,
+    memWalSpaceId: undefined,
+    memWalManifestBlobId: undefined,
+    memWalSummaryBlobId: undefined,
+    memWalSyncStatus: undefined,
+    memWalSyncError: undefined,
+    memWalSyncedAt: undefined,
+    walrusManifestBlobId: undefined,
+    walrusBlobIds: undefined,
+    manifestHash: undefined,
+    mintedAt: undefined,
+    inviteToken: undefined,
+    onChainRecordId: undefined,
+    onChainAccumulatorId: undefined,
+    onChainPackageId: undefined,
+    onChainNetwork: undefined,
+    progressManifests: [],
+  };
+
+  addShipment(record);
+  navigate(`/shipments/${encodeURIComponent(id)}`);
+}
+
+function createFollowupShipmentWithChanges(
+  baseline: ShipmentRecord,
+  changes: SimulatedChanges,
+  addShipment: (record: ShipmentRecord) => void,
+  navigate: (href: string) => void
+) {
+  const now = new Date().toISOString();
+  const id = generateShipmentId(baseline.workflow);
+  const record: ShipmentRecord = {
+    ...baseline,
+    id,
+    createdAt: now,
+    updatedAt: now,
+    status: "Draft",
+    documents: baseline.documents.map((doc) => ({
+      name: doc.name,
+      owner: doc.owner,
+      required: doc.required,
+      uploaded: false,
+    })),
+    ai: undefined,
+    walrus: undefined,
+    extractedRef: changes.reuseInvoiceNumber ? baseline.extractedRef : undefined,
+    extractionStatus: undefined,
+    passportId: undefined,
+    txDigest: undefined,
+    memWalSpaceId: undefined,
+    memWalManifestBlobId: undefined,
+    memWalSummaryBlobId: undefined,
+    memWalSyncStatus: undefined,
+    memWalSyncError: undefined,
+    memWalSyncedAt: undefined,
+    walrusManifestBlobId: undefined,
+    walrusBlobIds: undefined,
+    manifestHash: undefined,
+    mintedAt: undefined,
+    inviteToken: undefined,
+    onChainRecordId: undefined,
+    onChainAccumulatorId: undefined,
+    onChainPackageId: undefined,
+    onChainNetwork: undefined,
+    progressManifests: [],
+    shipment: {
+      ...baseline.shipment,
+      bookingRef: changes.reuseBoLNumber
+        ? baseline.shipment.bookingRef
+        : baseline.shipment.bookingRef,
+    },
+    cargo: {
+      ...baseline.cargo,
+      countryOfOrigin: changes.changeCountryOfOrigin ? alternateOrigin(baseline.cargo.countryOfOrigin || baseline.shipment.origin) : baseline.cargo.countryOfOrigin,
+    },
+    exporter: {
+      ...baseline.exporter,
+      registeredAddress: changes.changeRegisteredAddress
+        ? "88 Jalan Identity Review, Kuala Lumpur, Malaysia"
+        : baseline.exporter.registeredAddress,
+      bankAccountNumber: changes.changeBankAccountNumber
+        ? `9876${String(Date.now()).slice(-6)}`
+        : baseline.exporter.bankAccountNumber,
+      bankBeneficiaryName: baseline.exporter.bankBeneficiaryName ?? baseline.exporter.company,
+    },
+  };
+  addShipment(record);
+  navigate(`/shipments/${encodeURIComponent(id)}`);
+}
+
+function alternateOrigin(origin?: string) {
+  const normalized = origin?.trim().toLowerCase();
+  if (!normalized || normalized.includes("malaysia") || normalized === "my") return "Thailand";
+  return "Malaysia";
+}
+
 function isAirTransportMode(mode?: string) {
   return mode?.trim().toLowerCase() === "air";
 }
@@ -103,6 +236,7 @@ function transportDocumentLabel(mode?: string) {
 
 export default function ShipmentDetailPage() {
   const params = useParams<{ id: string }>();
+  const router = useRouter();
   const { shipments, ready, addShipment, updateShipment } = useShipments();
   const { role } = useRole();
   const rawId = decodeURIComponent(params?.id || "");
@@ -165,6 +299,8 @@ export default function ShipmentDetailPage() {
         shipment={stored}
         currentRoleOwner={currentRoleOwner}
         onUpdate={(patch) => updateShipment(stored.id, patch)}
+        onCreateFollowup={() => createFollowupShipment(stored, addShipment, router.push)}
+        onSimulateFollowup={(changes) => createFollowupShipmentWithChanges(stored, changes, addShipment, router.push)}
       />
     );
   }
@@ -176,6 +312,8 @@ export default function ShipmentDetailPage() {
         shipment={serverShipment}
         currentRoleOwner={currentRoleOwner}
         onUpdate={(patch) => updateShipment(serverShipment.id, patch)}
+        onCreateFollowup={() => createFollowupShipment(serverShipment, addShipment, router.push)}
+        onSimulateFollowup={(changes) => createFollowupShipmentWithChanges(serverShipment, changes, addShipment, router.push)}
       />
     );
   }
@@ -206,11 +344,15 @@ export default function ShipmentDetailPage() {
 function StoredShipmentView({
   shipment,
   currentRoleOwner,
-  onUpdate
+  onUpdate,
+  onCreateFollowup,
+  onSimulateFollowup,
 }: {
   shipment: ShipmentRecord;
   currentRoleOwner: DocumentOwner;
   onUpdate: (patch: Partial<ShipmentRecord>) => void;
+  onCreateFollowup: () => void;
+  onSimulateFollowup?: (changes: SimulatedChanges) => void;
 }) {
   const currentAccount = useCurrentAccount();
   const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
@@ -221,6 +363,8 @@ function StoredShipmentView({
   const [newDocumentName, setNewDocumentName] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [demoField, setDemoField] = useState<DemoMutationField>("bankAccountNumber");
+  const [demoValue, setDemoValue] = useState("");
   const batchInputRef = useRef<HTMLInputElement | null>(null);
   const requiredDocs = shipment.documents.filter((doc) => doc.required);
   const ai = shipment.ai ?? buildShipmentAiOverview(shipment);
@@ -384,6 +528,21 @@ function StoredShipmentView({
     setWorkflowError(null);
   }
 
+  function applyDemoMutation() {
+    const value = demoValue.trim();
+    if (!value || documentsLocked) return;
+    if (demoField === "bankAccountNumber") {
+      onUpdate({ exporter: { ...shipment.exporter, bankAccountNumber: value, bankBeneficiaryName: shipment.exporter.bankBeneficiaryName ?? shipment.exporter.company } });
+    } else if (demoField === "registeredAddress") {
+      onUpdate({ exporter: { ...shipment.exporter, registeredAddress: value } });
+    } else if (demoField === "bookingRef") {
+      onUpdate({ shipment: { ...shipment.shipment, bookingRef: value } });
+    } else if (demoField === "countryOfOrigin") {
+      onUpdate({ cargo: { ...shipment.cargo, countryOfOrigin: value } });
+    }
+    setDemoValue("");
+  }
+
   async function finalizeShipment() {
     setWorkflowError(null);
     if (!requiredDocsComplete) {
@@ -406,6 +565,7 @@ function StoredShipmentView({
       if (!validationRes.ok) {
         throw new Error(getErrorMessage(validationPayload, `Validation failed with HTTP ${validationRes.status}`));
       }
+      setPanelRefreshNonce((current: number) => current + 1);
       const issues = Array.isArray((validationPayload as { issues?: unknown }).issues)
         ? ((validationPayload as { issues: Array<{ severity?: string; message?: string }> }).issues)
         : [];
@@ -439,6 +599,7 @@ function StoredShipmentView({
         mintedAt: mintedShipment.mintedAt,
         progressManifests: mintedShipment.progressManifests ?? shipment.progressManifests,
       });
+      setPanelRefreshNonce((current: number) => current + 1);
     } catch (err) {
       setWorkflowError(err instanceof Error ? err.message : "Final storage failed");
     } finally {
@@ -465,24 +626,48 @@ function StoredShipmentView({
           </div>
         </div>
         <div className="shrink-0 md:pr-8">
-          <Button onClick={finalizeShipment} disabled={!canFinalize || passportBusy}>
-            {passportBusy ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <Fingerprint className="h-4 w-4" />
-            )}
-            {mintedExists ? "Passport Created" : "Create Passport"}
-          </Button>
+          <div className="flex flex-wrap justify-end gap-2">
+            {mintedExists ? (
+              <Button variant="secondary" onClick={onCreateFollowup}>
+                <Sparkles className="h-4 w-4" />
+                Create second shipment from this baseline
+              </Button>
+            ) : null}
+            <Button onClick={finalizeShipment} disabled={!canFinalize || passportBusy}>
+              {passportBusy ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <Fingerprint className="h-4 w-4" />
+              )}
+              {mintedExists ? "Passport Created" : "Create Passport"}
+            </Button>
+          </div>
           {workflowError && (
             <p className="mt-2 max-w-64 text-right text-xs font-semibold text-red-600">{workflowError}</p>
           )}
         </div>
       </div>
 
+      <div className="mt-6">
+        <AgentWorkflowCenter shipment={shipment} refreshKey={panelRefreshNonce} />
+      </div>
+
       {/* Passport minted card — shown prominently when passport exists */}
       {(shipment.passportId?.length || shipment.txDigest?.length) ? (
         <div className="mt-6">
           <PassportMintedCard shipment={shipment} />
+        </div>
+      ) : null}
+      {!documentsLocked ? (
+        <div className="mt-6">
+          <LiveMemoryMutationPanel
+            field={demoField}
+            value={demoValue}
+            shipment={shipment}
+            onFieldChange={setDemoField}
+            onValueChange={setDemoValue}
+            onApply={applyDemoMutation}
+          />
         </div>
       ) : null}
       {passportAvailable ? (
@@ -505,10 +690,16 @@ function StoredShipmentView({
           </div>
         </div>
       ) : null}
+      <div className="mt-6">
+        <ShipmentCaseFile
+          shipment={shipment}
+          onSimulateFollowup={onSimulateFollowup}
+        />
+      </div>
 
-      <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
-        <div className="grid gap-6">
-          <Panel>
+      <div className="mt-8 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
+        <div className="grid min-w-0 gap-6">
+          <Panel className="min-w-0 overflow-hidden">
             <h2 className="text-xl font-semibold text-pearl">Overview</h2>
             <div className="mt-5 grid gap-5 lg:grid-cols-2">
               {[
@@ -571,7 +762,7 @@ function StoredShipmentView({
 
           <AiPanel ai={ai} />
 
-          <Panel>
+          <Panel className="min-w-0 overflow-hidden">
             <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
               <div>
                 <h2 className="text-xl font-semibold text-pearl">Documents</h2>
@@ -696,6 +887,9 @@ function StoredShipmentView({
                           {doc.fileName && (
                             <p className="mt-1 text-xs font-semibold text-steel">File: {doc.fileName}</p>
                           )}
+                          {extractionSourceLabel(doc) && (
+                            <p className="mt-1 text-xs font-bold text-[#4DA2FF]">{extractionSourceLabel(doc)}</p>
+                          )}
                         </td>
                         <td className="py-4 pr-4">
                           {documentsLocked && doc.uploaded ? (
@@ -727,6 +921,72 @@ function StoredShipmentView({
         <aside className="grid h-fit min-w-0 gap-6">
           <ProgressManifestPanel manifests={shipment.progressManifests ?? []} recording={progressBusy} />
         </aside>
+      </div>
+    </div>
+  );
+}
+
+type DemoMutationField = "bankAccountNumber" | "registeredAddress" | "bookingRef" | "countryOfOrigin";
+
+const DEMO_MUTATION_OPTIONS: Array<{ value: DemoMutationField; label: string; current: (shipment: ShipmentRecord) => string }> = [
+  { value: "bankAccountNumber", label: "Bank account number", current: (shipment) => shipment.exporter.bankAccountNumber ?? "" },
+  { value: "registeredAddress", label: "Registered address", current: (shipment) => shipment.exporter.registeredAddress ?? "" },
+  { value: "bookingRef", label: "BOL / booking reference", current: (shipment) => shipment.shipment.bookingRef ?? "" },
+  { value: "countryOfOrigin", label: "Country of origin", current: (shipment) => shipment.cargo.countryOfOrigin },
+];
+
+function LiveMemoryMutationPanel({
+  field,
+  value,
+  shipment,
+  onFieldChange,
+  onValueChange,
+  onApply,
+}: {
+  field: DemoMutationField;
+  value: string;
+  shipment: ShipmentRecord;
+  onFieldChange: (field: DemoMutationField) => void;
+  onValueChange: (value: string) => void;
+  onApply: () => void;
+}) {
+  const selected = DEMO_MUTATION_OPTIONS.find((option) => option.value === field) ?? DEMO_MUTATION_OPTIONS[0];
+  const currentValue = selected.current(shipment);
+  return (
+    <div className="rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-blue-50 p-4 shadow-sm">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div>
+          <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-700">Live Memory Demo Control</p>
+          <h2 className="mt-1 text-lg font-black text-pearl">Change one identity field before uploading shipment 2 docs</h2>
+          <p className="mt-1 max-w-3xl text-sm font-semibold leading-6 text-steel">
+            This edits real shipment form data for identity-memory testing. Cargo, value, HS code, payment terms, and routes are intentionally not cross-shipment fraud signals.
+          </p>
+        </div>
+        <Sparkles className="h-6 w-6 text-amber-600" />
+      </div>
+      <div className="mt-4 grid gap-3 lg:grid-cols-[240px_minmax(0,1fr)_minmax(0,1fr)_auto]">
+        <select
+          value={field}
+          onChange={(event) => onFieldChange(event.target.value as DemoMutationField)}
+          className="min-h-11 rounded-xl border border-amber-200 bg-white px-3 text-sm font-bold text-pearl outline-none focus:border-amber-500"
+        >
+          {DEMO_MUTATION_OPTIONS.map((option) => (
+            <option key={option.value} value={option.value}>{option.label}</option>
+          ))}
+        </select>
+        <div className="rounded-xl border border-blue-100 bg-white px-3 py-2">
+          <p className="text-[10px] font-black uppercase text-steel">Current entered value</p>
+          <p className="truncate text-sm font-bold text-pearl" title={currentValue || "Not set"}>{currentValue || "Not set"}</p>
+        </div>
+        <input
+          value={value}
+          onChange={(event) => onValueChange(event.target.value)}
+          placeholder={`New ${selected.label.toLowerCase()}`}
+          className="min-h-11 rounded-xl border border-amber-200 bg-white px-3 text-sm font-bold text-pearl outline-none focus:border-amber-500"
+        />
+        <Button variant="secondary" onClick={onApply} disabled={!value.trim()}>
+          Apply change
+        </Button>
       </div>
     </div>
   );
@@ -907,14 +1167,15 @@ function PassportMintedCard({ shipment }: { shipment: ShipmentRecord }) {
 function AiPanel({ ai }: {
   ai?: AiResult;
 }) {
-  const shortResults = ai?.checks
+  const checks = ai?.checks ?? [];
+  const shortResults = checks
     .filter((check) => check.status === "missing" || check.status === "mismatch")
     .slice(0, 3);
 
   return (
-    <Panel>
-      <div className="flex items-center justify-between gap-2">
-        <div className="flex items-center gap-2">
+    <Panel className="min-w-0 overflow-hidden">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex min-w-0 items-center gap-2">
           <Sparkles className="h-5 w-5 text-[#4DA2FF]" />
           <h2 className="text-xl font-semibold text-pearl">AI Overview</h2>
         </div>
@@ -936,7 +1197,7 @@ function AiPanel({ ai }: {
           </div>
 
           <div className="mt-4 grid gap-2">
-            {(shortResults && shortResults.length > 0 ? shortResults : ai.checks.slice(0, 3)).map((check) => (
+            {(shortResults.length > 0 ? shortResults : checks.slice(0, 3)).map((check) => (
               <AiCheckRow key={check.field} check={check} />
             ))}
           </div>
@@ -1084,22 +1345,22 @@ function docsWithExtractionResult(
     if (docLower.includes("commercial invoice") && result.detected?.commercial_invoice?.length) {
       const fileName = result.detected.commercial_invoice[0].file_name;
       usedFileNames.add(fileName);
-      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+      return withExtractionProvenance(doc, fileName, result, now);
     }
     if (docLower.includes("packing list") && result.detected?.packing_list?.length) {
       const fileName = result.detected.packing_list[0].file_name;
       usedFileNames.add(fileName);
-      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+      return withExtractionProvenance(doc, fileName, result, now);
     }
     if ((docLower.includes("bill of lading") || docLower.includes("air waybill")) && result.detected?.bill_of_lading?.length) {
       const fileName = result.detected.bill_of_lading[0].file_name;
       usedFileNames.add(fileName);
-      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+      return withExtractionProvenance(doc, fileName, result, now);
     }
     if (docLower.includes("certificate of origin") && result.detected?.certificate_of_origin?.length) {
       const fileName = result.detected.certificate_of_origin[0].file_name;
       usedFileNames.add(fileName);
-      return { ...doc, uploaded: true, fileName, uploadedAt: now };
+      return withExtractionProvenance(doc, fileName, result, now);
     }
     return doc;
   });
@@ -1111,17 +1372,51 @@ function docsWithExtractionResult(
       let name = item.label;
       if (existingNames.has(name.toLowerCase())) name = `${item.label} ${index + 2}`;
       existingNames.add(name.toLowerCase());
-      return {
+      return withExtractionProvenance({
         name,
         owner: defaultOwner,
         required: false,
         uploaded: true,
-        fileName: item.fileName,
-        uploadedAt: now
-      };
+      }, item.fileName, result, now);
     });
 
   return [...nextDocs, ...extras];
+}
+
+function withExtractionProvenance(
+  doc: DocumentRequirement,
+  fileName: string,
+  result: AggregateLike,
+  uploadedAt: string
+): DocumentRequirement {
+  const provenance = result.extractionProvenance?.find((item) => item.fileName === fileName);
+  return {
+    ...doc,
+    uploaded: true,
+    fileName,
+    uploadedAt,
+    extractionSource: provenance?.mode,
+    extractionModel: provenance?.model ?? undefined,
+    extractionLatencyMs: provenance?.latencyMs ?? undefined,
+    extractionInputTokens: provenance?.inputTokens ?? undefined,
+    extractionOutputTokens: provenance?.outputTokens ?? undefined,
+    extractedAt: provenance?.extractedAt,
+  };
+}
+
+function extractionSourceLabel(doc: DocumentRequirement) {
+  const model = doc.extractionModel ? ` ${doc.extractionModel}` : "";
+  const latency = typeof doc.extractionLatencyMs === "number" && doc.extractionLatencyMs > 0
+    ? ` · ${(doc.extractionLatencyMs / 1000).toFixed(1)}s`
+    : "";
+  const tokens = typeof doc.extractionInputTokens === "number" && typeof doc.extractionOutputTokens === "number"
+    ? ` · ${doc.extractionInputTokens + doc.extractionOutputTokens} tokens`
+    : "";
+
+  if (doc.extractionSource === "live_haiku") return `Live Haiku${model}${latency}${tokens}`;
+  if (doc.extractionSource === "cached_haiku") return `Cached Haiku result${model}${tokens}`;
+  if (doc.extractionSource === "mock") return "Demo Mode extraction";
+  return null;
 }
 
 function detectedDocumentFiles(result: AggregateLike, transportMode?: string) {
@@ -1331,9 +1626,9 @@ function DemoShipmentView({ shipment }: { shipment: ReturnType<typeof findShipme
         </div>
       </div>
 
-      <div className="mt-8 grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px]">
-        <div className="grid gap-6">
-          <Panel>
+      <div className="mt-8 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">
+        <div className="grid min-w-0 gap-6">
+          <Panel className="min-w-0 overflow-hidden">
             <div className="grid gap-4 md:grid-cols-4">
               {[
                 ["AI score", `${shipment.aiScore}%`, ShieldCheck],
@@ -1353,7 +1648,7 @@ function DemoShipmentView({ shipment }: { shipment: ReturnType<typeof findShipme
             </div>
           </Panel>
 
-          <Panel>
+          <Panel className="min-w-0 overflow-hidden">
             <h2 className="text-xl font-semibold text-pearl">Passport overview</h2>
             <div className="mt-5 grid gap-4 sm:grid-cols-2">
               {[
@@ -1372,7 +1667,7 @@ function DemoShipmentView({ shipment }: { shipment: ReturnType<typeof findShipme
             </div>
           </Panel>
 
-          <Panel>
+          <Panel className="min-w-0 overflow-hidden">
             <h2 className="text-xl font-semibold text-pearl">Document hash verification</h2>
             <div className="mt-5 grid gap-3">
               {shipment.documents.map((document) => (
@@ -1392,8 +1687,8 @@ function DemoShipmentView({ shipment }: { shipment: ReturnType<typeof findShipme
           </Panel>
         </div>
 
-        <aside className="grid h-fit gap-6">
-          <Panel>
+        <aside className="grid h-fit min-w-0 gap-6">
+          <Panel className="min-w-0 overflow-hidden">
             <div className="flex items-center gap-3">
               <Boxes className="h-5 w-5 text-sui" />
               <h2 className="text-xl font-semibold text-pearl">On-chain proof</h2>
@@ -1420,7 +1715,7 @@ function DemoShipmentView({ shipment }: { shipment: ReturnType<typeof findShipme
             </div>
           </Panel>
 
-          <Panel>
+          <Panel className="min-w-0 overflow-hidden">
             <div className="flex items-center gap-3">
               <Fingerprint className="h-5 w-5 text-sui" />
               <h2 className="text-xl font-semibold text-pearl">QR shipment link</h2>
@@ -1431,7 +1726,7 @@ function DemoShipmentView({ shipment }: { shipment: ReturnType<typeof findShipme
             <p className="mt-4 break-all text-center text-xs text-steel">{qrValue}</p>
           </Panel>
 
-          <Panel>
+          <Panel className="min-w-0 overflow-hidden">
             <h2 className="text-xl font-semibold text-pearl">Customs action</h2>
             <p className="mt-2 text-sm text-steel">For a real minted object, this signs a Sui status update transaction.</p>
             <div className="mt-5">

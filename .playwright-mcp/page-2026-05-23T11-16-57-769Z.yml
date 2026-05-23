@@ -1,0 +1,70 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "SuiShip home" [ref=e7] [cursor=pointer]:
+          - /url: /
+          - img "SuiShip" [ref=e8]
+        - generic [ref=e9]:
+          - button "Notifications" [ref=e11] [cursor=pointer]:
+            - img [ref=e12]
+          - button "Theme" [ref=e15] [cursor=pointer]:
+            - img [ref=e16]
+          - button "Connect Wallet" [ref=e18] [cursor=pointer]
+      - navigation [ref=e19]:
+        - link "Dashboard" [ref=e20] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e21]
+          - text: Dashboard
+        - link "Shipments" [ref=e26] [cursor=pointer]:
+          - /url: /shipments
+          - img [ref=e27]
+          - text: Shipments
+        - link "Create" [ref=e31] [cursor=pointer]:
+          - /url: /create
+          - img [ref=e32]
+          - text: Create
+        - link "Customs" [ref=e35] [cursor=pointer]:
+          - /url: /customs
+          - img [ref=e36]
+          - text: Customs
+    - main [ref=e41]:
+      - generic [ref=e42]:
+        - generic [ref=e43]:
+          - generic [ref=e44]:
+            - heading "Shipments" [level=1] [ref=e45]
+            - paragraph [ref=e46]: Every shipment you have created or been invited into. Track document upload progress, status, and route at a glance.
+          - link "Create shipment" [ref=e47] [cursor=pointer]:
+            - /url: /create
+            - img [ref=e48]
+            - text: Create shipment
+        - generic [ref=e51]:
+          - generic [ref=e52]:
+            - generic [ref=e53]:
+              - img [ref=e54]
+              - textbox [ref=e57]:
+                - /placeholder: Search shipment, exporter, importer, route, or status
+            - generic [ref=e58]:
+              - img [ref=e59]
+              - button "Newest" [ref=e62] [cursor=pointer]
+              - button "Exporter" [ref=e63] [cursor=pointer]
+              - button "Importer" [ref=e64] [cursor=pointer]
+              - button "ETA" [ref=e65] [cursor=pointer]
+              - button "Status" [ref=e66] [cursor=pointer]
+          - generic [ref=e68]:
+            - text: Status
+            - combobox "Status" [ref=e69]:
+              - option "All" [selected]
+        - generic [ref=e70]:
+          - generic [ref=e71]:
+            - generic [ref=e72]:
+              - paragraph [ref=e73]: Shipment list
+              - heading "0 shipments" [level=2] [ref=e74]
+            - img [ref=e75]
+          - generic [ref=e76]:
+            - img [ref=e78]
+            - generic [ref=e82]:
+              - heading "Loading shipments..." [level=3] [ref=e83]
+              - paragraph [ref=e84]: Reading your local shipment store.
+  - button "Open Next.js Dev Tools" [ref=e90] [cursor=pointer]:
+    - img [ref=e91]

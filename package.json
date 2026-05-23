@@ -10,6 +10,7 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "test:watch": "vitest",
+    "demo:docs": "tsx scripts/generate-memory-demo-docs.ts",
     "verify:seal-demo": "tsx scripts/verify-seal-demo.ts"
   },
   "dependencies": {
