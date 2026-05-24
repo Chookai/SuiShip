@@ -143,55 +143,6 @@ function getStateIndex(state: AgentRunState): number {
   return AGENT_STATES.findIndex(s => s.id === state);
 }
 
-function buildSyntheticTrace(
-  fieldComparisons: FieldComparison[],
-  baselineStatus: "baseline_established" | "prior_memory_found"
-): AgentMemoryTraceStep[] {
-  const priorCount = fieldComparisons.filter(c => c.rememberedValue != null).length;
-  const criticalCount = fieldComparisons.filter(c => c.severity === "critical").length;
-  const warningCount = fieldComparisons.filter(c => c.severity === "warning").length;
-  return [
-    {
-      id: "documents_extracted",
-      label: "Facts extracted from documents",
-      status: "complete",
-      detail: `AI read uploaded shipment PDFs and normalized key fields.`,
-    },
-    {
-      id: "entered_extracted_compared",
-      label: "Form vs document comparison",
-      status: criticalCount > 0 ? "critical" : warningCount > 0 ? "warning" : "complete",
-      detail: criticalCount + warningCount > 0
-        ? `${criticalCount + warningCount} difference(s) found between entered values and extracted documents.`
-        : "Entered values match extracted document fields.",
-    },
-    {
-      id: "memwal_recall",
-      label: baselineStatus === "prior_memory_found"
-        ? "MemWal recalled exporter baseline"
-        : "No prior exporter memory found",
-      status: "complete",
-      detail: baselineStatus === "prior_memory_found"
-        ? `${priorCount} structured fact(s) recalled from prior verified shipment.`
-        : "Agent will establish baseline after this shipment is minted.",
-    },
-    {
-      id: "memory_comparison",
-      label: "Cross-shipment anomaly check",
-      status: criticalCount > 0 ? "critical" : warningCount > 0 ? "warning" : "complete",
-      detail: priorCount > 0
-        ? `${criticalCount} critical and ${warningCount} warning anomalies detected against remembered baseline.`
-        : "No baseline to compare against — first shipment for this exporter.",
-    },
-    {
-      id: "evidence_anchored",
-      label: "Evidence links anchored",
-      status: "complete",
-      detail: "MemWal facts include Walrus blob and Sui passport references from prior verified shipment.",
-    },
-  ];
-}
-
 function formatToolInput(name: string, input: unknown): string {
   if (!input || typeof input !== "object") return "";
   const raw = input as Record<string, unknown>;
@@ -314,16 +265,21 @@ function AgentStatusStrip({
   state,
   shipment,
   verdictReason,
+  baselineStatus,
+  fieldComparisons,
 }: {
   state: AgentRunState;
   shipment: ShipmentRecord;
   verdictReason?: string;
+  baselineStatus?: "baseline_established" | "prior_memory_found";
+  fieldComparisons?: FieldComparison[];
 }) {
   const currentIdx = getStateIndex(state);
   const score = shipment.ai?.score;
   const risk = shipment.ai?.riskLevel;
   const scoreColor = score == null ? "text-steel" : score >= 85 ? "text-emerald-600" : score >= 65 ? "text-amber-600" : "text-red-600";
   const action = verdictReason || RECOMMENDED_ACTIONS[state];
+  const priorRef = fieldComparisons?.find(c => c.rememberedValue != null)?.evidence?.find(e => e.kind === "sui_object")?.value;
 
   // For display, merge the two terminal states into one row of 8
   const displayStates = AGENT_STATES;
@@ -390,6 +346,27 @@ function AgentStatusStrip({
         )}
         <span className="text-xs text-steel">{action}</span>
       </div>
+
+      {/* Baseline comparison banner — shown when prior memory was found */}
+      {baselineStatus === "prior_memory_found" && (
+        <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
+          <History className="h-3.5 w-3.5 shrink-0 text-sui" />
+          <span className="font-semibold text-pearl">
+            Comparing against verified baseline for {shipment.exporter.company}
+          </span>
+          {priorRef && (
+            <a
+              href={suiObjectUrl(priorRef)}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="ml-auto flex items-center gap-1 text-sui hover:underline"
+            >
+              <ExternalLink className="h-3 w-3" />
+              View on Sui
+            </a>
+          )}
+        </div>
+      )}
     </div>
   );
 }
@@ -610,47 +587,60 @@ function AgentReasoningSection({
     ? <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-bold text-red-600">{criticalCount} critical</span>
     : null;
 
+  const TOOL_LABELS: Record<string, string> = {
+    recall_party_memory: "Recalled party memory",
+    recall_document_fingerprints: "Checked document fingerprints",
+    flag_anomaly: "Flagged anomaly",
+    done: "Agent complete",
+  };
+
   return (
     <CollapsibleSection
-      title="Agent Reasoning"
+      title="Validation Agent · Tool Call Trace"
       icon={Zap}
-      defaultOpen={findings.length > 0}
+      defaultOpen={findings.length > 0 || toolEvents.length > 0}
       badge={badge}
       accentClass={criticalCount > 0 ? "text-red-500" : "text-amber-500"}
     >
       {/* Tool-call trace */}
-      {toolEvents.length > 0 && (
-        <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-sui">Agent Tool-Call Trace</p>
-          <div className="space-y-1.5">
+      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
+        <div className="mb-3 flex items-center justify-between gap-3">
+          <p className="text-xs font-black uppercase tracking-widest text-sui">Live Tool-Call Trace</p>
+          <span className="text-xs text-steel">Tool-using agent with persistent cross-shipment memory</span>
+        </div>
+        {toolEvents.length === 0 ? (
+          <p className="text-xs text-steel italic">Run validation to see the agent tool-call trace.</p>
+        ) : (
+          <div className="space-y-2">
             {toolEvents.map((event, i) => (
               <motion.div
                 key={i}
-                initial={{ opacity: 0, x: -8 }}
+                initial={{ opacity: 0, x: -10 }}
                 animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.12 }}
-                className="flex items-start gap-2 font-mono text-xs"
+                transition={{ delay: i * 0.15, duration: 0.25 }}
+                className={cn(
+                  "rounded-lg border px-3 py-2 font-mono text-xs",
+                  event.name === "flag_anomaly" ? "border-red-200 bg-red-50" : event.name === "done" ? "border-emerald-100 bg-emerald-50" : "border-white/60 bg-white"
+                )}
               >
-                <span className="shrink-0 text-base leading-tight">
-                  {TOOL_ICONS[event.name] ?? "○"}
-                </span>
-                <div>
-                  <span className="font-bold text-pearl">{event.name}</span>
-                  <span className="text-steel">{formatToolInput(event.name, event.input)}</span>
-                  {formatToolResult(event.name, event.result) && (
-                    <div className={cn(
-                      "ml-4 text-xs",
-                      event.name === "flag_anomaly" ? "text-red-600 font-bold" : "text-emerald-600"
-                    )}>
-                      {formatToolResult(event.name, event.result)}
-                    </div>
-                  )}
+                <div className="flex items-center gap-2">
+                  <span className="shrink-0 text-sm">{TOOL_ICONS[event.name] ?? "○"}</span>
+                  <span className="font-bold text-pearl">{TOOL_LABELS[event.name] ?? event.name}</span>
+                  <span className="text-steel/70 text-[11px]">{formatToolInput(event.name, event.input)}</span>
                 </div>
+                {formatToolResult(event.name, event.result) && (
+                  <div className={cn(
+                    "mt-1 ml-6 text-xs",
+                    event.name === "flag_anomaly" ? "text-red-600 font-bold" : "text-emerald-700"
+                  )}>
+                    {formatToolResult(event.name, event.result)}
+                  </div>
+                )}
               </motion.div>
             ))}
           </div>
-        </div>
-      )}
+        )}
+      </div>
 
       {/* Findings cards */}
       {findings.length === 0 ? (
@@ -1139,17 +1129,25 @@ function SimulateFollowupPanel({
         ))}
       </div>
 
-      <div className="mt-4 flex items-start gap-4">
+      <div className="mt-4 flex flex-wrap items-start gap-3">
+        <Button
+          onClick={() => onSimulate({ changeBankAccountNumber: true, reuseBoLNumber: true, changeRegisteredAddress: false, reuseInvoiceNumber: false, changeCountryOfOrigin: false })}
+          className="shrink-0 bg-red-500 text-white hover:bg-red-600"
+        >
+          <Zap className="h-4 w-4" />
+          Quick Demo (bank + BOL)
+        </Button>
         <Button
           onClick={() => onSimulate(changes)}
           disabled={!anySelected}
+          variant="secondary"
           className="shrink-0"
         >
           <Brain className="h-4 w-4" />
           Prepare Follow-up Shipment
         </Button>
-        <p className="text-xs text-steel leading-relaxed">
-          Shipment 1 from {shipment.exporter.company} establishes baseline identity. Shipment 2 can have completely different cargo, value, HS code, destination, or route; the agent only flags identity and document-integrity deviations.
+        <p className="text-xs text-steel leading-relaxed max-w-md">
+          Shipment 1 from {shipment.exporter.company} establishes the baseline. Shipment 2 flags identity deviations — bank account change and duplicate BOL are the most vivid fraud signals.
         </p>
       </div>
     </div>
@@ -1198,12 +1196,7 @@ export function ShipmentCaseFile({ shipment, onSimulateFollowup }: ShipmentCaseF
     validation?.baselineStatus ??
     (fieldComparisons.some(c => c.rememberedValue != null) ? "prior_memory_found" : "baseline_established");
 
-  const memoryTrace: AgentMemoryTraceStep[] =
-    validation?.memoryTrace && validation.memoryTrace.length > 0
-      ? validation.memoryTrace
-      : fieldComparisons.length > 0
-        ? buildSyntheticTrace(fieldComparisons, baselineStatus)
-        : [];
+  const memoryTrace: AgentMemoryTraceStep[] = validation?.memoryTrace ?? [];
 
   const agentState = deriveAgentRunState(shipment, validation);
 
@@ -1229,6 +1222,8 @@ export function ShipmentCaseFile({ shipment, onSimulateFollowup }: ShipmentCaseF
         state={agentState}
         shipment={shipment}
         verdictReason={validation?.verdictReason ?? undefined}
+        baselineStatus={baselineStatus}
+        fieldComparisons={fieldComparisons}
       />
 
       {/* Section 2: Trade Memory (HERO) */}

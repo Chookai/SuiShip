@@ -8,31 +8,6 @@ import { LinkButton, Panel } from "@/components/ui";
 import { useShipments } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
 
-const fallbackIssues = {
-  Importer: [
-    { id: "SS-MY-US-0001", exporter: "Penang Micro Systems", importer: "Northstar Components", route: "MY -> US", issue: "Packing list mismatch", risk: "Medium Risk", action: "Review" },
-    { id: "SS-SG-DE-0002", exporter: "Crescent MedTech", importer: "Helios Klinik", route: "SG -> DE", issue: "HS code not detected", risk: "High Risk", action: "Fix HS code" },
-    { id: "SS-CN-AE-0003", exporter: "Shenzhen Alto", importer: "Emirates Retail", route: "CN -> UAE", issue: "Missing commercial invoice", risk: "High Risk", action: "Request docs" }
-  ],
-  Exporter: [
-    { id: "SS-MY-US-0001", exporter: "Penang Micro Systems", importer: "Northstar Components", route: "MY -> US", issue: "Importer approval pending", risk: "Medium Risk", action: "Follow up" },
-    { id: "SS-MY-GB-0007", exporter: "Penang Micro Systems", importer: "Bristol Circuit Labs", route: "MY -> GB", issue: "Certificate of origin missing", risk: "High Risk", action: "Upload cert" },
-    { id: "SS-SG-US-0008", exporter: "Crescent MedTech", importer: "Bay Health Supply", route: "SG -> US", issue: "Invoice quantity needs review", risk: "Medium Risk", action: "Review" }
-  ]
-};
-
-const intelligenceByRole = {
-  Importer: [
-    { label: "Delay risk", value: "+2.4 days", detail: "Malaysia to US shipments via Singapore are trending slower this week." },
-    { label: "Approval queue", value: "3 waiting", detail: "Three shipments need importer approval before final proof can be anchored." },
-    { label: "Document risk", value: "2 repeat issues", detail: "Packing list mismatches are recurring on semiconductor shipments." }
-  ],
-  Exporter: [
-    { label: "Document readiness", value: "86%", detail: "Commercial invoice and packing list quality is improving across active shipments." },
-    { label: "Importer response", value: "1.8 days", detail: "Average importer review time is under two days for recent shipments." },
-    { label: "Route signal", value: "MY -> US", detail: "Malaysia to US air shipments show strong carrier performance this week." }
-  ]
-};
 
 export default function DashboardPage() {
   const { role, profile } = useRole();
@@ -52,19 +27,19 @@ export default function DashboardPage() {
 
   const requiredDocsTotal = myShipments.reduce((total, shipment) => total + shipment.documents.filter((doc) => doc.required).length, 0);
   const uploadedDocsTotal = myShipments.reduce((total, shipment) => total + shipment.documents.filter((doc) => doc.required && doc.uploaded).length, 0);
-  const pendingDocs = Math.max(requiredDocsTotal - uploadedDocsTotal, myShipments.length === 0 ? 17 : 0);
-  const verifiedCount = myShipments.filter((shipment) => shipment.ai && shipment.ai.score >= 85).length || (myShipments.length === 0 ? 94 : 0);
-  const readyCount = myShipments.filter((shipment) => shipment.status === "AI Verified" || shipment.status === "Customs Package Generated").length || (myShipments.length === 0 ? 42 : 0);
-  const atRiskCount = myShipments.filter((shipment) => shipment.ai?.riskLevel === "High" || shipment.ai?.riskLevel === "Medium").length || (myShipments.length === 0 ? 9 : 0);
+  const pendingDocs = Math.max(requiredDocsTotal - uploadedDocsTotal, 0);
+  const verifiedCount = myShipments.filter((shipment) => shipment.ai && shipment.ai.score >= 85).length;
+  const readyCount = myShipments.filter((shipment) => shipment.status === "AI Verified" || shipment.status === "Customs Package Generated").length;
+  const atRiskCount = myShipments.filter((shipment) => shipment.ai?.riskLevel === "High" || shipment.ai?.riskLevel === "Medium").length;
   const arrivingThisWeek = myShipments.filter((shipment) => {
     const eta = new Date(shipment.shipment.eta);
     const now = new Date();
     const diff = eta.getTime() - now.getTime();
     return diff >= 0 && diff <= 7 * 24 * 60 * 60 * 1000;
-  }).length || (myShipments.length === 0 ? 23 : 0);
+  }).length;
 
   const summary = [
-    { label: "Total Active Shipments", value: String(myShipments.length || 128), tone: "blue", icon: Ship },
+    { label: "Total Active Shipments", value: String(myShipments.length), tone: "blue", icon: Ship },
     { label: "Documents Pending", value: String(pendingDocs), tone: "orange", icon: FileCheck2 },
     { label: "AI Verified Shipments", value: String(verifiedCount), tone: "plain", icon: BadgeCheck },
     { label: role === "Importer" ? "Ready for Approval" : "Ready for Importer Review", value: String(readyCount), tone: "plain", icon: PackageCheck },
@@ -80,12 +55,11 @@ export default function DashboardPage() {
       exporter: shipment.exporter.company,
       importer: shipment.importer.company,
       route: `${shipment.shipment.origin.slice(0, 2).toUpperCase()} -> ${shipment.shipment.destination.slice(0, 2).toUpperCase()}`,
-      issue: shipment.ai?.checks.find((check) => check.status === "mismatch" || check.status === "missing")?.detail || (role === "Importer" ? "Needs approval or document review" : "Importer review pending"),
+      issue: shipment.ai?.checks?.find((check) => check.status === "mismatch" || check.status === "missing")?.detail || (role === "Importer" ? "Needs approval or document review" : "Importer review pending"),
       risk: `${shipment.ai?.riskLevel || "Medium"} Risk`,
       action: role === "Importer" ? "Review" : "Update"
     }));
-  const priorityIssues = issuesFromShipments.length > 0 ? issuesFromShipments : fallbackIssues[role];
-  const intelligence = intelligenceByRole[role];
+  const priorityIssues = issuesFromShipments;
   const recentShipments = myShipments.slice(0, 6);
 
   return (
@@ -137,7 +111,7 @@ export default function DashboardPage() {
       </div>
 
       <div className="mt-8 grid gap-6">
-        <div className="grid gap-6 xl:grid-cols-[minmax(0,1.45fr)_minmax(360px,0.55fr)]">
+        <div className="grid gap-6">
           <Panel>
             <div className="flex flex-col gap-2 sm:flex-row sm:items-end sm:justify-between">
               <div>
@@ -149,45 +123,29 @@ export default function DashboardPage() {
               </Link>
             </div>
             <div className="mt-6 grid gap-3">
-              {priorityIssues.map((item) => (
-                <div key={item.id} className="rounded-2xl bg-ink p-4 shadow-sm">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-extrabold text-pearl">{item.id}</p>
-                        <span className={cn("rounded-full px-2.5 py-1 text-xs font-bold", item.risk === "High Risk" && "bg-red-50 text-red-500", item.risk === "Medium Risk" && "bg-orange-50 text-orange-500", item.risk === "Low Risk" && "bg-emerald-50 text-emerald-500")}>{item.risk}</span>
-                      </div>
-                      <p className="mt-2 text-sm font-semibold text-pearl">{item.exporter} {"->"} {item.importer}</p>
-                      <p className="mt-1 text-sm text-steel">{item.route} · {item.issue}</p>
-                    </div>
-                    <button className="w-fit rounded-full bg-[#4DA2FF] px-4 py-2 text-xs font-extrabold text-white shadow-glow transition hover:bg-[#2F8FFF]">
-                      {item.action}
-                    </button>
-                  </div>
+              {priorityIssues.length === 0 ? (
+                <div className="rounded-2xl bg-ink p-4 text-sm text-steel">
+                  No shipments with problems. Create a shipment to start tracking.
                 </div>
-              ))}
-            </div>
-          </Panel>
-
-          <Panel>
-            <div>
-              <p className="text-sm font-bold text-[#4DA2FF]">Shipment Intelligence</p>
-              <h2 className="mt-1 text-2xl font-extrabold text-pearl">{role} signals</h2>
-            </div>
-            <div className="mt-6 grid gap-3">
-              {intelligence.map((insight) => (
-                <div key={insight.label} className="rounded-2xl bg-ink p-4 shadow-sm">
-                  <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
-                    <div className="min-w-0">
-                      <div className="flex flex-wrap items-center gap-2">
-                        <p className="font-extrabold text-pearl">{insight.label}</p>
-                        <span className="rounded-full bg-white px-2.5 py-1 text-xs font-extrabold text-[#4DA2FF]">{insight.value}</span>
+              ) : (
+                priorityIssues.map((item) => (
+                  <div key={item.id} className="rounded-2xl bg-ink p-4 shadow-sm">
+                    <div className="flex flex-col gap-3 lg:flex-row lg:items-start lg:justify-between">
+                      <div className="min-w-0">
+                        <div className="flex flex-wrap items-center gap-2">
+                          <p className="font-extrabold text-pearl">{item.id}</p>
+                          <span className={cn("rounded-full px-2.5 py-1 text-xs font-bold", item.risk === "High Risk" && "bg-red-50 text-red-500", item.risk === "Medium Risk" && "bg-orange-50 text-orange-500", item.risk === "Low Risk" && "bg-emerald-50 text-emerald-500")}>{item.risk}</span>
+                        </div>
+                        <p className="mt-2 text-sm font-semibold text-pearl">{item.exporter} {"->"} {item.importer}</p>
+                        <p className="mt-1 text-sm text-steel">{item.route} · {item.issue}</p>
                       </div>
-                      <p className="mt-2 text-sm leading-6 text-steel">{insight.detail}</p>
+                      <button className="w-fit rounded-full bg-[#4DA2FF] px-4 py-2 text-xs font-extrabold text-white shadow-glow transition hover:bg-[#2F8FFF]">
+                        {item.action}
+                      </button>
                     </div>
                   </div>
-                </div>
-              ))}
+                ))
+              )}
             </div>
           </Panel>
         </div>
@@ -204,7 +162,7 @@ export default function DashboardPage() {
           </div>
           {recentShipments.length === 0 ? (
             <div className="mt-6 rounded-2xl bg-ink p-6 text-sm text-steel">
-              No local shipments yet. Create a shipment to replace the demo counters with live workspace data.
+              No shipments yet. Create your first shipment to see live workspace data.
             </div>
           ) : (
             <div className="mt-6 overflow-x-auto">

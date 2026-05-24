@@ -4,6 +4,7 @@ import type { MemWalManifest } from "@/lib/memwal/types";
 import {
   isMemWalConfigured,
   memwalRecall,
+  memwalRemember,
   memwalRememberAndWait,
   type MemWalRecallItem,
 } from "@/lib/memwal/client";
@@ -206,6 +207,30 @@ export async function writeShipmentMemoryAfterMint(input: {
   }).comparisons;
   await writePartyMemoryFromShipment({ shipment: input.shipment, facts, passportId: input.passportId, txDigest: input.txDigest, walrusBlobIds: input.walrusBlobIds });
   await writeDocumentFingerprint({ facts, passportId: input.passportId, txDigest: input.txDigest, walrusBlobIds: input.walrusBlobIds });
+}
+
+export function writePrevalidationPartyMemory(facts: ShipmentMemoryFacts): void {
+  if (!isMemWalConfigured()) return;
+  const exp = facts.exporter;
+  const text = [
+    "PARTY IDENTITY (pre-validation — no blockchain anchors yet)",
+    `shipment_id: ${facts.shipmentId}`,
+    `exporter_company: ${exp.company}`,
+    `exporter_tax_id: ${exp.taxId ?? "unknown"}`,
+    `exporter_namespace: ${exp.namespaceKey}`,
+    `exporter_address: ${exp.address ?? "unknown"}`,
+    `exporter_bank_beneficiary: ${exp.bankBeneficiaryName ?? "unknown"}`,
+    `exporter_bank_account: ${exp.bankAccountNumber ?? "unknown"}`,
+    `exporter_bank_iban: ${exp.bankIban ?? "unknown"}`,
+    `exporter_bank_swift: ${exp.bankSwift ?? "unknown"}`,
+    `invoice_number: ${facts.invoiceNumber ?? "unknown"}`,
+    `bol_number: ${facts.bolNumber ?? "unknown"}`,
+    `coo_number: ${facts.cooNumber ?? "unknown"}`,
+    `hs_code: ${facts.hsCode ?? "unknown"}`,
+    `origin: ${facts.origin ?? "unknown"}`,
+    `status: pre_validation`,
+  ].join("\n");
+  memwalRemember(text, partyNamespace(exp.namespaceKey)).catch(() => {});
 }
 
 export async function readPartyMemory(namespaceKey: string, query = "exporter identity profile legal name tax id registered address bank beneficiary bank account IBAN SWIFT country origin document issuer provenance", limit = 5): Promise<RecalledMemory[]> {

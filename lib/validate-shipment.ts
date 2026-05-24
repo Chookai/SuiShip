@@ -14,6 +14,7 @@ import {
   detectAnomalies,
   parseRememberedFacts,
   readCrossShipmentMemory,
+  writePrevalidationPartyMemory,
   type MemoryAnomalyFinding,
 } from "./agents/memory-agent";
 import { runValidationMemoryAgent, type ValidationAgentResult } from "./agents/validation-agent";
@@ -380,6 +381,10 @@ export async function runShipmentValidation(
   }, db);
 
   logger.info({ shipmentId, overallVerdict: result.overallVerdict, findingCount: findings.length, score }, "Validation complete");
+
+  // Write preliminary party memory at validation time so Shipment 2 recall works
+  // even if Shipment 1 was never minted. Post-mint write supplements with Walrus/Sui refs.
+  if (facts) writePrevalidationPartyMemory(facts);
 
   return {
     issues: allIssues,

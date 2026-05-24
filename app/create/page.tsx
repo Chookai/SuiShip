@@ -5,13 +5,10 @@ import {
   AlertCircle,
   AlertTriangle,
   CheckCircle2,
-  Copy,
   FilePlus2,
-  Link2,
   Loader2,
   Lock,
   Plus,
-  Share2,
   Ship,
   Upload,
   UserCheck,
@@ -122,8 +119,6 @@ export default function CreateShipmentPage() {
   const [inviteToken, setInviteToken] = useState<string | null>(null);
   const [createdInProgress, setCreatedInProgress] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [copied, setCopied] = useState(false);
-
   // Async extraction state
   const [extractionStatus, setExtractionStatus] = useState<"idle" | "extracting" | "complete" | "failed">("idle");
   const [extractResult, setExtractResult] = useState<AggregateResult | null>(null);
@@ -261,29 +256,6 @@ export default function CreateShipmentPage() {
         : extractionStatus === "failed" ? "failed"
         : undefined
     };
-  }
-
-  function generateInviteLink() {
-    const token = inviteToken || generateInviteToken();
-    setInviteToken(token);
-    const record = buildShipmentRecord("Awaiting Counterparty", token);
-    addShipment(record);
-    setShipmentRecordId(record.id);
-    return token;
-  }
-
-  function inviteUrl(token: string) {
-    if (typeof window === "undefined") return "";
-    return `${window.location.origin}/invite/${token}?shipment=${encodeURIComponent(details.shipmentId)}`;
-  }
-
-  async function copyInviteLink() {
-    const token = inviteToken || generateInviteLink();
-    if (typeof navigator !== "undefined" && navigator.clipboard) {
-      await navigator.clipboard.writeText(inviteUrl(token));
-      setCopied(true);
-      window.setTimeout(() => setCopied(false), 2000);
-    }
   }
 
   function docsWithAttachedFiles(current: DocumentRequirement[], files: File[]) {
@@ -735,8 +707,8 @@ export default function CreateShipmentPage() {
                   })}
                 </div>
                 <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-steel">
-                  The {selectedWorkflow.toLowerCase()} starts the passport and invites the{" "}
-                  {workflow === "importer" ? "exporter" : "importer"} via a share link.
+                  The {selectedWorkflow.toLowerCase()} creates the passport and coordinates document submission with the{" "}
+                  {workflow === "importer" ? "exporter" : "importer"}.
                 </div>
               </div>
             )}
@@ -780,40 +752,6 @@ export default function CreateShipmentPage() {
                 <div className="grid gap-3 md:grid-cols-2">
                   <Field label="Customs broker (optional)" value={broker} onChange={setBroker} placeholder="If applicable" />
                   <Field label="Freight forwarder (optional)" value={freightForwarder} onChange={setFreightForwarder} placeholder="If applicable" />
-                </div>
-
-                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-5">
-                    <div className="flex flex-wrap items-center justify-between gap-3">
-                      <div className="flex items-center gap-3">
-                        <span className="flex h-10 w-10 items-center justify-center rounded-2xl bg-white">
-                          <Share2 className="h-5 w-5 text-[#4DA2FF]" />
-                        </span>
-                        <div>
-                          <p className="font-extrabold text-pearl">Invite the {counterpartyKey.toLowerCase()}</p>
-                          <p className="text-sm text-steel">
-                            Send this link so {counterpartyKey === "Exporter" ? exporter.company || "the exporter" : importer.company || "the importer"}{" "}
-                            can join SuiShip and upload their required documents.
-                          </p>
-                        </div>
-                      </div>
-                      <Button variant="secondary" onClick={copyInviteLink}>
-                        <Link2 className="h-4 w-4" />
-                        {inviteToken ? "Regenerate link" : "Generate invite link"}
-                      </Button>
-                    </div>
-                    {inviteToken && (
-                      <div className="mt-4 flex flex-col gap-2 rounded-2xl bg-white p-3 text-sm font-semibold text-pearl md:flex-row md:items-center md:justify-between">
-                        <span className="break-all">{inviteUrl(inviteToken)}</span>
-                        <button
-                          type="button"
-                          onClick={copyInviteLink}
-                          className="inline-flex items-center gap-2 rounded-full bg-[#4DA2FF] px-3 py-2 text-xs font-extrabold text-white"
-                        >
-                          <Copy className="h-3 w-3" />
-                          {copied ? "Copied" : "Copy"}
-                        </button>
-                      </div>
-                    )}
                 </div>
 
                 {error && (

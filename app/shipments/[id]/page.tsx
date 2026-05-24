@@ -25,8 +25,8 @@ import {
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
-import { PassportActions } from "@/components/passport-actions";
 import { AgentWorkflowCenter } from "@/components/AgentWorkflowCenter";
+import { PassportActions } from "@/components/passport-actions";
 import { CustodyTimeline } from "@/components/CustodyTimeline";
 import { EndorsementPanel } from "@/components/EndorsementPanel";
 import { MemWalMemoryPanel } from "@/components/MemWalMemoryPanel";
@@ -648,10 +648,6 @@ function StoredShipmentView({
         </div>
       </div>
 
-      <div className="mt-6">
-        <AgentWorkflowCenter shipment={shipment} refreshKey={panelRefreshNonce} />
-      </div>
-
       {/* Passport minted card — shown prominently when passport exists */}
       {(shipment.passportId?.length || shipment.txDigest?.length) ? (
         <div className="mt-6">
@@ -660,14 +656,21 @@ function StoredShipmentView({
       ) : null}
       {!documentsLocked ? (
         <div className="mt-6">
-          <LiveMemoryMutationPanel
-            field={demoField}
-            value={demoValue}
-            shipment={shipment}
-            onFieldChange={setDemoField}
-            onValueChange={setDemoValue}
-            onApply={applyDemoMutation}
-          />
+          <details className="rounded-2xl border border-amber-200 bg-amber-50">
+            <summary className="cursor-pointer px-5 py-3 text-sm font-bold text-amber-700 hover:bg-amber-100/60 rounded-2xl">
+              Demo Mode — Mutate Identity Fields
+            </summary>
+            <div className="px-5 pb-5 pt-2">
+              <LiveMemoryMutationPanel
+                field={demoField}
+                value={demoValue}
+                shipment={shipment}
+                onFieldChange={setDemoField}
+                onValueChange={setDemoValue}
+                onApply={applyDemoMutation}
+              />
+            </div>
+          </details>
         </div>
       ) : null}
       {passportAvailable ? (
@@ -695,6 +698,10 @@ function StoredShipmentView({
           shipment={shipment}
           onSimulateFollowup={onSimulateFollowup}
         />
+      </div>
+
+      <div className="mt-6">
+        <AgentWorkflowCenter shipment={shipment} refreshKey={panelRefreshNonce} />
       </div>
 
       <div className="mt-8 grid min-w-0 gap-6 xl:grid-cols-[minmax(0,1fr)_minmax(0,400px)]">

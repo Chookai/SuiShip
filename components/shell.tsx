@@ -1,7 +1,7 @@
 "use client";
 
 import { ConnectButton, useCurrentAccount } from "@mysten/dapp-kit";
-import { Bell, Boxes, FilePlus2, LayoutDashboard, Moon, ScanLine, Search, Ship, Sparkles } from "lucide-react";
+import { Bell, Boxes, BrainCircuit, FilePlus2, LayoutDashboard, Moon, Search, Ship, Sparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -18,7 +18,7 @@ const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/shipments", label: "Shipments", icon: Ship },
   { href: "/create", label: "Create", icon: FilePlus2 },
-  { href: "/customs", label: "Customs", icon: ScanLine }
+  { href: "/memory", label: "Memory", icon: BrainCircuit },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {
