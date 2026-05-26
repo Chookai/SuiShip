@@ -12,7 +12,7 @@ export function PassportActions({ objectId }: { objectId?: string }) {
 
   function markCleared() {
     if (!objectId || objectId.includes("...")) {
-      setMessage("Demo shipment uses a shortened object ID. Mint a real passport or paste a full Sui object ID for live status updates.");
+      setMessage("This shipment uses a shortened object ID. Mint a real passport or paste a full Sui object ID for live status updates.");
       return;
     }
     if (!canUsePublishedPackage()) {

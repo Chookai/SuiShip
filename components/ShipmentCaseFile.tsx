@@ -1,113 +1,47 @@
 "use client";
 
-import { AnimatePresence, motion } from "framer-motion";
 import {
   AlertTriangle,
   Brain,
+  Building2,
   CheckCircle2,
-  ChevronDown,
   Clock3,
   Copy,
   ExternalLink,
   FileText,
   Fingerprint,
   Globe2,
-  History,
   Loader2,
-  Search,
+  Mail,
+  Phone,
   ShieldAlert,
   ShieldCheck,
-  Sparkles,
-  Zap,
 } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import { Button } from "@/components/ui";
 import type { ShipmentRecord } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
-import { maskAccount, type FieldComparison, type AgentMemoryTraceStep } from "@/lib/agents/field-comparisons";
+import { maskAccount, type FieldComparison } from "@/lib/agents/field-comparisons";
 
 // ── Types ──────────────────────────────────────────────────────────────────
 
-type AgentRunState =
-  | "created"
-  | "waiting_for_documents"
-  | "extracting"
-  | "validating"
-  | "recalling_memory"
-  | "risk_detected"
-  | "ready_for_customs"
-  | "blocked_for_review";
-
-interface ToolEvent {
-  name: string;
-  input: unknown;
-  result: unknown;
-}
 
 interface ValidationResult {
   fieldComparisons?: FieldComparison[];
-  memoryTrace?: AgentMemoryTraceStep[];
   baselineStatus?: "baseline_established" | "prior_memory_found";
   overallVerdict?: string;
   verdictReason?: string;
-  agentToolEvents?: ToolEvent[];
-}
-
-export interface SimulatedChanges {
-  changeBankAccountNumber: boolean;
-  changeRegisteredAddress: boolean;
-  reuseInvoiceNumber: boolean;
-  reuseBoLNumber: boolean;
-  changeCountryOfOrigin: boolean;
 }
 
 interface ShipmentCaseFileProps {
   shipment: ShipmentRecord;
-  onSimulateFollowup?: (changes: SimulatedChanges) => void;
+  refreshKey?: number;
 }
 
 // ── Constants ──────────────────────────────────────────────────────────────
 
 const SUISCAN_BASE = "https://suiscan.xyz/testnet";
 const WALRUSCAN_BASE = "https://walruscan.com/testnet";
-
-const AGENT_STATES: Array<{ id: AgentRunState; label: string; icon: React.ElementType }> = [
-  { id: "created", label: "Created", icon: FileText },
-  { id: "waiting_for_documents", label: "Awaiting Docs", icon: Clock3 },
-  { id: "extracting", label: "Extracting", icon: Loader2 },
-  { id: "validating", label: "Validating", icon: Search },
-  { id: "recalling_memory", label: "Recalling", icon: Brain },
-  { id: "risk_detected", label: "Anomaly", icon: AlertTriangle },
-  { id: "ready_for_customs", label: "Cleared", icon: CheckCircle2 },
-  { id: "blocked_for_review", label: "Blocked", icon: ShieldAlert },
-];
-
-const RECOMMENDED_ACTIONS: Record<AgentRunState, string> = {
-  created: "Complete shipment setup and invite counterparty.",
-  waiting_for_documents: "Upload missing required documents to proceed.",
-  extracting: "AI is reading uploaded documents — please wait.",
-  validating: "AI validation in progress.",
-  recalling_memory: "Agent is recalling MemWal baseline — please wait.",
-  risk_detected: "Review critical findings before customs submission.",
-  ready_for_customs: "Shipment cleared for customs package generation.",
-  blocked_for_review: "Hold for manual review — critical anomalies detected.",
-};
-
-const EVIDENCE_DIFF_FIELDS = [
-  "exporter.name",
-  "exporter.bank_account",
-  "exporter.registered_address",
-  "cargo.country_of_origin",
-  "documents.invoice_number",
-  "shipment.bl_number",
-];
-
-const TOOL_ICONS: Record<string, string> = {
-  recall_party_memory: "🔍",
-  recall_document_fingerprints: "🔍",
-  flag_anomaly: "⚠️",
-  done: "✓",
-};
 
 // ── Helper functions ────────────────────────────────────────────────────────
 
@@ -123,57 +57,6 @@ function memwalUrl(spaceId: string) {
   return `https://memwal.ai?space=${encodeURIComponent(ns)}`;
 }
 
-function deriveAgentRunState(shipment: ShipmentRecord, validation?: ValidationResult | null): AgentRunState {
-  const hasCritical = validation?.fieldComparisons?.some(c => c.severity === "critical") ?? false;
-  if (shipment.ai?.riskLevel === "High" || (hasCritical && validation != null)) return "blocked_for_review";
-  if (shipment.ai?.riskLevel === "Low" && !hasCritical) return "ready_for_customs";
-  if (shipment.ai?.riskLevel === "Medium") return "risk_detected";
-  if (shipment.ai && !validation) return "recalling_memory";
-  if (shipment.extractionStatus === "complete" && !shipment.ai) return "validating";
-  if (shipment.extractionStatus === "extracting") return "extracting";
-  if (shipment.status === "In Progress" && shipment.documents.some(d => d.required && !d.uploaded))
-    return "waiting_for_documents";
-  return "created";
-}
-
-function getStateIndex(state: AgentRunState): number {
-  // For terminal states, map to their visual position
-  if (state === "ready_for_customs") return 6;
-  if (state === "blocked_for_review") return 7;
-  return AGENT_STATES.findIndex(s => s.id === state);
-}
-
-function formatToolInput(name: string, input: unknown): string {
-  if (!input || typeof input !== "object") return "";
-  const raw = input as Record<string, unknown>;
-  if (name === "recall_party_memory") return `("${raw.namespace_key ?? ""}")`;
-  if (name === "recall_document_fingerprints") return `(invoice="${raw.invoice_number ?? ""}", bol="${raw.bol_number ?? ""}")`;
-  if (name === "flag_anomaly") return `(type=${raw.anomaly_type}, severity=${raw.severity})`;
-  if (name === "done") return "";
-  return "";
-}
-
-function formatToolResult(name: string, result: unknown): string {
-  if (!result || typeof result !== "object") return "";
-  const raw = result as Record<string, unknown>;
-  if (name === "recall_party_memory") {
-    if (!raw.found) return "→ No prior record found — first shipment";
-    const count = Array.isArray(raw.records) ? raw.records.length : 0;
-    return `→ Found ${count} prior record(s)`;
-  }
-  if (name === "recall_document_fingerprints") {
-    return raw.found ? "→ Duplicate detected!" : "→ No duplicates found";
-  }
-  if (name === "flag_anomaly") {
-    const anomaly = raw.anomaly as Record<string, unknown> | undefined;
-    return `→ Recalled: ${anomaly?.recalled_value ?? "?"} · Current: ${anomaly?.current_value ?? "?"}`;
-  }
-  if (name === "done") {
-    const summary = raw.summary as Record<string, unknown> | undefined;
-    return `→ ${summary?.anomaly_summary ?? "Complete"}`;
-  }
-  return "";
-}
 
 // ── Sub-components ─────────────────────────────────────────────────────────
 
@@ -211,288 +94,281 @@ function SeverityBadge({ severity }: { severity: "critical" | "warning" | "info"
   );
 }
 
-function CollapsibleSection({
-  title,
-  icon: Icon,
-  defaultOpen = true,
-  badge,
-  accentClass,
-  children,
-}: {
-  title: string;
-  icon: React.ElementType;
-  defaultOpen?: boolean;
-  badge?: React.ReactNode;
-  accentClass?: string;
-  children: React.ReactNode;
-}) {
-  const [open, setOpen] = useState(defaultOpen);
-  return (
-    <div className="rounded-2xl border border-blue-100 bg-white shadow-sm">
-      <button
-        type="button"
-        onClick={() => setOpen(o => !o)}
-        className="flex w-full items-center justify-between gap-3 px-6 py-4"
-      >
-        <div className="flex items-center gap-3">
-          <Icon className={cn("h-5 w-5", accentClass ?? "text-sui")} />
-          <h3 className="text-base font-black text-pearl">{title}</h3>
-          {badge}
-        </div>
-        <ChevronDown className={cn("h-4 w-4 text-steel transition-transform", open && "rotate-180")} />
-      </button>
-      <AnimatePresence initial={false}>
-        {open && (
-          <motion.div
-            key="content"
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: "auto", opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            transition={{ duration: 0.22 }}
-            className="overflow-hidden"
-          >
-            <div className="px-6 pb-6">{children}</div>
-          </motion.div>
-        )}
-      </AnimatePresence>
-    </div>
-  );
+// ── Section 1: Recent Activities ────────────────────────────────────────────
+
+type ActivityEntry = {
+  docCount: number;
+  verdict: string;
+  reason?: string;
+  timestamp: string;
+};
+
+function useActivityLog(shipmentId: string, refreshKey?: number) {
+  const [entries, setEntries] = useState<ActivityEntry[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  const fetchLog = useCallback(async () => {
+    try {
+      const res = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validation-log`);
+      if (!res.ok) return;
+      const data = (await res.json()) as { entries: ActivityEntry[] };
+      setEntries(data.entries ?? []);
+    } catch {
+      // silent
+    } finally {
+      setLoading(false);
+    }
+  }, [shipmentId]);
+
+  useEffect(() => { fetchLog(); }, [fetchLog, refreshKey]);
+  return { entries, loading };
 }
 
-// ── Section 1: Status Strip ─────────────────────────────────────────────────
-
-function AgentStatusStrip({
-  state,
-  shipment,
-  verdictReason,
-  baselineStatus,
-  fieldComparisons,
+function ActivityCard({
+  entry,
+  num,
 }: {
-  state: AgentRunState;
-  shipment: ShipmentRecord;
-  verdictReason?: string;
-  baselineStatus?: "baseline_established" | "prior_memory_found";
-  fieldComparisons?: FieldComparison[];
+  entry: ActivityEntry;
+  num: number;
 }) {
-  const currentIdx = getStateIndex(state);
-  const score = shipment.ai?.score;
-  const risk = shipment.ai?.riskLevel;
-  const scoreColor = score == null ? "text-steel" : score >= 85 ? "text-emerald-600" : score >= 65 ? "text-amber-600" : "text-red-600";
-  const action = verdictReason || RECOMMENDED_ACTIONS[state];
-  const priorRef = fieldComparisons?.find(c => c.rememberedValue != null)?.evidence?.find(e => e.kind === "sui_object")?.value;
-
-  // For display, merge the two terminal states into one row of 8
-  const displayStates = AGENT_STATES;
+  const [open, setOpen] = useState(false);
+  const matched = entry.verdict === "consistent" || entry.verdict === "matched";
 
   return (
-    <div className="rounded-2xl border border-blue-100 bg-white px-5 py-4 shadow-sm">
-      {/* Stepper */}
-      <div className="flex max-w-full items-start gap-1 overflow-x-auto pb-1">
-        {displayStates.map((s, idx) => {
-          const isCurrent = s.id === state;
-          const isPast = idx < currentIdx;
-          const isTerminal = s.id === "ready_for_customs" || s.id === "blocked_for_review";
-          const isActiveTerminal = isCurrent && isTerminal;
-          const Icon = s.icon;
-
-          const dotClass = isCurrent
-            ? state === "blocked_for_review"
-              ? "bg-red-500 text-white animate-pulse"
-              : state === "ready_for_customs"
-                ? "bg-emerald-500 text-white animate-pulse"
-                : "bg-[#4DA2FF] text-white animate-pulse"
-            : isPast
-              ? "bg-emerald-500 text-white"
-              : "bg-slate-200 text-slate-400";
-
-          return (
-            <div key={s.id} className="flex min-w-[58px] flex-none flex-col items-center gap-1 sm:min-w-[72px] sm:flex-1">
-              <div className="flex items-center w-full">
-                {idx > 0 && (
-                  <div className={cn("h-0.5 flex-1", isPast || isCurrent ? "bg-emerald-300" : "bg-slate-200")} />
-                )}
-                <div className={cn("flex h-7 w-7 shrink-0 items-center justify-center rounded-full text-xs", dotClass)}>
-                  <Icon className={cn("h-3.5 w-3.5", isCurrent && (s.id === "extracting") && "animate-spin")} />
-                </div>
-                {idx < displayStates.length - 1 && (
-                  <div className={cn("h-0.5 flex-1", isPast ? "bg-emerald-300" : "bg-slate-200")} />
-                )}
-              </div>
-              <span className={cn(
-                "text-center text-[10px] font-semibold leading-tight",
-                isCurrent ? "text-pearl" : "text-steel"
-              )}>{s.label}</span>
-            </div>
-          );
-        })}
-      </div>
-
-      {/* Summary chips */}
-      <div className="mt-3 flex flex-wrap items-center gap-2 text-sm">
-        {risk && (
-          <span className={cn(
-            "rounded-full border px-2.5 py-1 text-xs font-bold",
-            risk === "Low" ? "border-emerald-100 bg-emerald-50 text-emerald-600"
-              : risk === "Medium" ? "border-amber-100 bg-amber-50 text-amber-600"
-                : "border-red-100 bg-red-50 text-red-500"
-          )}>
-            {risk} risk
-          </span>
-        )}
-        {score != null && (
-          <span className={cn("rounded-full border border-blue-100 bg-blue-50 px-2.5 py-1 text-xs font-bold", scoreColor)}>
-            Score: {score}/100
-          </span>
-        )}
-        <span className="text-xs text-steel">{action}</span>
-      </div>
-
-      {/* Baseline comparison banner — shown when prior memory was found */}
-      {baselineStatus === "prior_memory_found" && (
-        <div className="mt-3 flex items-center gap-2 rounded-lg border border-blue-200 bg-blue-50 px-3 py-2 text-xs">
-          <History className="h-3.5 w-3.5 shrink-0 text-sui" />
-          <span className="font-semibold text-pearl">
-            Comparing against verified baseline for {shipment.exporter.company}
-          </span>
-          {priorRef && (
-            <a
-              href={suiObjectUrl(priorRef)}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="ml-auto flex items-center gap-1 text-sui hover:underline"
-            >
-              <ExternalLink className="h-3 w-3" />
-              View on Sui
-            </a>
-          )}
-        </div>
-      )}
-    </div>
-  );
-}
-
-// ── Section 2: Trade Memory (HERO) ─────────────────────────────────────────
-
-function TradeMemorySection({
-  shipment,
-  fieldComparisons,
-  baselineStatus,
-  memoryTrace,
-  syncStatus,
-}: {
-  shipment: ShipmentRecord;
-  fieldComparisons: FieldComparison[];
-  baselineStatus: "baseline_established" | "prior_memory_found";
-  memoryTrace: AgentMemoryTraceStep[];
-  syncStatus?: string;
-}) {
-  const [devOpen, setDevOpen] = useState(false);
-  const priorFields = fieldComparisons.filter(c =>
-    c.rememberedValue != null &&
-    ["exporter.name", "exporter.bank_beneficiary_name", "exporter.bank_account", "exporter.registered_address", "cargo.country_of_origin", "documents.invoice_number", "shipment.bl_number"].includes(c.field)
-  );
-  const firstEvidence = priorFields.find(c => c.evidence && c.evidence.length > 0)?.evidence;
-  const walrusRef = firstEvidence?.find(e => e.kind === "walrus")?.value;
-  const suiRef = firstEvidence?.find(e => e.kind === "sui_object" || e.kind === "sui_tx")?.value;
-
-  const badge = baselineStatus === "prior_memory_found"
-    ? <span className="rounded-full border border-emerald-200 bg-emerald-50 px-2 py-0.5 text-xs font-bold text-emerald-700">Memory Recalled</span>
-    : <span className="rounded-full border border-blue-100 bg-blue-50 px-2 py-0.5 text-xs font-bold text-steel">Establishing Baseline</span>;
-
-  return (
-    <CollapsibleSection
-      title="Trade Memory"
-      icon={Brain}
-      defaultOpen={true}
-      badge={badge}
-      accentClass="text-emerald-600"
+    <button
+      type="button"
+      onClick={() => setOpen(!open)}
+      className="w-full rounded-lg border border-blue-100 bg-blue-50/40 px-4 py-3 text-left transition hover:bg-blue-50"
     >
-      {/* Baseline Banner */}
-      {baselineStatus === "prior_memory_found" ? (
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4">
-          <div className="flex items-start gap-3">
-            <History className="mt-0.5 h-6 w-6 shrink-0 text-emerald-600" />
-            <div className="min-w-0">
-              <p className="text-xs font-black uppercase tracking-widest text-emerald-700">Memory Recalled</p>
-              <p className="mt-0.5 text-base font-bold text-pearl">
-                {shipment.exporter.company} — Agent compared {priorFields.length} field{priorFields.length !== 1 ? "s" : ""} against remembered baseline.
-              </p>
-              {(walrusRef || suiRef) && (
-                <p className="mt-1 text-xs text-steel">
-                  Baseline from: {walrusRef && `Walrus ${truncateId(walrusRef, 6)}`}
-                  {walrusRef && suiRef && " · "}
-                  {suiRef && `Sui ${truncateId(suiRef, 6)}`}
-                </p>
-              )}
-            </div>
-          </div>
+      <div className="flex items-center justify-between gap-3">
+        <p className="text-base font-semibold text-pearl">
+          <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
+          {entry.docCount} doc{entry.docCount !== 1 ? "s" : ""} uploaded, AI validated:{" "}
+          <span className={matched ? "text-emerald-600" : "text-amber-600"}>
+            {matched ? "matched" : entry.verdict.replace(/_/g, " ")}
+          </span>
+        </p>
+        <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
+          {new Date(entry.timestamp).toLocaleString()}
+        </span>
+      </div>
+      {open && entry.reason && (
+        <p className="mt-2 text-sm text-steel">{entry.reason}</p>
+      )}
+    </button>
+  );
+}
+
+function RecentActivities({
+  shipmentId,
+  shipment,
+  refreshKey,
+}: {
+  shipmentId: string;
+  shipment: ShipmentRecord;
+  refreshKey?: number;
+}) {
+  const { entries, loading } = useActivityLog(shipmentId, refreshKey);
+  const [showAll, setShowAll] = useState(false);
+
+  const total = entries.length;
+  const visible = showAll ? entries : entries.slice(0, 1);
+
+  return (
+    <div className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
+      <h2 className="text-xl font-semibold text-pearl">Recent Activities</h2>
+
+      {loading ? (
+        <div className="mt-4 flex items-center gap-2 text-xs text-steel">
+          <Loader2 className="h-3.5 w-3.5 animate-spin" /> Loading…
         </div>
+      ) : entries.length === 0 ? (
+        <p className="mt-4 text-sm text-steel">
+          {shipment.extractionStatus === "extracting"
+            ? "AI is processing documents…"
+            : "No activities yet."}
+        </p>
       ) : (
-        <div className="rounded-xl border border-blue-100 bg-blue-50 p-4">
-          <div className="flex items-start gap-3">
-            <Sparkles className="mt-0.5 h-6 w-6 shrink-0 text-sui" />
-            <div>
-              <p className="text-xs font-black uppercase tracking-widest text-sui">Establishing Baseline</p>
-              <p className="mt-0.5 text-base font-bold text-pearl">
-                No prior exporter memory found for {shipment.exporter.company}.
+        <>
+          <div className="mt-4 space-y-2">
+            {visible.map((entry, idx) => (
+              <ActivityCard key={idx} entry={entry} num={total - idx} />
+            ))}
+          </div>
+          {total > 1 && (
+            <button
+              type="button"
+              onClick={() => setShowAll(!showAll)}
+              className="mt-3 text-sm font-semibold text-sui hover:underline"
+            >
+              {showAll ? "Show latest only" : `View all (${total})`}
+            </button>
+          )}
+        </>
+      )}
+    </div>
+  );
+}
+
+function TradePartiesSection({ shipment }: { shipment: ShipmentRecord }) {
+  const parties = [
+    {
+      role: "Exporter",
+      ...shipment.exporter,
+      country: shipment.shipment.origin
+    },
+    {
+      role: "Importer",
+      ...shipment.importer,
+      country: shipment.shipment.destination
+    }
+  ];
+
+  return (
+    <div className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
+      <h2 className="text-xl font-semibold text-pearl">Trade parties</h2>
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        {parties.map((party) => (
+          <div key={party.role} className="rounded-lg border border-blue-100 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-[#4DA2FF]">{party.role}</p>
+                <h3 className="mt-1 text-lg font-extrabold text-pearl">{party.company}</h3>
+              </div>
+              <Building2 className="h-6 w-6 text-[#4DA2FF]" />
+            </div>
+            <div className="mt-4 grid gap-2 text-sm">
+              <p>
+                <span className="font-bold text-steel">Country:</span>{" "}
+                <span className="font-semibold text-pearl">{party.country}</span>
               </p>
-              <p className="mt-1 text-sm text-steel">
-                This shipment will establish the trusted identity baseline. After mint, the agent will remember exporter legal identity, bank details, registered address, country of origin, and document fingerprints.
+              <p>
+                <span className="font-bold text-steel">Contact:</span>{" "}
+                <span className="font-semibold text-pearl">{party.contact}</span>
               </p>
+              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
+                <Mail className="h-4 w-4 text-[#4DA2FF]" />
+                <span className="font-semibold text-pearl">{party.email}</span>
+              </div>
+              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
+                <Phone className="h-4 w-4 text-[#4DA2FF]" />
+                <span className="font-semibold text-pearl">{party.phone}</span>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        ))}
+      </div>
+    </div>
+  );
+}
 
-      {/* MemWal sync gate */}
-      {syncStatus === "pending" && (
-        <div className="mt-3 rounded-xl border border-amber-200 bg-amber-50 p-3">
-          <div className="flex items-center gap-2">
-            <Loader2 className="h-4 w-4 animate-spin text-amber-600" />
-            <p className="text-sm font-semibold text-amber-700">
-              Agent memory sync in progress — follow-up shipment will be enabled once memory is persisted to MemWal.
-            </p>
-          </div>
-        </div>
-      )}
+// ── Section 2: Evidence Diff ────────────────────────────────────────────────
 
-      {/* Accumulated memory table */}
-      {baselineStatus === "prior_memory_found" && priorFields.length > 0 && (
-        <div className="mt-4">
-          <p className="mb-2 text-xs font-black uppercase tracking-widest text-steel">
-            Agent Remembers ({priorFields.length} field{priorFields.length !== 1 ? "s" : ""} from prior verified shipment)
-          </p>
-          <div className="overflow-hidden rounded-xl border border-blue-100">
-            <table className="w-full text-sm">
+const EVIDENCE_SECTIONS: Array<{
+  title: string;
+  fields: string[];
+}> = [
+  {
+    title: "Exporter",
+    fields: [
+      "exporter.name",
+      "exporter.tax_id",
+      "exporter.bank_beneficiary_name",
+      "exporter.bank_account",
+      "exporter.registered_address",
+    ],
+  },
+  {
+    title: "Importer",
+    fields: [
+      "importer.name",
+      "importer.tax_id",
+      "importer.bank_beneficiary_name",
+      "importer.bank_account",
+      "importer.registered_address",
+    ],
+  },
+  {
+    title: "Documents & Cargo",
+    fields: [
+      "cargo.country_of_origin",
+      "documents.invoice_number",
+      "shipment.bl_number",
+    ],
+  },
+];
+
+const EVIDENCE_FIELD_LABELS: Record<string, string> = {
+  "exporter.name": "Legal name",
+  "exporter.tax_id": "Tax ID",
+  "exporter.bank_beneficiary_name": "Bank beneficiary",
+  "exporter.bank_account": "Bank account",
+  "exporter.registered_address": "Registered address",
+  "importer.name": "Legal name",
+  "importer.tax_id": "Tax ID",
+  "importer.bank_beneficiary_name": "Bank beneficiary",
+  "importer.bank_account": "Bank account",
+  "importer.registered_address": "Registered address",
+  "cargo.country_of_origin": "Country of origin",
+  "documents.invoice_number": "Invoice number",
+  "shipment.bl_number": "BOL number",
+};
+
+function EvidenceDiffSection({ fieldComparisons }: { fieldComparisons: FieldComparison[] }) {
+  const comparisonMap = new Map<string, FieldComparison>();
+  for (const c of fieldComparisons) {
+    comparisonMap.set(c.field, c);
+  }
+
+  const hasData = fieldComparisons.length > 0;
+
+  if (!hasData) {
+    return <p className="text-sm text-steel">Validation not yet run — extract documents first.</p>;
+  }
+
+  return (
+    <div className="space-y-5">
+      {EVIDENCE_SECTIONS.map((section) => (
+        <div key={section.title}>
+          <h3 className="mb-2 text-xs font-black uppercase tracking-widest text-steel">{section.title}</h3>
+          <div className="overflow-x-auto rounded-xl border border-blue-100">
+            <table className="w-full min-w-[600px] text-xs">
               <thead>
                 <tr className="border-b border-blue-100 bg-blue-50">
-                  <th className="px-4 py-2 text-left text-xs font-bold text-steel">Field</th>
-                  <th className="px-4 py-2 text-left text-xs font-bold text-steel">Remembered Baseline</th>
-                  <th className="px-4 py-2 text-left text-xs font-bold text-steel">Current</th>
-                  <th className="px-4 py-2 text-left text-xs font-bold text-steel">Status</th>
+                  <th className="px-3 py-2 text-left font-bold text-steel">Field</th>
+                  <th className="px-3 py-2 text-left font-bold text-steel">Entered</th>
+                  <th className="px-3 py-2 text-left font-bold text-steel">Extracted</th>
+                  <th className="px-3 py-2 text-left font-bold text-steel">Remembered</th>
+                  <th className="px-3 py-2 text-left font-bold text-steel">Severity</th>
                 </tr>
               </thead>
               <tbody>
-                {priorFields.map((c, i) => {
-                  const match = String(c.rememberedValue ?? "").toLowerCase() === String(c.enteredValue ?? "").toLowerCase();
-                  const currentVal = c.finalValue ?? c.enteredValue ?? c.extractedValue;
+                {section.fields.map((field) => {
+                  const comparison = comparisonMap.get(field) ?? null;
+                  const sev = comparison?.severity;
+                  const rowClass = sev === "critical"
+                    ? "border-l-4 border-l-red-400 bg-red-50"
+                    : sev === "warning"
+                      ? "border-l-4 border-l-amber-400 bg-amber-50/50"
+                      : "border-l-4 border-l-transparent";
                   return (
-                    <tr key={i} className={cn(
-                      "border-b border-blue-50 last:border-0",
-                      c.severity === "critical" && "bg-red-50",
-                      c.severity === "warning" && "bg-amber-50/50",
-                    )}>
-                      <td className="px-4 py-2 font-semibold text-pearl">{c.label}</td>
-                      <td className="px-4 py-2 font-mono text-xs text-steel">{String(c.rememberedValue ?? "—")}</td>
-                      <td className="px-4 py-2 font-mono text-xs text-pearl">{String(currentVal ?? "—")}</td>
-                      <td className="px-4 py-2">
-                        {match
-                          ? <span className="text-xs font-bold text-emerald-600">✓ confirmed</span>
-                          : <span className={cn(
-                              "text-xs font-bold",
-                              c.severity === "critical" ? "text-red-600" : "text-amber-700"
-                            )}>⚠ changed</span>
-                        }
+                    <tr key={field} className={cn("border-b border-blue-50 last:border-0", rowClass)}>
+                      <td className="px-3 py-2 font-semibold text-pearl">
+                        {EVIDENCE_FIELD_LABELS[field] ?? field}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-steel" title={String(comparison?.enteredValue ?? "")}>
+                        {formatEvidenceValue(field, comparison?.enteredValue)}
+                      </td>
+                      <td className="px-3 py-2 font-mono text-steel" title={String(comparison?.extractedValue ?? "")}>
+                        {formatEvidenceValue(field, comparison?.extractedValue)}
+                      </td>
+                      <td className="px-3 py-2 font-mono" title={String(comparison?.rememberedValue ?? "")}>
+                        <span className={comparison?.rememberedValue != null ? "font-bold text-emerald-700" : "text-steel"}>
+                          {formatEvidenceValue(field, comparison?.rememberedValue)}
+                        </span>
+                      </td>
+                      <td className="px-3 py-2">
+                        {sev ? <SeverityBadge severity={sev} /> : <span className="text-steel">—</span>}
                       </td>
                     </tr>
                   );
@@ -501,296 +377,9 @@ function TradeMemorySection({
             </table>
           </div>
         </div>
-      )}
-
-      {/* Memory Timeline */}
-      {memoryTrace.length > 0 && (
-        <div className="mt-4">
-          <p className="mb-3 text-xs font-black uppercase tracking-widest text-steel">Agent Validation Steps</p>
-          <div className="relative space-y-3 pl-6">
-            <div className="absolute left-2 top-1 bottom-1 w-0.5 bg-blue-100" />
-            {memoryTrace.map((step, i) => {
-              const dotColor =
-                step.status === "critical" ? "bg-red-500" :
-                step.status === "warning" ? "bg-amber-400" : "bg-emerald-500";
-              const isMemWalStep = step.id === "memwal_recall";
-              return (
-                <div key={step.id} className="relative">
-                  <div className={cn(
-                    "absolute -left-6 top-1 h-4 w-4 rounded-full border-2 border-white",
-                    dotColor,
-                    isMemWalStep && "ring-2 ring-sui/40"
-                  )} />
-                  <div className={cn(
-                    "rounded-lg p-2.5",
-                    isMemWalStep && "border border-blue-100 bg-blue-50"
-                  )}>
-                    <p className={cn(
-                      "text-sm font-bold",
-                      isMemWalStep ? "text-sui" : "text-pearl"
-                    )}>
-                      {isMemWalStep && "🧠 "}{step.label}
-                    </p>
-                    <p className="text-xs text-steel">{step.detail}</p>
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Developer Details */}
-      <div className="mt-4">
-        <button
-          type="button"
-          onClick={() => setDevOpen(o => !o)}
-          className="flex items-center gap-1.5 text-xs font-semibold text-steel hover:text-pearl"
-        >
-          <ChevronDown className={cn("h-3.5 w-3.5 transition-transform", devOpen && "rotate-180")} />
-          Developer details
-        </button>
-        <AnimatePresence initial={false}>
-          {devOpen && (
-            <motion.div
-              key="dev"
-              initial={{ height: 0, opacity: 0 }}
-              animate={{ height: "auto", opacity: 1 }}
-              exit={{ height: 0, opacity: 0 }}
-              transition={{ duration: 0.18 }}
-              className="overflow-hidden"
-            >
-              <pre className="mt-2 overflow-auto rounded-lg bg-slate-50 p-3 text-xs text-steel">
-                {JSON.stringify({ baselineStatus, memoryTrace, fieldComparisons }, null, 2)}
-              </pre>
-            </motion.div>
-          )}
-        </AnimatePresence>
-      </div>
-    </CollapsibleSection>
+      ))}
+    </div>
   );
-}
-
-// ── Section 3: Agent Reasoning ──────────────────────────────────────────────
-
-function AgentReasoningSection({
-  fieldComparisons,
-  toolEvents,
-}: {
-  fieldComparisons: FieldComparison[];
-  toolEvents: ToolEvent[];
-}) {
-  const findings = fieldComparisons.filter(c => c.severity === "critical" || c.severity === "warning");
-  const criticalCount = fieldComparisons.filter(c => c.severity === "critical").length;
-
-  const badge = criticalCount > 0
-    ? <span className="rounded-full border border-red-200 bg-red-50 px-2 py-0.5 text-xs font-bold text-red-600">{criticalCount} critical</span>
-    : null;
-
-  const TOOL_LABELS: Record<string, string> = {
-    recall_party_memory: "Recalled party memory",
-    recall_document_fingerprints: "Checked document fingerprints",
-    flag_anomaly: "Flagged anomaly",
-    done: "Agent complete",
-  };
-
-  return (
-    <CollapsibleSection
-      title="Validation Agent · Tool Call Trace"
-      icon={Zap}
-      defaultOpen={findings.length > 0 || toolEvents.length > 0}
-      badge={badge}
-      accentClass={criticalCount > 0 ? "text-red-500" : "text-amber-500"}
-    >
-      {/* Tool-call trace */}
-      <div className="mb-4 rounded-xl border border-blue-100 bg-blue-50 p-4">
-        <div className="mb-3 flex items-center justify-between gap-3">
-          <p className="text-xs font-black uppercase tracking-widest text-sui">Live Tool-Call Trace</p>
-          <span className="text-xs text-steel">Tool-using agent with persistent cross-shipment memory</span>
-        </div>
-        {toolEvents.length === 0 ? (
-          <p className="text-xs text-steel italic">Run validation to see the agent tool-call trace.</p>
-        ) : (
-          <div className="space-y-2">
-            {toolEvents.map((event, i) => (
-              <motion.div
-                key={i}
-                initial={{ opacity: 0, x: -10 }}
-                animate={{ opacity: 1, x: 0 }}
-                transition={{ delay: i * 0.15, duration: 0.25 }}
-                className={cn(
-                  "rounded-lg border px-3 py-2 font-mono text-xs",
-                  event.name === "flag_anomaly" ? "border-red-200 bg-red-50" : event.name === "done" ? "border-emerald-100 bg-emerald-50" : "border-white/60 bg-white"
-                )}
-              >
-                <div className="flex items-center gap-2">
-                  <span className="shrink-0 text-sm">{TOOL_ICONS[event.name] ?? "○"}</span>
-                  <span className="font-bold text-pearl">{TOOL_LABELS[event.name] ?? event.name}</span>
-                  <span className="text-steel/70 text-[11px]">{formatToolInput(event.name, event.input)}</span>
-                </div>
-                {formatToolResult(event.name, event.result) && (
-                  <div className={cn(
-                    "mt-1 ml-6 text-xs",
-                    event.name === "flag_anomaly" ? "text-red-600 font-bold" : "text-emerald-700"
-                  )}>
-                    {formatToolResult(event.name, event.result)}
-                  </div>
-                )}
-              </motion.div>
-            ))}
-          </div>
-        )}
-      </div>
-
-      {/* Findings cards */}
-      {findings.length === 0 ? (
-        <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4 text-center">
-          <CheckCircle2 className="mx-auto h-6 w-6 text-emerald-500" />
-          <p className="mt-2 font-semibold text-emerald-700">No critical or warning findings — shipment data is consistent.</p>
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {findings.map((c, i) => {
-            const isPayment = c.field.includes("bank");
-            const cardBorder = c.severity === "critical" ? "border-red-200 bg-red-50" : "border-amber-200 bg-amber-50";
-            return (
-              <div key={i} className={cn("rounded-xl border p-4", cardBorder)}>
-                {/* Payment anomaly callout */}
-                {isPayment && c.severity === "critical" && (
-                  <div className="mb-3 rounded-lg border border-red-300 bg-red-100 px-3 py-2">
-                    <p className="text-xs font-black text-red-700">
-                      Payment diversion risk — bank beneficiary details changed from remembered exporter identity.
-                    </p>
-                  </div>
-                )}
-                <div className="flex flex-wrap items-center gap-2">
-                  <SeverityBadge severity={c.severity} />
-                  <span className="font-bold text-pearl">{c.label}</span>
-                </div>
-                <p className="mt-2 text-sm text-steel">{c.explanation}</p>
-                <div className="mt-3 flex flex-wrap gap-2">
-                  {c.enteredValue != null && (
-                    <span className="rounded-full border border-blue-100 bg-white px-2.5 py-1 text-xs font-mono">
-                      Entered: {formatEvidenceValue(c.field, c.enteredValue)}
-                    </span>
-                  )}
-                  {c.extractedValue != null && (
-                    <span className="rounded-full border border-blue-100 bg-white px-2.5 py-1 text-xs font-mono">
-                      Extracted: {formatEvidenceValue(c.field, c.extractedValue)}
-                    </span>
-                  )}
-                  {c.rememberedValue != null && (
-                    <span className="rounded-full border border-emerald-100 bg-emerald-50 px-2.5 py-1 text-xs font-mono font-bold text-emerald-700">
-                      Remembered: {formatEvidenceValue(c.field, c.rememberedValue)}
-                    </span>
-                  )}
-                </div>
-                {c.recommendedAction && (
-                  <p className="mt-2 text-xs font-semibold text-steel">→ {c.recommendedAction}</p>
-                )}
-                {c.evidence && c.evidence.length > 0 && (
-                  <div className="mt-2 flex flex-wrap gap-1">
-                    {c.evidence.map((ev, j) => (
-                      <a
-                        key={j}
-                        href={ev.kind === "walrus" ? walrusBlobUrl(ev.value) : ev.kind === "sui_object" ? suiObjectUrl(ev.value) : undefined}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 rounded-full border border-blue-100 bg-white px-2 py-0.5 text-xs text-sui hover:bg-blue-50"
-                      >
-                        <ExternalLink className="h-2.5 w-2.5" />
-                        {ev.label}
-                      </a>
-                    ))}
-                  </div>
-                )}
-              </div>
-            );
-          })}
-        </div>
-      )}
-    </CollapsibleSection>
-  );
-}
-
-// ── Section 4: Evidence Diff ────────────────────────────────────────────────
-
-function EvidenceDiffSection({ fieldComparisons }: { fieldComparisons: FieldComparison[] }) {
-  const comparisonMap = new Map<string, FieldComparison>();
-  for (const c of fieldComparisons) {
-    comparisonMap.set(c.field, c);
-  }
-
-  const rows = EVIDENCE_DIFF_FIELDS.map(field => ({
-    field,
-    label: evidenceFieldLabel(field),
-    comparison: comparisonMap.get(field) ?? null,
-  }));
-
-  const hasData = fieldComparisons.length > 0;
-
-  return (
-    <CollapsibleSection title="Evidence Diff" icon={FileText} defaultOpen={false} accentClass="text-steel">
-      {!hasData ? (
-        <p className="text-sm text-steel">Validation not yet run — extract documents first.</p>
-      ) : (
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[600px] text-xs">
-            <thead>
-              <tr className="border-b border-blue-100 bg-blue-50">
-                <th className="px-3 py-2 text-left font-bold text-steel">Field</th>
-                <th className="px-3 py-2 text-left font-bold text-steel">Entered</th>
-                <th className="px-3 py-2 text-left font-bold text-steel">Extracted</th>
-                <th className="px-3 py-2 text-left font-bold text-steel">Remembered</th>
-                <th className="px-3 py-2 text-left font-bold text-steel">Severity</th>
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map(({ field, label, comparison }) => {
-                const sev = comparison?.severity;
-                const rowClass = sev === "critical"
-                  ? "border-l-4 border-l-red-400 bg-red-50"
-                  : sev === "warning"
-                    ? "border-l-4 border-l-amber-400 bg-amber-50/50"
-                    : "border-l-4 border-l-transparent";
-                return (
-                  <tr key={field} className={cn("border-b border-blue-50 last:border-0", rowClass)}>
-                    <td className="px-3 py-2 font-semibold text-pearl">{label}</td>
-                    <td className="px-3 py-2 font-mono text-steel" title={String(comparison?.enteredValue ?? "")}>
-                      {formatEvidenceValue(field, comparison?.enteredValue)}
-                    </td>
-                    <td className="px-3 py-2 font-mono text-steel" title={String(comparison?.extractedValue ?? "")}>
-                      {formatEvidenceValue(field, comparison?.extractedValue)}
-                    </td>
-                    <td className="px-3 py-2 font-mono" title={String(comparison?.rememberedValue ?? "")}>
-                      <span className={comparison?.rememberedValue != null ? "font-bold text-emerald-700" : "text-steel"}>
-                        {formatEvidenceValue(field, comparison?.rememberedValue)}
-                      </span>
-                    </td>
-                    <td className="px-3 py-2">
-                      {sev ? <SeverityBadge severity={sev} /> : <span className="text-steel">—</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </CollapsibleSection>
-  );
-}
-
-function evidenceFieldLabel(field: string) {
-  const labels: Record<string, string> = {
-    "exporter.name": "Exporter legal name",
-    "exporter.bank_account": "Exporter bank account",
-    "exporter.registered_address": "Exporter registered address",
-    "cargo.country_of_origin": "Country of origin",
-    "documents.invoice_number": "Invoice number",
-    "shipment.bl_number": "BOL number",
-  };
-  return labels[field] ?? field.split(".").pop()?.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()) ?? field;
 }
 
 function formatEvidenceValue(field: string, value: unknown) {
@@ -817,7 +406,7 @@ function VerifiableProofSection({ shipment }: { shipment: ShipmentRecord }) {
       : memWalSyncStatus === "pending" ? "Syncing…" : "Pending";
 
   return (
-    <CollapsibleSection title="Verifiable Proof" icon={ShieldCheck} defaultOpen={true} accentClass="text-emerald-600">
+    <div className="space-y-3">
       {/* MemWal — hero badge */}
       <div className={cn(
         "rounded-xl border p-4",
@@ -940,7 +529,7 @@ function VerifiableProofSection({ shipment }: { shipment: ShipmentRecord }) {
           )}
         </div>
       </div>
-    </CollapsibleSection>
+    </div>
   );
 }
 
@@ -999,210 +588,111 @@ function MissingDocsBanner({ shipment }: { shipment: ShipmentRecord }) {
   );
 }
 
-// ── Simulate Follow-up Panel ────────────────────────────────────────────────
-
-function SimulateFollowupPanel({
-  shipment,
-  fieldComparisons,
-  onSimulate,
-}: {
-  shipment: ShipmentRecord;
-  fieldComparisons: FieldComparison[];
-  onSimulate: (changes: SimulatedChanges) => void;
-}) {
-  const [changes, setChanges] = useState<SimulatedChanges>({
-    changeBankAccountNumber: false,
-    changeRegisteredAddress: false,
-    reuseInvoiceNumber: false,
-    reuseBoLNumber: false,
-    changeCountryOfOrigin: false,
-  });
-
-  const compByField = new Map(fieldComparisons.map(c => [c.field, c]));
-  const priorShipmentCount = Math.max(1, fieldComparisons.filter((item) => item.rememberedValue != null).length ? 2 : 1);
-  const identityValue = (field: string, fallback?: string | number | null) => {
-    const comparison = compByField.get(field);
-    return comparison?.rememberedValue ?? comparison?.finalValue ?? comparison?.extractedValue ?? comparison?.enteredValue ?? fallback ?? null;
-  };
-  const legalName = identityValue("exporter.name", shipment.exporter.company);
-  const beneficiary = identityValue("exporter.bank_beneficiary_name", shipment.exporter.bankBeneficiaryName ?? shipment.exporter.company);
-  const bankAccount = identityValue("exporter.bank_account", shipment.exporter.bankAccountNumber ?? shipment.exporter.bankIban ?? shipment.exporter.bankSwift);
-  const address = identityValue("exporter.registered_address", shipment.exporter.registeredAddress);
-  const origin = identityValue("cargo.country_of_origin", shipment.cargo.countryOfOrigin || shipment.shipment.origin);
-  const invoiceNumber = identityValue("documents.invoice_number", shipment.extractedRef);
-  const bolNumber = identityValue("shipment.bl_number", shipment.shipment.bookingRef);
-
-  const options: Array<{
-    key: keyof SimulatedChanges;
-    label: string;
-    description: string;
-    remembered?: string | number | null;
-  }> = [
-    {
-      key: "changeBankAccountNumber",
-      label: "Change bank account number",
-      description: "Payment diversion fraud: the #1 mechanism in trade finance fraud globally. The exporter's payment beneficiary account changes, a common indicator of account takeover or invoice manipulation.",
-      remembered: bankAccount ? maskAccount(bankAccount) : null,
-    },
-    {
-      key: "changeRegisteredAddress",
-      label: "Change registered address",
-      description: "Identity fraud: same exporter name, different registered address. Common in impersonation and shell company fraud.",
-      remembered: address,
-    },
-    {
-      key: "reuseInvoiceNumber",
-      label: "Reuse invoice number",
-      description: "Double-financing fraud: the same invoice presented to multiple banks or buyers to obtain financing twice.",
-      remembered: invoiceNumber,
-    },
-    {
-      key: "reuseBoLNumber",
-      label: "Reuse bill of lading number",
-      description: "Cargo fraud: the same BOL presented multiple times. A BOL that appears twice means the cargo either doesn't exist or has already been claimed.",
-      remembered: bolNumber,
-    },
-    {
-      key: "changeCountryOfOrigin",
-      label: "Change country of origin",
-      description: "Origin fraud / tariff evasion: goods laundered through a different origin country to avoid duties or sanctions.",
-      remembered: origin,
-    },
-  ];
-
-  const anySelected = Object.values(changes).some(Boolean);
-
-  return (
-    <div className="rounded-2xl border border-amber-200 bg-gradient-to-r from-amber-50 via-white to-blue-50 p-5 shadow-sm">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-xs font-black uppercase tracking-widest text-amber-700">Demo: Trigger Cross-Shipment Memory Recall</p>
-          <h2 className="mt-1 text-base font-black text-pearl">Prepare Follow-up Shipment</h2>
-          <p className="mt-1 max-w-2xl text-sm text-steel">
-            The agent doesn{"'"}t care what you{"'"}re shipping or what it{"'"}s worth — those change legitimately every shipment. It remembers WHO this exporter IS: their bank, their address, their document identity. Choose a change that would be suspicious regardless of what{"'"}s being shipped:
-          </p>
-        </div>
-        <Brain className="h-6 w-6 shrink-0 text-amber-600" />
-      </div>
-
-      <div className="mt-4 rounded-xl border border-emerald-100 bg-white p-4">
-        <p className="text-sm font-semibold leading-6 text-steel">
-          The validation agent has memorized this exporter{"'"}s IDENTITY profile from {priorShipmentCount} prior shipment(s) — not the cargo, which changes every shipment, but WHO this exporter is: their bank details, registered address, and document numbers. Any deviation in these identity fields is a potential fraud signal.
-        </p>
-        <div className="mt-3 grid gap-2 text-xs sm:grid-cols-2 xl:grid-cols-3">
-          <IdentityPill label="Legal name" value={legalName} />
-          <IdentityPill label="Beneficiary" value={beneficiary} />
-          <IdentityPill label="Bank account" value={bankAccount ? maskAccount(bankAccount) : null} />
-          <IdentityPill label="Registered address" value={address} />
-          <IdentityPill label="Country of origin" value={origin} />
-          <IdentityPill label="Document fingerprints" value={`Invoice ${invoiceNumber ?? "unknown"} / BOL ${bolNumber ?? "unknown"}`} />
-        </div>
-      </div>
-
-      <div className="mt-4 grid gap-2 sm:grid-cols-2 xl:grid-cols-3">
-        {options.map(({ key, label, description, remembered }) => (
-          <label
-            key={key}
-            className={cn(
-              "flex cursor-pointer items-start gap-3 rounded-xl border p-3 transition",
-              changes[key]
-                ? "border-amber-300 bg-amber-100"
-                : "border-blue-100 bg-white hover:border-blue-200"
-            )}
-          >
-            <input
-              type="checkbox"
-              checked={changes[key]}
-              onChange={e => setChanges(prev => ({ ...prev, [key]: e.target.checked }))}
-              className="mt-0.5 accent-amber-500"
-            />
-            <div className="min-w-0">
-              <p className="text-sm font-bold text-pearl">{label}</p>
-              <p className="text-xs text-steel">{description}</p>
-              {remembered != null && String(remembered) !== "—" && (
-                <p className="mt-1 text-xs text-emerald-700">
-                  Agent remembers: <span className="font-mono font-bold">{String(remembered).slice(0, 24)}</span>
-                </p>
-              )}
-            </div>
-          </label>
-        ))}
-      </div>
-
-      <div className="mt-4 flex flex-wrap items-start gap-3">
-        <Button
-          onClick={() => onSimulate({ changeBankAccountNumber: true, reuseBoLNumber: true, changeRegisteredAddress: false, reuseInvoiceNumber: false, changeCountryOfOrigin: false })}
-          className="shrink-0 bg-red-500 text-white hover:bg-red-600"
-        >
-          <Zap className="h-4 w-4" />
-          Quick Demo (bank + BOL)
-        </Button>
-        <Button
-          onClick={() => onSimulate(changes)}
-          disabled={!anySelected}
-          variant="secondary"
-          className="shrink-0"
-        >
-          <Brain className="h-4 w-4" />
-          Prepare Follow-up Shipment
-        </Button>
-        <p className="text-xs text-steel leading-relaxed max-w-md">
-          Shipment 1 from {shipment.exporter.company} establishes the baseline. Shipment 2 flags identity deviations — bank account change and duplicate BOL are the most vivid fraud signals.
-        </p>
-      </div>
-    </div>
-  );
-}
-
-function IdentityPill({ label, value }: { label: string; value: unknown }) {
-  return (
-    <div className="rounded-lg border border-blue-100 bg-blue-50/50 px-3 py-2">
-      <p className="font-black uppercase text-steel">{label}</p>
-      <p className="mt-1 truncate font-mono font-bold text-pearl" title={String(value ?? "Not captured")}>
-        {String(value ?? "Not captured")}
-      </p>
-    </div>
-  );
-}
 
 // ── Internal fetch hook ─────────────────────────────────────────────────────
 
-function useValidation(shipmentId: string) {
+function useValidation(shipmentId: string, refreshKey = 0) {
   const [data, setData] = useState<ValidationResult | null>(null);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
-    fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`)
-      .then(r => r.ok ? r.json() as Promise<ValidationResult> : null)
+
+    async function loadOrRunValidation() {
+      const getRes = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`);
+      if (getRes.ok) {
+        return getRes.json() as Promise<ValidationResult>;
+      }
+      // No cached validation — trigger a fresh run with MemWal profile recall
+      const postRes = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`, { method: "POST" });
+      if (postRes.ok) {
+        return postRes.json() as Promise<ValidationResult>;
+      }
+      return null;
+    }
+
+    loadOrRunValidation()
       .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
       .catch(() => { if (!cancelled) setLoading(false); });
     return () => { cancelled = true; };
-  }, [shipmentId]);
+  }, [shipmentId, refreshKey]);
 
   return { data, loading };
 }
 
 // ── Main export ─────────────────────────────────────────────────────────────
 
-export function ShipmentCaseFile({ shipment, onSimulateFollowup }: ShipmentCaseFileProps) {
-  const { data: validation, loading } = useValidation(shipment.id);
+type AgentTab = "document" | "proof";
+
+const AGENT_TABS: Array<{ id: AgentTab; label: string; icon: React.ElementType }> = [
+  { id: "document", label: "Document Agent", icon: FileText },
+  { id: "proof", label: "Proof Agent", icon: ShieldCheck },
+];
+
+function AgentTabContent({
+  tab,
+  shipment,
+  fieldComparisons,
+}: {
+  tab: AgentTab;
+  shipment: ShipmentRecord;
+  fieldComparisons: FieldComparison[];
+}) {
+  switch (tab) {
+    case "document":
+      return <EvidenceDiffSection fieldComparisons={fieldComparisons} />;
+    case "proof":
+      return <VerifiableProofSection shipment={shipment} />;
+    default:
+      return null;
+  }
+}
+
+function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
+  const items = [
+    ["Carrier", shipment.shipment.carrier],
+    ["Incoterm", shipment.shipment.incoterm],
+    ["Declared value", `${shipment.shipment.currency} ${shipment.shipment.declaredValue}`],
+    ["Country of origin", shipment.cargo.countryOfOrigin],
+    ["HS code", shipment.cargo.hsCode],
+    ["Broker", shipment.broker || "—"],
+  ];
+  return (
+    <div className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
+      <h2 className="text-xl font-semibold text-pearl">Overview</h2>
+      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        {items.map(([label, value]) => (
+          <div key={label} className="rounded-lg bg-blue-50 p-4">
+            <p className="text-sm text-steel">{label}</p>
+            <p className="mt-1 font-medium text-pearl">{value}</p>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function agentTabBadge(
+  tab: AgentTab,
+  fieldComparisons: FieldComparison[],
+  shipment: ShipmentRecord,
+): React.ReactNode {
+  if (tab === "document") {
+    const count = fieldComparisons.filter(c => c.extractedValue != null).length;
+    if (count > 0) return <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-sui">{count}</span>;
+  }
+  if (tab === "proof") {
+    if (shipment.passportId) return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Minted</span>;
+  }
+  return null;
+}
+
+export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps) {
+  const { data: validation, loading } = useValidation(shipment.id, refreshKey);
+  const [activeTab, setActiveTab] = useState<AgentTab>("document");
 
   const fieldComparisons: FieldComparison[] = validation?.fieldComparisons ?? [];
-  const toolEvents: ToolEvent[] = validation?.agentToolEvents ?? [];
-
-  const baselineStatus: "baseline_established" | "prior_memory_found" =
-    validation?.baselineStatus ??
-    (fieldComparisons.some(c => c.rememberedValue != null) ? "prior_memory_found" : "baseline_established");
-
-  const memoryTrace: AgentMemoryTraceStep[] = validation?.memoryTrace ?? [];
-
-  const agentState = deriveAgentRunState(shipment, validation);
-
-  const showSimulate =
-    shipment.memWalSyncStatus === "synced" ||
-    (baselineStatus === "prior_memory_found" && !loading);
 
   return (
     <div className="space-y-4">
@@ -1217,41 +707,50 @@ export function ShipmentCaseFile({ shipment, onSimulateFollowup }: ShipmentCaseF
         </div>
       )}
 
-      {/* Section 1: Status Strip */}
-      <AgentStatusStrip
-        state={agentState}
-        shipment={shipment}
-        verdictReason={validation?.verdictReason ?? undefined}
-        baselineStatus={baselineStatus}
-        fieldComparisons={fieldComparisons}
-      />
+      {/* Recent Activities */}
+      <RecentActivities shipmentId={shipment.id} shipment={shipment} refreshKey={refreshKey} />
 
-      {/* Section 2: Trade Memory (HERO) */}
-      <TradeMemorySection
-        shipment={shipment}
-        fieldComparisons={fieldComparisons}
-        baselineStatus={baselineStatus}
-        memoryTrace={memoryTrace}
-        syncStatus={shipment.memWalSyncStatus}
-      />
+      {/* Trade Parties */}
+      <TradePartiesSection shipment={shipment} />
 
-      {/* Section 3: Agent Reasoning */}
-      <AgentReasoningSection fieldComparisons={fieldComparisons} toolEvents={toolEvents} />
+      {/* Overview */}
+      <OverviewSection shipment={shipment} />
 
-      {/* Section 4: Evidence Diff */}
-      <EvidenceDiffSection fieldComparisons={fieldComparisons} />
+      {/* Agent Hub — tabbed */}
+      <div className="rounded-2xl border border-blue-100 bg-white shadow-sm">
+        <div className="flex items-center gap-1 border-b border-blue-100 px-4 pt-4 pb-0 overflow-x-auto">
+          {AGENT_TABS.map(({ id, label, icon: Icon }) => {
+            const isActive = activeTab === id;
+            const badge = agentTabBadge(id, fieldComparisons, shipment);
+            return (
+              <button
+                key={id}
+                type="button"
+                onClick={() => setActiveTab(id)}
+                className={cn(
+                  "flex items-center gap-2 whitespace-nowrap rounded-t-lg px-4 py-3 text-sm font-bold transition",
+                  isActive
+                    ? "border-b-2 border-sui bg-blue-50 text-sui"
+                    : "text-steel hover:bg-blue-50/50 hover:text-pearl"
+                )}
+              >
+                <Icon className="h-4 w-4" />
+                {label}
+                {badge}
+              </button>
+            );
+          })}
+        </div>
 
-      {/* Section 5: Verifiable Proof */}
-      <VerifiableProofSection shipment={shipment} />
+        <div className="p-5">
+          <AgentTabContent
+            tab={activeTab}
+            shipment={shipment}
+            fieldComparisons={fieldComparisons}
+          />
+        </div>
+      </div>
 
-      {/* Simulate follow-up (below sections, gated on sync) */}
-      {showSimulate && onSimulateFollowup && (
-        <SimulateFollowupPanel
-          shipment={shipment}
-          fieldComparisons={fieldComparisons}
-          onSimulate={onSimulateFollowup}
-        />
-      )}
     </div>
   );
 }

@@ -100,7 +100,7 @@ export function ProvenancePanel({ shipmentId, refreshKey = 0 }: { shipmentId: st
         </label>
 
         <label className="grid gap-2 text-sm font-medium text-steel">
-          <span>Demo key (hex or suiprivkey)</span>
+          <span>Signing key (hex or suiprivkey)</span>
           <input
             value={demoKeyHex}
             onChange={(event) => setDemoKeyHex(event.target.value)}

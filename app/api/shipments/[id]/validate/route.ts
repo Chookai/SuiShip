@@ -17,6 +17,9 @@ type ValidationRunRow = {
   token_count_out: number | null;
   is_superseded: number;
   created_at: string;
+  field_comparisons_json: string | null;
+  baseline_status: string | null;
+  memory_trace_json: string | null;
 };
 
 export async function POST(
@@ -102,12 +105,16 @@ export async function GET(
       status: f.status,
       findingType: f.finding_type ?? "consistency",
     }));
-    const fieldComparisons = mappedFindings
-      .map((finding) => (finding.values as { field_comparison?: unknown }).field_comparison)
-      .filter(Boolean) as Record<string, unknown>[];
-    const baselineStatus = fieldComparisons.some(
-      (c) => c.rememberedValue !== null && c.rememberedValue !== undefined
-    ) ? "prior_memory_found" : "baseline_established";
+    const fieldComparisons = run.field_comparisons_json
+      ? JSON.parse(run.field_comparisons_json)
+      : mappedFindings
+          .map((finding) => (finding.values as { field_comparison?: unknown }).field_comparison)
+          .filter(Boolean);
+    const baselineStatus = run.baseline_status ??
+      (fieldComparisons.some(
+        (c: Record<string, unknown>) => c.rememberedValue !== null && c.rememberedValue !== undefined
+      ) ? "prior_memory_found" : "baseline_established");
+    const memoryTrace = run.memory_trace_json ? JSON.parse(run.memory_trace_json) : [];
     const latestCaseFile = getLatestCaseFile(shipmentId, db);
     const latestRun = getLatestAgentRun(shipmentId, db);
     return NextResponse.json({
@@ -119,6 +126,7 @@ export async function GET(
       findings: mappedFindings,
       fieldComparisons,
       baselineStatus,
+      memoryTrace,
       agentToolEvents: [],
       agentRunId: latestRun?.id,
       caseFile: latestCaseFile?.artifact ?? null,

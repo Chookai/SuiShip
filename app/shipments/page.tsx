@@ -24,6 +24,7 @@ export default function ShipmentsPage() {
 
   const visibleShipments = useMemo(() => {
     const filtered = shipments.filter((shipment) => {
+      if (shipment.status === "Draft") return false;
       const haystack = `${shipment.id} ${shipment.extractedRef ?? ""} ${shipment.importer.company} ${shipment.exporter.company} ${shipment.shipment.origin} ${shipment.shipment.destination} ${shipment.status}`.toLowerCase();
       const matchesQuery = haystack.includes(query.toLowerCase());
       const matchesStatus = statusFilter === "All" || shipment.status === statusFilter;

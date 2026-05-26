@@ -160,7 +160,7 @@ export function EndorsementPanel({
         <Truck className="h-5 w-5 text-sui" />
         <div>
           <h2 className="text-xl font-semibold text-pearl">Endorsement Panel</h2>
-          <p className="text-sm text-steel">Follow the demo custody sequence and push an operational progress memory into MemWal.</p>
+          <p className="text-sm text-steel">Follow the custody sequence and push an operational progress memory into MemWal.</p>
         </div>
       </div>
 
@@ -170,12 +170,12 @@ export function EndorsementPanel({
           <p className="mt-1">
             {nextStep
               ? `${nextStep.role.replace(/_/g, " ")} -> ${nextStep.action.replace(/_/g, " ")}`
-              : "Demo custody flow complete"}
+              : "Custody flow complete"}
           </p>
         </div>
 
         <div className="grid gap-2">
-          <span className="text-sm font-medium text-steel">Demo role</span>
+          <span className="text-sm font-medium text-steel">Role</span>
           <div className="flex flex-wrap gap-2">
             {(["exporter", "freight_forwarder", "customs", "importer"] as DemoEndorsementRole[]).map((option) => (
               <button
@@ -206,7 +206,7 @@ export function EndorsementPanel({
         </label>
 
         <label className="grid gap-2 text-sm font-medium text-steel">
-          <span>Signer key (optional demo key)</span>
+          <span>Signer key (optional)</span>
           <input
             value={signerKeyHex}
             onChange={(event) => setSignerKeyHex(event.target.value)}

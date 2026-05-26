@@ -12,11 +12,14 @@ import {
   buildCrossShipmentContext,
   buildShipmentMemoryFacts,
   detectAnomalies,
-  parseRememberedFacts,
   readCrossShipmentMemory,
-  writePrevalidationPartyMemory,
   type MemoryAnomalyFinding,
 } from "./agents/memory-agent";
+import {
+  buildRememberedFactsFromCanonicalProfiles,
+  detectProfileDrift,
+  recallCanonicalProfilesForShipment,
+} from "./profile-memwal";
 import { runValidationMemoryAgent, type ValidationAgentResult } from "./agents/validation-agent";
 import type { ToolEvent } from "./agents/agent-loop";
 import {
@@ -75,10 +78,9 @@ function scoreFromVerdict(
   overallVerdict: string,
   findings: ValidationFinding[]
 ): number {
-  if (overallVerdict === "mismatched") return 50;
-  if (overallVerdict === "insufficient_data") return 70;
   const errorCount = findings.filter(f => f.severity === "error").length;
   const warnCount = findings.filter(f => f.severity === "warning").length;
+  if (overallVerdict === "mismatched" && errorCount > 0) return 50;
   return Math.max(0, Math.min(100, 95 - errorCount * 15 - warnCount * 3));
 }
 
@@ -101,8 +103,9 @@ export async function runShipmentValidation(
     const docSetHash = computeDocSetHash(shipmentId, db);
     const runId = randomUUID();
 
-    // Mark previous runs superseded
+    // Mark previous runs superseded and resolve stale findings
     db.prepare("UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ?").run(shipmentId);
+    db.prepare("UPDATE validation_findings SET status = 'superseded' WHERE shipment_id = ? AND status = 'unresolved'").run(shipmentId);
 
     db.prepare(`
       INSERT INTO validation_runs
@@ -143,6 +146,21 @@ export async function runShipmentValidation(
       caseFile: null,
     };
     updateAgentRun(agentRun.id, { status: "completed", currentStep: "Mock validation complete", riskLevel: "low", completed: true }, db);
+
+    import("./memwal").then(({ writeProgressMemory }) => {
+      writeProgressMemory(shipmentId, {
+        kind: "ai_validation_complete",
+        overall_verdict: "aligned",
+        verdict_reason: "Mock validation: all documents aligned",
+        finding_count: 0,
+        error_count: 0,
+        warning_count: 0,
+        score: 95,
+        model: "mock",
+        timestamp: new Date().toISOString(),
+      }).catch(() => {});
+    }).catch(() => {});
+
     return mockResult;
   }
 
@@ -205,17 +223,23 @@ export async function runShipmentValidation(
 
   const shipment = getShipmentById(shipmentId);
   const facts = shipment ? buildShipmentMemoryFacts(shipment, compactManifest) : null;
-  updateAgentRun(agentRun.id, { status: "recalling_memory", currentStep: "Recalling MemWal party and document memory" }, db);
+  updateAgentRun(agentRun.id, { status: "recalling_memory", currentStep: "Recalling MemWal company profiles and document fingerprints" }, db);
   const memory = facts ? await readCrossShipmentMemory(facts) : { exporterHistory: [], importerHistory: [], documentFingerprints: [] };
-  const rememberedFacts = parseRememberedFacts(memory.exporterHistory);
+  const canonicalProfiles = facts ? await recallCanonicalProfilesForShipment(facts) : { exporter: null, importer: null };
+  const rememberedFacts = buildRememberedFactsFromCanonicalProfiles(canonicalProfiles, shipmentId);
+  const profileDriftAnomalies = facts ? detectProfileDrift(facts, canonicalProfiles) : [];
+  const profileSummary = [
+    canonicalProfiles.exporter ? `Exporter profile v${canonicalProfiles.exporter.profileVersion} (${canonicalProfiles.exporter.company})` : null,
+    canonicalProfiles.importer ? `Importer profile v${canonicalProfiles.importer.profileVersion} (${canonicalProfiles.importer.company})` : null,
+  ].filter(Boolean);
   recordAgentStep({
     runId: agentRun.id,
     shipmentId,
     agentName: "Memory Agent",
-    stepName: "Recall cross-shipment memory",
-    message: memory.exporterHistory.length > 0
-      ? `Recalled ${memory.exporterHistory.length} exporter memory record(s) and ${memory.documentFingerprints.length} document fingerprint record(s).`
-      : "No prior exporter memory was recalled; this shipment can establish a baseline after mint.",
+    stepName: "Recall MemWal company profiles",
+    message: profileSummary.length > 0
+      ? `Recalled ${profileSummary.join(" and ")} from MemWal. ${memory.documentFingerprints.length} document fingerprint(s) found.`
+      : `No company profiles found in MemWal. ${memory.documentFingerprints.length} document fingerprint(s) found.`,
     memoryReads: [...memory.exporterHistory, ...memory.documentFingerprints].map((item) => ({
       namespace: item.namespace,
       blobId: item.blobId,
@@ -230,9 +254,18 @@ export async function runShipmentValidation(
         documentFingerprints: memory.documentFingerprints,
       })
     : { comparisons: [], trace: [], baselineStatus: "baseline_established" as const };
-  const deterministicAnomalies = facts ? detectAnomalies(facts, memory) : [];
+  const documentOnlyMemory = {
+    exporterHistory: [],
+    importerHistory: [],
+    documentFingerprints: memory.documentFingerprints,
+  };
+  const deterministicAnomalies = facts
+    ? [...profileDriftAnomalies, ...detectAnomalies(facts, documentOnlyMemory)]
+    : [];
   const crossShipmentContext = facts ? buildCrossShipmentContext(facts, memory, deterministicAnomalies) : "";
-  const hasRecalledMemory = memory.exporterHistory.length > 0 || memory.importerHistory.length > 0 || memory.documentFingerprints.length > 0;
+  const hasRecalledMemory =
+    rememberedFacts.length > 0 ||
+    memory.documentFingerprints.length > 0;
   let agentResult: ValidationAgentResult = { anomalies: deterministicAnomalies, toolEvents: [] };
   updateAgentRun(agentRun.id, { status: "detecting_anomalies", currentStep: "Comparing entered, extracted, and remembered facts" }, db);
   if (facts && hasRecalledMemory) {
@@ -251,14 +284,16 @@ export async function runShipmentValidation(
   const docSetHash = computeDocSetHash(shipmentId, db);
   const runId = randomUUID();
 
-  // Mark previous runs superseded
+  // Mark previous runs superseded and resolve stale findings
   db.prepare("UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ?").run(shipmentId);
+  db.prepare("UPDATE validation_findings SET status = 'superseded' WHERE shipment_id = ? AND status = 'unresolved'").run(shipmentId);
 
   db.prepare(`
     INSERT INTO validation_runs
       (id, shipment_id, issues_json, overall_verdict, verdict_reason,
-       input_manifest_json, token_count_in, token_count_out, doc_set_hash, model)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+       input_manifest_json, token_count_in, token_count_out, doc_set_hash, model,
+       field_comparisons_json, baseline_status, memory_trace_json)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     runId,
     shipmentId,
@@ -269,7 +304,10 @@ export async function runShipmentValidation(
     result.inputTokens,
     result.outputTokens,
     docSetHash,
-    model
+    model,
+    JSON.stringify(comparisonBundle.comparisons),
+    comparisonBundle.baselineStatus,
+    JSON.stringify(comparisonBundle.trace)
   );
 
   // Write structured findings
@@ -382,9 +420,20 @@ export async function runShipmentValidation(
 
   logger.info({ shipmentId, overallVerdict: result.overallVerdict, findingCount: findings.length, score }, "Validation complete");
 
-  // Write preliminary party memory at validation time so Shipment 2 recall works
-  // even if Shipment 1 was never minted. Post-mint write supplements with Walrus/Sui refs.
-  if (facts) writePrevalidationPartyMemory(facts);
+  // Write validation result to MemWal
+  import("./memwal").then(({ writeProgressMemory }) => {
+    writeProgressMemory(shipmentId, {
+      kind: "ai_validation_complete",
+      overall_verdict: overallVerdict,
+      verdict_reason: verdictReason,
+      finding_count: findings.length,
+      error_count: findings.filter(f => f.severity === "error").length,
+      warning_count: findings.filter(f => f.severity === "warning").length,
+      score,
+      model,
+      timestamp: new Date().toISOString(),
+    }).catch(() => {});
+  }).catch(() => {});
 
   return {
     issues: allIssues,

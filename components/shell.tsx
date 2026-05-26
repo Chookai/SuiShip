@@ -1,7 +1,7 @@
 "use client";
 
 import { ConnectButton, useCurrentAccount } from "@mysten/dapp-kit";
-import { Bell, Boxes, BrainCircuit, FilePlus2, LayoutDashboard, Moon, Search, Ship, Sparkles } from "lucide-react";
+import { Bell, Boxes, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, Search, Ship, Sparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -11,7 +11,7 @@ import { Logo } from "@/components/logo";
 import { useRole } from "@/components/role-context";
 import { useInvitations } from "@/lib/notifications";
 import { useShipments } from "@/lib/shipments-store";
-import { cn, formatAddress } from "@/lib/utils";
+import { cn } from "@/lib/utils";
 import { useEffect, useRef, useState } from "react";
 
 const nav = [
@@ -24,7 +24,7 @@ const nav = [
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
   const account = useCurrentAccount();
-  const { role, roles, setRole } = useRole();
+  const { role, roles, setRole, profile, profiles } = useRole();
   const { shipments } = useShipments();
   const { invitations, unreadCount, markAllRead, markRead } = useInvitations(role, shipments);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
@@ -71,9 +71,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="relative mt-auto px-7 pb-8">
+        <div className="relative mt-auto px-4 pb-8">
           {roleMenuOpen && (
-            <div className="absolute bottom-24 left-7 right-6 z-20 rounded-2xl border border-white/70 bg-white/88 p-2 shadow-panel backdrop-blur-xl">
+            <div className="absolute bottom-24 left-4 right-4 z-20 rounded-2xl border border-white/70 bg-white/88 p-2 shadow-panel backdrop-blur-xl">
               {roles.map((item) => (
                 <button
                   key={item}
@@ -88,23 +88,33 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   )}
                 >
                   <span className="blue-gradient h-8 w-8 shrink-0 rounded-full" />
-                  {item}
+                  <span className="min-w-0">
+                    <span className="block truncate">{profiles[item].company}</span>
+                  </span>
                 </button>
               ))}
             </div>
           )}
-          <button
-            type="button"
-            onClick={() => setRoleMenuOpen((open) => !open)}
-            className="flex h-14 w-full items-center gap-3 rounded-2xl px-2 text-left transition hover:bg-white/35"
-            aria-expanded={roleMenuOpen}
-          >
-            <div className="blue-gradient h-11 w-11 shrink-0 rounded-full" />
-            <div className="min-w-0">
-              <p className="truncate text-sm font-bold text-pearl">{role}</p>
-              <p className="text-xs text-steel">Trade operator</p>
-            </div>
-          </button>
+          <div className="flex h-14 items-center gap-1 rounded-2xl px-1">
+            <Link
+              href="/profile"
+              className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl text-left transition hover:bg-white/35"
+              onClick={() => setRoleMenuOpen(false)}
+              title={profile.company}
+            >
+              <div className="blue-gradient h-9 w-9 shrink-0 rounded-full" />
+              <p className="min-w-0 truncate text-[13px] font-bold text-pearl">{profile.company}</p>
+            </Link>
+            <button
+              type="button"
+              onClick={() => setRoleMenuOpen((open) => !open)}
+              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sui transition hover:bg-white/50"
+              aria-label="Switch company"
+              aria-expanded={roleMenuOpen}
+            >
+              <ChevronsUpDown className="h-4 w-4" />
+            </button>
+          </div>
         </div>
       </aside>
 
@@ -209,7 +219,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <div className="hidden items-center gap-2 rounded-full bg-blue-50 px-3 py-2 text-xs font-semibold text-steel xl:flex">
                 <Boxes className="h-4 w-4 text-sui" />
                 <span>Testnet</span>
-                <span className="text-pearl">{formatAddress(account?.address)}</span>
               </div>
               <ConnectButton />
             </div>

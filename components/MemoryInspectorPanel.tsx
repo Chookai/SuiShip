@@ -340,9 +340,9 @@ function fallbackTrace(comparisons: FieldComparison[], documentMemories: Memory[
     },
     {
       id: "memwal_recall",
-      label: hasMemory ? "MemWal recalled exporter baseline" : "No prior exporter memory found",
+      label: hasMemory ? "MemWal company profiles verified" : "No company profiles found in MemWal",
       status: "complete",
-      detail: hasMemory ? "Structured exporter facts were recalled from MemWal." : "This shipment can become the exporter baseline after mint.",
+      detail: hasMemory ? "Exporter and importer profiles recalled from MemWal for document verification." : "Save company profiles in the Profile page to enable MemWal identity verification.",
     },
     {
       id: "memory_comparison",

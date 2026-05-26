@@ -347,7 +347,47 @@ const FIELD_POLICIES: FieldPolicy[] = [
     severity: "critical",
     recommendedAction: "Confirm the importer identity and correct mismatched documents.",
     finalPreference: "extracted",
-    compareWithMemory: false,
+    compareWithMemory: true,
+  },
+  {
+    field: "importer.tax_id",
+    label: "Importer tax ID",
+    entered: (s) => s.importer.taxId ?? null,
+    extracted: (m) => firstExtracted(["commercial_invoice.recipient_tax_id", "bill_of_lading.consignee_tax_id", "certificate_of_origin.importer_tax_id"], m),
+    severity: "critical",
+    recommendedAction: "Confirm the importer tax identifier matches MemWal profile before customs clearance.",
+    finalPreference: "entered",
+    compareWithMemory: true,
+  },
+  {
+    field: "importer.registered_address",
+    label: "Importer registered address",
+    entered: (s) => s.importer.registeredAddress ?? null,
+    extracted: (m) => firstAddressExtracted(["commercial_invoice.recipient_address", "bill_of_lading.consignee_address", "certificate_of_origin.importer_address"], m),
+    severity: "critical",
+    recommendedAction: "Verify the importer registered address against company registry records.",
+    finalPreference: "extracted",
+    compareWithMemory: true,
+  },
+  {
+    field: "importer.bank_beneficiary_name",
+    label: "Importer bank beneficiary",
+    entered: (s) => s.importer.bankBeneficiaryName ?? null,
+    extracted: (m) => firstExtracted(["commercial_invoice.recipient_bank_beneficiary", "commercial_invoice.recipient_name"], m),
+    severity: "critical",
+    recommendedAction: "Confirm the importer beneficiary name with the counterparty.",
+    finalPreference: "extracted",
+    compareWithMemory: true,
+  },
+  {
+    field: "importer.bank_account",
+    label: "Importer bank account",
+    entered: (s) => s.importer.bankAccountNumber ?? s.importer.bankIban ?? s.importer.bankSwift ?? null,
+    extracted: (m) => firstExtracted(["commercial_invoice.recipient_bank_account", "commercial_invoice.recipient_bank_iban"], m),
+    severity: "critical",
+    recommendedAction: "Hold payment and verify importer bank details out-of-band.",
+    finalPreference: "extracted",
+    compareWithMemory: true,
   },
   {
     field: "shipment.origin",
@@ -568,14 +608,16 @@ function memorySeverity(field: string, current: unknown, remembered: unknown): "
 
 function memoryValuesEquivalent(field: string, current: unknown, remembered: unknown): boolean {
   if (isMissing(current) || isMissing(remembered)) return true;
+  if (field.includes("registered_address")) {
+    return normalizeText(current) === normalizeText(remembered);
+  }
   if (
-    field === "exporter.name" ||
-    field === "exporter.tax_id" ||
-    field === "exporter.registered_address" ||
-    field === "exporter.bank_beneficiary_name" ||
-    field === "exporter.bank_account"
+    field.includes("name") ||
+    field.includes("tax_id") ||
+    field.includes("bank_beneficiary") ||
+    field.includes("bank_account")
   ) {
-    return String(current).trim() === String(remembered).trim();
+    return normalizeText(current) === normalizeText(remembered);
   }
   return valuesEquivalent(field, current, remembered);
 }

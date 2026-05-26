@@ -348,7 +348,7 @@ export function getShipmentById(id: string): ShipmentRecord | undefined {
 export function listShipments(): ShipmentRecord[] {
   const db = getDb();
   ensureExtraColumns(db);
-  const rows = db.prepare("SELECT * FROM shipments ORDER BY created_at DESC").all() as ShipmentRow[];
+  const rows = db.prepare("SELECT * FROM shipments WHERE status != 'Draft' ORDER BY created_at DESC").all() as ShipmentRow[];
   return rows.map(rowToRecord);
 }
 
@@ -359,7 +359,30 @@ export function deleteShipment(id: string): void {
     .all(id) as { sha256: string }[];
   const sha256s = fileRows.map((row) => row.sha256);
 
-  db.prepare("DELETE FROM shipments WHERE id = ?").run(id);
+  db.transaction(() => {
+    db.prepare(`
+      DELETE FROM mock_sui_grants
+      WHERE passport_id IN (
+        SELECT passport_id FROM mock_sui_passports WHERE shipment_id = ?
+      )
+    `).run(id);
+
+    db.prepare("DELETE FROM walrus_blobs WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM validation_findings WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM validation_runs WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM extraction_runs WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM embedding_chunks WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM manifest_cache WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM progress_manifests WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM passport_endorsements WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM shipment_artifacts WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM shipment_case_files WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM agent_steps WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM agent_runs WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM mock_sui_passports WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM shipment_files WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM shipments WHERE id = ?").run(id);
+  })();
 
   const deleteOrphanedCache = db.prepare(`
     DELETE FROM file_cache

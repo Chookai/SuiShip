@@ -15,10 +15,10 @@ async function syncToServer(record: ShipmentRecord): Promise<void> {
 }
 
 async function deleteFromServer(id: string): Promise<void> {
-  try {
-    await fetch(`/api/shipments/${encodeURIComponent(id)}`, { method: "DELETE" });
-  } catch {
-    // non-fatal
+  const response = await fetch(`/api/shipments/${encodeURIComponent(id)}`, { method: "DELETE" });
+  if (!response.ok) {
+    const errorText = await response.text().catch(() => response.statusText);
+    throw new Error(`Failed to delete shipment ${id}: ${errorText}`);
   }
 }
 
@@ -307,7 +307,9 @@ export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
           } catch {}
           return next;
         });
-        void deleteFromServer(id);
+        void deleteFromServer(id).catch((error) => {
+          console.error(error);
+        });
       },
       getShipment: (id) => shipments.find((shipment) => shipment.id === id),
       clear: () => {

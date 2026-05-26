@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useState } from "react";
+import { SCENARIO_C_EXPORTER, SCENARIO_C_IMPORTER } from "@/lib/scenario-c-demo-defaults";
 
 export type MockRole = "Importer" | "Exporter";
 
@@ -12,24 +13,60 @@ export type CompanyProfile = {
   email: string;
   phone: string;
   country: string;
+  taxId?: string;
+  registeredAddress?: string;
+  bankBeneficiaryName?: string;
+  bankAccountNumber?: string;
 };
 
 const defaultProfiles: Record<MockRole, CompanyProfile> = {
-  Importer: {
-    company: "Northstar Components Inc.",
-    contact: "Nathan Cole",
-    email: "nathan.cole@northstar.example",
-    phone: "+1 415 800 2190",
-    country: "United States"
-  },
-  Exporter: {
-    company: "Penang Micro Systems Sdn Bhd",
-    contact: "Amanda Lee",
-    email: "amanda.lee@penangmicro.example",
-    phone: "+60 4 228 9011",
-    country: "Malaysia"
-  }
+  Importer: { ...SCENARIO_C_IMPORTER },
+  Exporter: { ...SCENARIO_C_EXPORTER },
 };
+
+const LEGACY_COMPANY_MARKERS = ["penang micro", "northstar"];
+
+function normalizeCompanyKey(company: string | undefined): string {
+  return company?.trim().toLowerCase() ?? "";
+}
+
+function isLegacyDemoCompany(company: string | undefined): boolean {
+  const normalized = normalizeCompanyKey(company);
+  return LEGACY_COMPANY_MARKERS.some((marker) => normalized.includes(marker));
+}
+
+function migrateProfiles(
+  stored: Partial<Record<MockRole, CompanyProfile>> | null
+): Record<MockRole, CompanyProfile> {
+  const importerStored = stored?.Importer;
+  const exporterStored = stored?.Exporter;
+
+  const importerLegacy = isLegacyDemoCompany(importerStored?.company);
+  const exporterLegacy = isLegacyDemoCompany(exporterStored?.company);
+  const sameCompany =
+    Boolean(importerStored?.company && exporterStored?.company) &&
+    normalizeCompanyKey(importerStored?.company) === normalizeCompanyKey(exporterStored?.company);
+
+  // Both accounts were saved as the same legacy company (e.g. Northstar twice) — restore demo pair.
+  if (sameCompany || (importerLegacy && exporterLegacy)) {
+    return {
+      Importer: { ...defaultProfiles.Importer },
+      Exporter: { ...defaultProfiles.Exporter },
+    };
+  }
+
+  const importer =
+    importerStored && !importerLegacy
+      ? { ...defaultProfiles.Importer, ...importerStored }
+      : { ...defaultProfiles.Importer };
+
+  const exporter =
+    exporterStored && !exporterLegacy
+      ? { ...defaultProfiles.Exporter, ...exporterStored }
+      : { ...defaultProfiles.Exporter };
+
+  return { Importer: importer, Exporter: exporter };
+}
 
 type RoleContextValue = {
   role: MockRole;
@@ -43,10 +80,11 @@ type RoleContextValue = {
 const RoleContext = createContext<RoleContextValue | null>(null);
 
 const STORAGE_ROLE = "suiship-role";
-const STORAGE_PROFILES = "suiship-profiles";
+const STORAGE_PROFILES = "suiship-profiles-v2";
+const STORAGE_PROFILES_LEGACY = "suiship-profiles";
 
 export function RoleProvider({ children }: { children: React.ReactNode }) {
-  const [role, setRoleState] = useState<MockRole>("Importer");
+  const [role, setRoleState] = useState<MockRole>("Exporter");
   const [profiles, setProfiles] = useState<Record<MockRole, CompanyProfile>>(defaultProfiles);
 
   useEffect(() => {
@@ -57,17 +95,23 @@ export function RoleProvider({ children }: { children: React.ReactNode }) {
       // Migrate any legacy "Freight Forwarder" preference to Importer.
       window.localStorage.setItem(STORAGE_ROLE, "Importer");
     }
-    const storedProfiles = window.localStorage.getItem(STORAGE_PROFILES);
+    const storedProfiles =
+      window.localStorage.getItem(STORAGE_PROFILES) ??
+      window.localStorage.getItem(STORAGE_PROFILES_LEGACY);
+    let parsed: Partial<Record<MockRole, CompanyProfile>> | null = null;
     if (storedProfiles) {
       try {
-        const parsed = JSON.parse(storedProfiles) as Partial<Record<MockRole, CompanyProfile>>;
-        setProfiles((current) => ({
-          Importer: { ...current.Importer, ...(parsed.Importer || {}) },
-          Exporter: { ...current.Exporter, ...(parsed.Exporter || {}) }
-        }));
+        parsed = JSON.parse(storedProfiles) as Partial<Record<MockRole, CompanyProfile>>;
       } catch {
-        // ignore corrupted profile data
+        parsed = null;
       }
+    }
+
+    const migrated = migrateProfiles(parsed);
+    setProfiles(migrated);
+    window.localStorage.setItem(STORAGE_PROFILES, JSON.stringify(migrated));
+    if (window.localStorage.getItem(STORAGE_PROFILES_LEGACY)) {
+      window.localStorage.removeItem(STORAGE_PROFILES_LEGACY);
     }
   }, []);
 

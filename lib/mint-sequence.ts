@@ -18,6 +18,13 @@ import { ensureAgentRun, recordAgentStep, updateAgentRun } from "./agent-runs";
 import { registerArtifact, upsertWalrusArtifact } from "./artifacts";
 import type { AggregateResult } from "@/src/agent/schemas/aggregate-result";
 import type { MemWalManifest } from "./memwal/types";
+import { parseEd25519Keypair } from "./sui-keypair";
+
+function getServerSuiAddress(): string {
+  const key = process.env.SUI_PRIVATE_KEY;
+  if (!key) throw new Error("SUI_PRIVATE_KEY not set");
+  return parseEd25519Keypair(key).toSuiAddress();
+}
 import type { WalrusUpload } from "./shipments-store";
 
 const logger = pino({ name: "mint-sequence" });
@@ -345,9 +352,10 @@ export async function executeMintSequence(
       })();
       const packageHash = walrusPackage.sha256;
 
+      const serverAddr = getServerSuiAddress();
       const finalizeStartedAt = Date.now();
       const result = await suiClient.mintPassport({
-        owner: ownerAddress,
+        owner: serverAddr,
         shipmentId,
         memWalSpaceId,
         walrusBlobIds,
@@ -1273,9 +1281,10 @@ async function sealMintPath(
       })();
 
       // Finalize on Sui
+      const serverAddr2 = getServerSuiAddress();
       const finalizeStartedAt = Date.now();
       const result = await suiClient.mintPassport({
-        owner: ownerAddress,
+        owner: serverAddr2,
         shipmentId,
         memWalSpaceId,
         walrusBlobIds: currentWalrusBlobIds,

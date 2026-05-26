@@ -16,8 +16,15 @@ import {
 } from "./shipment-file-commitments";
 import type { DocCommitInput } from "./sui-passport/types";
 import { getSuiPassportClient } from "./sui-passport";
+import { parseEd25519Keypair } from "./sui-keypair";
 
 const logger = pino({ name: "real-sui-bootstrap" });
+
+function getServerAddress(): string {
+  const key = process.env.SUI_PRIVATE_KEY;
+  if (!key) throw new Error("SUI_PRIVATE_KEY not set");
+  return parseEd25519Keypair(key).toSuiAddress();
+}
 
 type BootstrapResult = {
   templateId: string;
@@ -477,10 +484,10 @@ export async function ensureOnChainShipmentInitialized(
   }
 
   const manifestDigest = buildManifestDigest(shipmentId, db);
-  const initiatorAddress = shipment.initiatorAddress ?? ownerAddress;
-  const counterpartyAddress = deriveCounterpartyAddress(`${shipmentId}:${shipment.workflow}`, initiatorAddress);
-  const importerAddress = shipment.workflow === "importer" ? initiatorAddress : counterpartyAddress;
-  const exporterAddress = shipment.workflow === "exporter" ? initiatorAddress : counterpartyAddress;
+  const serverAddr = getServerAddress();
+  const counterpartyAddress = deriveCounterpartyAddress(`${shipmentId}:${shipment.workflow}`, serverAddr);
+  const importerAddress = shipment.workflow === "importer" ? serverAddr : counterpartyAddress;
+  const exporterAddress = shipment.workflow === "exporter" ? serverAddr : counterpartyAddress;
 
   if (typeof client.createShipment !== "function") {
     throw new Error("Real Sui client does not implement createShipment().");
@@ -490,7 +497,7 @@ export async function ensureOnChainShipmentInitialized(
   try {
     created = await client.createShipment({
       shipmentId,
-      initiator: initiatorAddress,
+      initiator: serverAddr,
       importer: importerAddress,
       exporter: exporterAddress,
       template: templateId,

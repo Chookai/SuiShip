@@ -31,6 +31,13 @@ import {
 } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
 import type { AggregateResult } from "@/src/agent/schemas/aggregate-result";
+import {
+  enrichPartyWithCompanyCatalog,
+  SCENARIO_C_CARGO,
+  SCENARIO_C_SHIPMENT_DETAILS,
+  type DemoPartyDetails,
+} from "@/lib/scenario-c-demo-defaults";
+import type { CompanyProfile } from "@/components/role-context";
 
 const steps = ["Workflow", "Trade parties", "Shipment details", "Cargo details", "Document upload"];
 const visibleStepIndexes = [0, 1, 2, 3, 4];
@@ -53,36 +60,27 @@ const documentCatalog: Array<{ name: string; defaultOwner: DocumentOwner; defaul
 
 const initialShipmentDetails = {
   shipmentId: "",
-  origin: "Malaysia",
-  originPort: "KUL Airport",
-  destination: "United States",
-  destinationPort: "LAX Airport",
-  carrier: "DHL Global Forwarding",
-  transportMode: "Air",
-  incoterm: "DAP",
-  etd: "2026-06-14",
-  eta: "2026-06-18",
-  declaredValue: "148200",
-  currency: "USD",
-  bookingRef: "",
-  paymentTerms: "",
-  blType: ""
+  ...SCENARIO_C_SHIPMENT_DETAILS,
 };
 
 const initialCargo = {
-  description: "Semiconductor components",
-  sku: "PMIC-8842",
-  hsCode: "8542.31",
-  quantity: "2400",
-  grossWeight: "820 kg",
-  netWeight: "760 kg",
-  handlingUnits: "12 pallets",
-  container: "",
-  seal: "",
-  countryOfOrigin: "Malaysia",
-  dangerousGoods: "No",
-  temperatureControlled: "No"
+  ...SCENARIO_C_CARGO,
 };
+
+type PartyFormState = DemoPartyDetails;
+
+function partyFromProfile(profile: CompanyProfile): PartyFormState {
+  return enrichPartyWithCompanyCatalog({
+    company: profile.company,
+    contact: profile.contact,
+    email: profile.email,
+    phone: profile.phone,
+    taxId: profile.taxId ?? "",
+    registeredAddress: profile.registeredAddress,
+    bankBeneficiaryName: profile.bankBeneficiaryName,
+    bankAccountNumber: profile.bankAccountNumber,
+  });
+}
 
 function isAirTransportMode(mode?: string) {
   return mode?.trim().toLowerCase() === "air";
@@ -110,7 +108,7 @@ export default function CreateShipmentPage() {
   const { role, profile, profiles } = useRole();
   const { addShipment, updateShipment } = useShipments();
 
-  const defaultWorkflow: WorkflowKey = role === "Exporter" ? "exporter" : "importer";
+  const defaultWorkflow: WorkflowKey = "exporter";
 
   const [workflow, setWorkflow] = useState<WorkflowKey>(defaultWorkflow);
   const [activeStep, setActiveStep] = useState(0);
@@ -123,22 +121,8 @@ export default function CreateShipmentPage() {
   const [extractionStatus, setExtractionStatus] = useState<"idle" | "extracting" | "complete" | "failed">("idle");
   const [extractResult, setExtractResult] = useState<AggregateResult | null>(null);
 
-  const counterpartyKey: "Importer" | "Exporter" = workflow === "importer" ? "Exporter" : "Importer";
-
-  const [importer, setImporter] = useState({
-    company: profiles.Importer.company,
-    contact: profiles.Importer.contact,
-    email: profiles.Importer.email,
-    phone: profiles.Importer.phone,
-    taxId: ""
-  });
-  const [exporter, setExporter] = useState({
-    company: profiles.Exporter.company,
-    contact: profiles.Exporter.contact,
-    email: profiles.Exporter.email,
-    phone: profiles.Exporter.phone,
-    taxId: ""
-  });
+  const [importer, setImporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Importer));
+  const [exporter, setExporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Exporter));
   const [broker, setBroker] = useState("");
   const [freightForwarder, setFreightForwarder] = useState("");
   const [notifyPartyEnabled, setNotifyPartyEnabled] = useState(false);
@@ -159,14 +143,23 @@ export default function CreateShipmentPage() {
   const [docs, setDocs] = useState<DocumentRequirement[]>(initialDocs);
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
-  // Re-sync the creator's auto-filled party when the workflow changes.
+  const otherCompanyProfile = profiles[role === "Importer" ? "Exporter" : "Importer"];
+  const counterpartyKey: "Importer" | "Exporter" = workflow === "importer" ? "Exporter" : "Importer";
+
+  // Workflow picks which side is yours; tax ID / address follow each company name from the catalog.
   useEffect(() => {
     if (workflow === "importer") {
-      setImporter((current) => ({ ...current, ...profile }));
-    } else if (workflow === "exporter") {
-      setExporter((current) => ({ ...current, ...profile }));
+      setImporter(partyFromProfile(profile));
+      setExporter(partyFromProfile(otherCompanyProfile));
+    } else {
+      setExporter(partyFromProfile(profile));
+      setImporter(partyFromProfile(otherCompanyProfile));
     }
-    setDetails((current) => ({ ...current, shipmentId: generateShipmentId(workflow) }));
+    setDetails((current) => ({
+      ...initialShipmentDetails,
+      shipmentId: generateShipmentId(workflow),
+    }));
+    setCargo({ ...initialCargo });
     setShipmentRecordId(null);
     setInviteToken(null);
     setCreatedInProgress(false);
@@ -176,7 +169,16 @@ export default function CreateShipmentPage() {
     setUploadedFiles([]);
     setExtractResult(null);
     setExtractionStatus("idle");
-  }, [workflow, profile, initialDocs]);
+  }, [workflow, profile, otherCompanyProfile, initialDocs]);
+
+  function updateParty(
+    side: "importer" | "exporter",
+    next: PartyFormState
+  ) {
+    const enriched = enrichPartyWithCompanyCatalog(next);
+    if (side === "importer") setImporter(enriched);
+    else setExporter(enriched);
+  }
 
   // Step enforcement — steps 2, 3, 4 all require step 1 to be complete
 
@@ -227,7 +229,7 @@ export default function CreateShipmentPage() {
     if (stepIndex === 1) return isStep1Complete;
     if (stepIndex === 2) return isShipmentDetailsComplete;
     if (stepIndex === 3) return isCargoComplete;
-    if (stepIndex === 4) return docs.some((doc) => doc.uploaded) || shipmentRecordId !== null;
+    if (stepIndex === 4) return docs.some((doc) => doc.uploaded);
     return true;
   }
 
@@ -413,26 +415,41 @@ export default function CreateShipmentPage() {
     return res.json() as Promise<AggregateResult>;
   }
 
+  async function postShipmentValidation(shipmentId: string) {
+    const res = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`, { method: "POST" });
+    if (!res.ok) throw new Error(`Validation failed with HTTP ${res.status}`);
+    return res.json() as Promise<{ issues?: AggregateResult["cross_validation"] }>;
+  }
+
   function mergeUploadedFiles(current: File[], incoming: File[]) {
     const files = new Map(current.map((file) => [file.name, file]));
     incoming.forEach((file) => files.set(file.name, file));
     return [...files.values()];
   }
 
-  // Fire-and-forget extraction; this validates documents without creating a shipment record.
   async function startExtractionAsync(files: File[], baseDocs: DocumentRequirement[]) {
     try {
-      const incoming = await postDocumentExtraction(files);
-      let merged = incoming;
+      const draftId = persistDraft("Draft", "extracting", baseDocs);
+      await saveShipmentSnapshot(draftId, "Draft", "extracting", baseDocs);
+
+      const incoming = await postDocumentExtraction(files, draftId);
+      const updatedDocs = docsWithExtractionResult(baseDocs, incoming);
+
+      const validation = await postShipmentValidation(draftId);
+      const incomingWithValidation: AggregateResult = {
+        ...incoming,
+        cross_validation: validation.issues ?? [],
+      };
+      let merged = incomingWithValidation;
       setExtractResult((prev) => {
-        merged = prev ? mergeExtractionResults(prev, incoming) : incoming;
+        merged = prev ? mergeExtractionResults(prev, incomingWithValidation) : incomingWithValidation;
         return merged;
       });
       setExtractionStatus("complete");
-      const updatedDocs = docsWithExtractionResult(baseDocs, merged);
       setDocs(updatedDocs);
-    } catch {
+    } catch (err) {
       setExtractionStatus("failed");
+      setError(err instanceof Error ? err.message : "Document extraction failed");
     }
   }
 
@@ -497,34 +514,37 @@ export default function CreateShipmentPage() {
     const id = persistDraft(status, "complete", docs, token);
 
     try {
-      let finalDocs = docs;
-      let finalExtractResult = extractResult;
-
-      await saveShipmentSnapshot(id, status, "complete", finalDocs);
-
-      if (uploadedFiles.length > 0) {
-        setExtractionStatus("extracting");
-        finalExtractResult = await postDocumentExtraction(uploadedFiles, id);
-        finalDocs = docsWithExtractionResult(finalDocs, finalExtractResult);
-        setExtractResult(finalExtractResult);
-        setDocs(finalDocs);
-        setExtractionStatus("complete");
-        await saveShipmentSnapshot(id, status, "complete", finalDocs);
-      }
+      await saveShipmentSnapshot(id, status, "complete", docs);
 
       if (token) {
         updateShipment(id, { inviteToken: token });
       }
       updateShipment(id, {
         extractionStatus: "complete",
-        extractedRef: finalExtractResult?.extractedRef,
-        documents: finalDocs,
+        extractedRef: extractResult?.extractedRef,
+        documents: docs,
       });
-      await recordProgressCheckpoint(id, status, finalDocs);
+
+      // Write creation event to MemWal
+      try {
+        await fetch(`/api/shipments/${encodeURIComponent(id)}/memory-write`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            kind: "shipment_created",
+            timestamp: new Date().toISOString(),
+            status,
+            documentCount: docs.filter((d) => d.uploaded).length,
+          }),
+        });
+      } catch {
+        // MemWal write failure never blocks creation
+      }
+
+      await recordProgressCheckpoint(id, status, docs);
       router.push(`/shipments/${encodeURIComponent(id)}`);
     } catch (err) {
       setCreatedInProgress(false);
-      setExtractionStatus(uploadedFiles.length > 0 ? "failed" : extractionStatus);
       setError(err instanceof Error ? err.message : "Shipment creation failed");
     }
   }
@@ -557,9 +577,7 @@ export default function CreateShipmentPage() {
     setActiveStep(nextStep);
   }
 
-  const workflowOptions = useMemo<WorkflowKey[]>(() => {
-    return role === "Exporter" ? ["exporter", "importer"] : ["importer", "exporter"];
-  }, [role]);
+  const workflowOptions = useMemo<WorkflowKey[]>(() => ["importer", "exporter"], []);
 
   return (
     <div className="mx-auto max-w-[1500px] px-5 py-8 lg:px-10">
@@ -569,7 +587,7 @@ export default function CreateShipmentPage() {
         </div>
         <div className="flex flex-wrap gap-2">
           <StatusBadge value={selectedWorkflow} />
-          <StatusBadge value={createdInProgress ? "In Progress" : shipmentRecordId ? "Awaiting Counterparty" : "Draft"} />
+          <StatusBadge value={createdInProgress ? "In Progress" : "Draft"} />
         </div>
       </div>
 
@@ -676,8 +694,8 @@ export default function CreateShipmentPage() {
             {activeStep === 0 && (
               <div className="grid gap-5">
                 <p className="text-sm text-steel">
-                  You are signed in as <span className="font-bold text-pearl">{role}</span> ({profile.company}). Pick the side
-                  you act as on this shipment.
+                  You are using <span className="font-bold text-pearl">{profile.company}</span>. Pick whether this company
+                  is acting as the importer or exporter for this shipment.
                 </p>
                 <div className="grid gap-4 md:grid-cols-2">
                   {workflowOptions.map((key) => {
@@ -707,26 +725,42 @@ export default function CreateShipmentPage() {
                   })}
                 </div>
                 <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-steel">
-                  The {selectedWorkflow.toLowerCase()} creates the passport and coordinates document submission with the{" "}
-                  {workflow === "importer" ? "exporter" : "importer"}.
+                  <span className="font-bold text-pearl">{profile.company}</span> will be the{" "}
+                  {selectedWorkflow.toLowerCase()}. <span className="font-bold text-pearl">{otherCompanyProfile.company}</span>{" "}
+                  will be the {counterpartyKey.toLowerCase()}. Tax ID and registered details are applied from each
+                  company&apos;s profile (e.g. Acme → US-123456789, Shanghai → CN-987654321).
                 </div>
               </div>
             )}
 
             {activeStep === 1 && (
               <div className="grid gap-6">
-                <PartyCard
-                  title={workflow === "importer" ? "Importer (you)" : "Importer"}
-                  locked={workflow === "importer"}
-                  party={importer}
-                  onChange={setImporter}
-                />
-                <PartyCard
-                  title={workflow === "exporter" ? "Exporter (you)" : "Exporter"}
-                  locked={workflow === "exporter"}
-                  party={exporter}
-                  onChange={setExporter}
-                />
+                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-steel">
+                  You are the {selectedWorkflow.toLowerCase()} ({profile.company}). The counterparty can be edited;
+                  when the company name matches a known party, the correct tax ID is filled in automatically.
+                </div>
+
+                {workflow === "importer" ? (
+                  <>
+                    <PartySummaryCard title="Importer (your company)" party={importer} />
+                    <PartyCard
+                      title="Exporter"
+                      locked={false}
+                      party={exporter}
+                      onChange={(next) => updateParty("exporter", next)}
+                    />
+                  </>
+                ) : (
+                  <>
+                    <PartySummaryCard title="Exporter (your company)" party={exporter} />
+                    <PartyCard
+                      title="Importer"
+                      locked={false}
+                      party={importer}
+                      onChange={(next) => updateParty("importer", next)}
+                    />
+                  </>
+                )}
 
                 {/* Notify party — required for Bill of Lading */}
                 {notifyPartyEnabled ? (
@@ -955,6 +989,27 @@ function PartyCard({
           Loaded from your SuiShip profile. Edits here only affect this shipment.
         </p>
       )}
+    </div>
+  );
+}
+
+function PartySummaryCard({
+  title,
+  party
+}: {
+  title: string;
+  party: { company: string; contact: string; email: string; phone: string; taxId: string };
+}) {
+  return (
+    <div className="rounded-2xl border border-blue-100 bg-white p-5">
+      <p className="text-xs font-bold uppercase tracking-wide text-steel">{title}</p>
+      <h3 className="mt-2 text-xl font-extrabold text-pearl">{party.company}</h3>
+      <div className="mt-4 grid gap-2 text-sm text-steel">
+        <p><span className="font-bold text-pearl">Contact:</span> {party.contact}</p>
+        <p><span className="font-bold text-pearl">Email:</span> {party.email}</p>
+        <p><span className="font-bold text-pearl">Phone:</span> {party.phone}</p>
+        {party.taxId && <p><span className="font-bold text-pearl">Tax ID:</span> {party.taxId}</p>}
+      </div>
     </div>
   );
 }
@@ -1273,20 +1328,28 @@ function DocumentUploadStep({
           </div>
         );
         if (errorCount > 0) return (
-          <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
+          <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
             <XCircle className="h-5 w-5 shrink-0 text-red-500" />
             <div>
-              <p className="font-bold text-red-700">Creation blocked — {errorCount} mismatch{errorCount !== 1 ? "es" : ""} detected</p>
-              <p className="text-sm text-red-600">Fix the source documents and re-upload.</p>
+              <p className="font-bold text-red-700">{errorCount} mismatch{errorCount !== 1 ? "es" : ""}</p>
+              <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-red-600">
+                {extractResult?.cross_validation.filter((v) => v.severity === "error").map((v, i) => (
+                  <li key={i}>{v.message}</li>
+                ))}
+              </ul>
             </div>
           </div>
         );
         if (warnCount > 0) return (
-          <div className="flex items-center gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
+          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
             <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
             <div>
-              <p className="font-bold text-amber-700">AI extraction complete — {warnCount} warning{warnCount !== 1 ? "s" : ""}</p>
-              <p className="text-sm text-amber-600">Review the soft mismatches below before creating.</p>
+              <p className="font-bold text-amber-700">{warnCount} warning{warnCount !== 1 ? "s" : ""}</p>
+              <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-amber-600">
+                {extractResult?.cross_validation.filter((v) => v.severity === "warning").map((v, i) => (
+                  <li key={i}>{v.message}</li>
+                ))}
+              </ul>
             </div>
           </div>
         );
@@ -1300,30 +1363,6 @@ function DocumentUploadStep({
           </div>
         );
       })()}
-
-      {/* Summary cards */}
-      {isComplete && extractResult && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
-          {([
-            { label: "Commercial Invoice", count: extractResult.detected.commercial_invoice.length },
-            { label: "Packing List", count: extractResult.detected.packing_list.length },
-            { label: transportDocumentLabel(transportMode), count: extractResult.detected.bill_of_lading.length },
-            { label: "Certificate of Origin", count: extractResult.detected.certificate_of_origin.length },
-          ] as { label: string; count: number }[]).map(({ label, count }) => (
-            <div
-              key={label}
-              className={cn(
-                "rounded-2xl border p-3 text-center text-sm font-bold",
-                count > 0 ? "border-emerald-200 bg-emerald-50 text-emerald-700" : "border-amber-200 bg-amber-50 text-amber-700"
-              )}
-            >
-              {count > 0 ? <CheckCircle2 className="mx-auto mb-1 h-4 w-4" /> : <AlertCircle className="mx-auto mb-1 h-4 w-4" />}
-              {label}
-              <p className="mt-0.5 font-semibold">{count > 0 ? `${count} detected` : "Missing"}</p>
-            </div>
-          ))}
-        </div>
-      )}
 
       {/* Extracted document details — one expandable card per detected doc */}
       {isComplete && extractResult && (
@@ -1557,17 +1596,6 @@ function DocumentUploadStep({
         </div>
       )}
 
-      {/* Extracted reference number */}
-      {isComplete && extractResult?.extractedRef && (
-        <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-          <CheckCircle2 className="h-5 w-5 shrink-0 text-[#4DA2FF]" />
-          <div>
-            <p className="text-xs font-bold uppercase text-steel">Extracted reference number</p>
-            <p className="mt-0.5 font-extrabold text-pearl">{extractResult.extractedRef}</p>
-          </div>
-        </div>
-      )}
-
       {/* Non-shipping files */}
       {isComplete && extractResult && extractResult.garbage.length > 0 && (
         <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm">
@@ -1577,41 +1605,6 @@ function DocumentUploadStep({
               <li key={g.file.file_id}>{g.file.file_name} — {g.reason}</li>
             ))}
           </ul>
-        </div>
-      )}
-
-      {/* Cross-validation errors — block creation (shown regardless of is_complete) */}
-      {hasValidationErrors && extractResult && (
-        <div className="rounded-2xl border border-red-200 bg-red-50 p-4 text-sm">
-          <div className="flex items-start gap-2">
-            <XCircle className="h-5 w-5 shrink-0 text-red-500 mt-0.5" />
-            <div>
-              <p className="font-bold text-red-700">Shipment creation blocked — cross-document mismatches:</p>
-              <ul className="mt-1 list-inside list-disc text-red-600">
-                {extractResult.cross_validation.filter((v) => v.severity === "error").map((v, i) => (
-                  <li key={i}>{v.message}</li>
-                ))}
-              </ul>
-              <p className="mt-2 text-xs text-red-500">Fix the source documents so all fields align, then re-upload and extract.</p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Cross-validation warnings — non-blocking */}
-      {extractResult && extractResult.cross_validation.filter((v) => v.severity === "warning").length > 0 && (
-        <div className="rounded-2xl border border-amber-100 bg-amber-50 p-4 text-sm">
-          <div className="flex items-start gap-2">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500 mt-0.5" />
-            <div>
-              <p className="font-bold text-amber-700">Soft mismatches — review before creating:</p>
-              <ul className="mt-1 list-inside list-disc text-amber-600">
-                {extractResult.cross_validation.filter((v) => v.severity === "warning").map((v, i) => (
-                  <li key={i}>{v.message}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
         </div>
       )}
 

@@ -6,6 +6,12 @@ import { writeProgressMemory } from "@/lib/memwal";
 import { getSuiPassportClient } from "@/lib/sui-passport";
 import { parseEd25519Keypair } from "@/lib/sui-keypair";
 
+function getServerAddress(): string {
+  const key = process.env.SUI_PRIVATE_KEY;
+  if (!key) throw new Error("SUI_PRIVATE_KEY not set");
+  return parseEd25519Keypair(key).toSuiAddress();
+}
+
 export const runtime = "nodejs";
 
 export async function POST(
@@ -49,8 +55,12 @@ export async function POST(
     const client = getSuiPassportClient();
     const logObjectId = row.endorsement_log_object_id;
     const signerKeypair = signerKeyHex ? parseEd25519Keypair(signerKeyHex) : undefined;
-    const signerAddress = signerKeypair?.toSuiAddress() ?? requesterAddress;
-    if (signerKeypair && signerAddress !== requesterAddress) {
+    const serverAddr = getServerAddress();
+    const effectiveSigner = (role === "exporter" || role === "importer") && !signerKeypair
+      ? serverAddr
+      : (signerKeypair?.toSuiAddress() ?? requesterAddress);
+    const signerAddress = effectiveSigner;
+    if (signerKeypair && signerKeypair.toSuiAddress() !== requesterAddress) {
       return NextResponse.json(
         { error: "signerKeyHex does not match requesterAddress" },
         { status: 400 }

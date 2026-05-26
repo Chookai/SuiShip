@@ -48,8 +48,8 @@ export const demoShipments: ShipmentPassport[] = [
   {
     id: "SS-MY-US-0001",
     objectId: "0x9f4c...4e12",
-    shipper: "Penang Micro Systems Sdn Bhd",
-    consignee: "Northstar Components Inc.",
+    shipper: "Acme Robotics LLC",
+    consignee: "Shanghai Smart Imports Co Ltd",
     origin: "Malaysia",
     destination: "United States",
     carrier: "DHL Global Forwarding",
@@ -126,7 +126,7 @@ export const extractionResults: ExtractionResult[] = [
   { label: "Country of origin", value: "Malaysia", confidence: 99 },
   { label: "Incoterm", value: "DAP", confidence: 93 },
   { label: "Gross weight", value: "820 kg", confidence: 91 },
-  { label: "Consignee", value: "Northstar Components Inc.", confidence: 95 }
+  { label: "Consignee", value: "Shanghai Smart Imports Co Ltd", confidence: 95 }
 ];
 
 export function findShipment(id: string) {
