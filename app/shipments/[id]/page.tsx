@@ -10,6 +10,7 @@ import {
   Fingerprint,
   Loader2,
   Plus,
+  Trash2,
   Upload,
   XCircle
 } from "lucide-react";
@@ -49,6 +50,7 @@ type AggregateLike = {
     packing_list?: Array<{ file_name: string }>;
     bill_of_lading?: Array<{ file_name: string }>;
     certificate_of_origin?: Array<{ file_name: string }>;
+    other?: Array<{ file_name: string; extraction_result?: { detected_label?: string } }>;
   };
 };
 
@@ -173,6 +175,7 @@ function StoredShipmentView({
   const [newDocumentName, setNewDocumentName] = useState("");
   const [dragOver, setDragOver] = useState(false);
   const [stagedFiles, setStagedFiles] = useState<File[]>([]);
+  const [selectedDocs, setSelectedDocs] = useState<Set<string>>(new Set());
   const batchInputRef = useRef<HTMLInputElement | null>(null);
   const requiredDocs = shipment.documents.filter((doc) => doc.required);
   const requiredDocsComplete = requiredDocs.length > 0 && requiredDocs.every((doc) => doc.uploaded);
@@ -246,6 +249,7 @@ function StoredShipmentView({
     setDocumentPhase("extracting");
 
     try {
+      // Step 1: Extract documents (AI sort)
       const formData = new FormData();
       formData.append("shipmentId", shipment.id);
       files.forEach((file) => formData.append("files", file));
@@ -260,6 +264,25 @@ function StoredShipmentView({
         shipment.shipment.transportMode,
         currentRoleOwner
       );
+
+      // Step 2: Run full AI validation (MemWal profile check, field comparisons)
+      // Do NOT update UI yet — wait until validation is also done
+      let validationIssues: Array<{ severity?: string; message?: string; field?: string }> = [];
+      try {
+        const valRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/validate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uploadedCount: files.length }),
+        });
+        if (valRes.ok) {
+          const valData = await valRes.json();
+          validationIssues = valData.issues ?? (payload as AggregateLike).cross_validation ?? [];
+        }
+      } catch {
+        // non-fatal
+      }
+
+      // Step 3: NOW update the entire UI at once
       const allRequiredUploaded = detectedDocs.filter((doc) => doc.required).every((doc) => doc.uploaded);
       onUpdate({
         documents: detectedDocs,
@@ -269,34 +292,114 @@ function StoredShipmentView({
         status: allRequiredUploaded ? "Documents Uploaded" : "In Progress"
       });
 
-      // Run full AI validation (MemWal profile check, field comparisons, etc.)
-      try {
-        const valRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/validate`, { method: "POST" });
-        if (valRes.ok) {
-          const valData = await valRes.json();
-          const issues = valData.issues ?? (payload as AggregateLike).cross_validation ?? [];
-          const blockingIssues = issues.filter((issue: { severity?: string }) => issue.severity === "error");
-          await recordProgressCheckpoint({
-            stage: blockingIssues.length > 0 ? "ai_check_failed" : "ai_check_passed",
-            actor: currentRoleOwner,
-            summary:
-              blockingIssues.length > 0
-                ? `AI found ${blockingIssues.length} blocking issue(s) after ${currentRoleOwner} uploaded ${files.length} document(s).`
-                : `AI checked ${files.length} uploaded document(s) together and found no blocking issues.`,
-            documents: detectedDocs.map((item) => ({ name: item.name, fileName: item.fileName, uploaded: item.uploaded })),
-            aiIssues: issues,
-          });
-          setPanelRefreshNonce((k: number) => k + 1);
-        }
-      } catch {
-        // Validation failure shouldn't block the upload flow
-      }
+      // Step 4: Write MemWal events and progress (fire-and-forget after UI)
+      const uploadCompany = currentRoleOwner === "Exporter"
+        ? shipment.exporter.company
+        : shipment.importer.company;
+      const newlyUploaded = detectedDocs.filter(d => d.uploaded && !shipment.documents.find(od => od.name === d.name && od.uploaded));
+      fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/memory-write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "documents_uploaded",
+          actor: uploadCompany,
+          role: currentRoleOwner,
+          document_count: files.length,
+          documents_uploaded: newlyUploaded.length > 0
+            ? newlyUploaded.map(d => d.name)
+            : files.map(f => f.name),
+          timestamp: new Date().toISOString(),
+        }),
+      }).catch(() => {});
+
+      const blockingIssues = validationIssues.filter((issue) => issue.severity === "error");
+      recordProgressCheckpoint({
+        stage: blockingIssues.length > 0 ? "ai_check_failed" : "ai_check_passed",
+        actor: currentRoleOwner,
+        summary:
+          blockingIssues.length > 0
+            ? `AI found ${blockingIssues.length} blocking issue(s) after ${currentRoleOwner} uploaded ${files.length} document(s).`
+            : `AI checked ${files.length} uploaded document(s) together and found no blocking issues.`,
+        documents: detectedDocs.map((item) => ({ name: item.name, fileName: item.fileName, uploaded: item.uploaded })),
+        aiIssues: validationIssues,
+      }).catch(() => {});
+
+      setPanelRefreshNonce((k: number) => k + 1);
     } catch (err) {
       onUpdate({ extractionStatus: "failed" });
       setWorkflowError(err instanceof Error ? err.message : "Document extraction failed");
     } finally {
       setDocumentPhase("idle");
     }
+  }
+
+  async function clearSelectedDocuments() {
+    if (selectedDocs.size === 0 || documentsLocked) return;
+    const clearedNames = [...selectedDocs];
+    const clearedFileNames = shipment.documents
+      .filter((doc) => selectedDocs.has(doc.name) && doc.fileName)
+      .map((doc) => doc.fileName!);
+
+    const updatedDocs = shipment.documents.map((doc) => {
+      if (!selectedDocs.has(doc.name)) return doc;
+      return {
+        ...doc,
+        uploaded: false,
+        fileName: undefined,
+        uploadedAt: undefined,
+        extractionSource: undefined,
+        extractionModel: undefined,
+        extractionLatencyMs: undefined,
+        extractionInputTokens: undefined,
+        extractionOutputTokens: undefined,
+        extractedAt: undefined,
+      };
+    });
+    setSelectedDocs(new Set());
+    onUpdate({ documents: updatedDocs });
+
+    const companyName = currentRoleOwner === "Exporter"
+      ? shipment.exporter.company
+      : shipment.importer.company;
+
+    // Delete cleared files from shipment_files in DB
+    if (clearedFileNames.length > 0) {
+      try {
+        await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/clear-docs`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ fileNames: clearedFileNames }),
+        });
+      } catch {
+        // non-fatal
+      }
+    }
+
+    try {
+      await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/memory-write`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          kind: "documents_cleared",
+          actor: companyName,
+          role: currentRoleOwner,
+          cleared_documents: clearedNames,
+          timestamp: new Date().toISOString(),
+        }),
+      });
+      setPanelRefreshNonce((k: number) => k + 1);
+    } catch {
+      // non-fatal
+    }
+  }
+
+  function toggleDocSelection(docName: string) {
+    setSelectedDocs((prev) => {
+      const next = new Set(prev);
+      if (next.has(docName)) next.delete(docName);
+      else next.add(docName);
+      return next;
+    });
   }
 
   function addDocument() {
@@ -547,7 +650,7 @@ function StoredShipmentView({
                 {documentPhase === "extracting" ? (
                   <div className="flex flex-col items-center gap-3">
                     <Loader2 className="h-10 w-10 animate-spin text-[#4DA2FF]" />
-                    <h3 className="text-xl font-extrabold text-pearl">AI is sorting documents...</h3>
+                    <h3 className="text-xl font-extrabold text-pearl">AI is analyzing documents...</h3>
                   </div>
                 ) : (
                   <>
@@ -605,10 +708,35 @@ function StoredShipmentView({
             </div>
           )}
 
+          {!documentsLocked && selectedDocs.size > 0 && (
+            <div className="mt-4 flex items-center gap-3 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3">
+              <p className="text-sm font-semibold text-amber-700">
+                {selectedDocs.size} document{selectedDocs.size !== 1 ? "s" : ""} selected
+              </p>
+              <button
+                type="button"
+                onClick={clearSelectedDocuments}
+                disabled={documentPhase !== "idle"}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 bg-white px-3 py-1.5 text-xs font-semibold text-red-600 transition hover:bg-red-50 disabled:opacity-50"
+              >
+                <Trash2 className="h-3 w-3" />
+                Clear selected
+              </button>
+              <button
+                type="button"
+                onClick={() => setSelectedDocs(new Set())}
+                className="text-xs font-semibold text-steel hover:text-pearl"
+              >
+                Cancel
+              </button>
+            </div>
+          )}
+
           <div className="mt-5 overflow-x-auto">
             <table className="w-full min-w-[560px] text-left text-sm">
               <thead>
                 <tr className="border-b border-blue-50 text-xs font-bold uppercase text-steel">
+                  {!documentsLocked && <th className="pb-3 pr-2 w-8" />}
                   <th className="pb-3 pr-4">Document</th>
                   <th className="pb-3 pr-4">Status</th>
                 </tr>
@@ -616,6 +744,18 @@ function StoredShipmentView({
               <tbody className="divide-y divide-blue-50">
                 {shipment.documents.map((doc) => (
                   <tr key={doc.name} className="align-top">
+                    {!documentsLocked && (
+                      <td className="py-4 pr-2">
+                        {doc.uploaded && (
+                          <input
+                            type="checkbox"
+                            checked={selectedDocs.has(doc.name)}
+                            onChange={() => toggleDocSelection(doc.name)}
+                            className="h-4 w-4 rounded border-blue-300 text-sui focus:ring-sui"
+                          />
+                        )}
+                      </td>
+                    )}
                     <td className="py-4 pr-4">
                       <p className="font-bold text-pearl">{doc.name}</p>
                       {doc.fileName && (
@@ -811,6 +951,34 @@ function docsWithExtractionResult(
     }
     return doc;
   });
+  // Match remaining files to unmatched checklist entries by filename similarity
+  const unmatchedDocs = nextDocs.filter(d => !d.uploaded && !d.fileName);
+  const allDetectedFiles = [
+    ...(result.detected?.commercial_invoice ?? []).map(d => d.file_name),
+    ...(result.detected?.packing_list ?? []).map(d => d.file_name),
+    ...(result.detected?.bill_of_lading ?? []).map(d => d.file_name),
+    ...(result.detected?.certificate_of_origin ?? []).map(d => d.file_name),
+    ...(result.detected?.other ?? []).map(d => d.file_name),
+  ];
+  const unassignedFiles = (result.extractionProvenance ?? [])
+    .map(p => p.fileName)
+    .filter(fn => !usedFileNames.has(fn));
+
+  for (const fileName of unassignedFiles) {
+    const fileBase = fileName.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ").toLowerCase();
+    const match = unmatchedDocs.find(d => {
+      const docLower = d.name.toLowerCase();
+      return fileBase.includes(docLower) || docLower.includes(fileBase);
+    });
+    if (match) {
+      const idx = nextDocs.indexOf(match);
+      if (idx >= 0) {
+        nextDocs[idx] = withExtractionProvenance(match, fileName, result, now);
+        usedFileNames.add(fileName);
+      }
+    }
+  }
+
   const existingFiles = new Set(nextDocs.map((doc) => doc.fileName).filter(Boolean));
   const existingNames = new Set(nextDocs.map((doc) => doc.name.toLowerCase()));
   const extras = detectedDocumentFiles(result, transportMode)
@@ -871,7 +1039,12 @@ function detectedDocumentFiles(result: AggregateLike, transportMode?: string) {
     ...(result.detected?.commercial_invoice ?? []).map((doc) => ({ label: "Commercial Invoice", fileName: doc.file_name })),
     ...(result.detected?.packing_list ?? []).map((doc) => ({ label: "Packing List", fileName: doc.file_name })),
     ...(result.detected?.bill_of_lading ?? []).map((doc) => ({ label: transportDocumentLabel(transportMode), fileName: doc.file_name })),
-    ...(result.detected?.certificate_of_origin ?? []).map((doc) => ({ label: "Certificate of Origin", fileName: doc.file_name }))
+    ...(result.detected?.certificate_of_origin ?? []).map((doc) => ({ label: "Certificate of Origin", fileName: doc.file_name })),
+    ...(result.detected?.other ?? []).map((doc) => ({
+      label: doc.extraction_result?.detected_label
+        ?? doc.file_name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ").replace(/\b\w/g, (c) => c.toUpperCase()),
+      fileName: doc.file_name,
+    })),
   ];
 }
 

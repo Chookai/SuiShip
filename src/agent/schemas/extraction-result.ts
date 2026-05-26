@@ -36,6 +36,13 @@ export const ExtractionResultSchema = z.discriminatedUnion("document_type", [
     data: CertificateOfOriginDataSchema,
   }),
   z.object({
+    document_type: z.literal("other"),
+    confidence: z.number().min(0).max(1),
+    extraction_notes: z.array(z.string()),
+    detected_label: z.string(),
+    data: z.record(z.string(), z.unknown()).nullable(),
+  }),
+  z.object({
     document_type: z.literal("unknown"),
     confidence: z.number().min(0).max(1),
     extraction_notes: z.array(z.string()),

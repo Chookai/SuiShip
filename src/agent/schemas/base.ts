@@ -66,6 +66,7 @@ export const DocumentTypeSchema = z.enum([
   "packing_list",
   "bill_of_lading",
   "certificate_of_origin",
+  "other",
   "unknown",
 ]);
 export type DocumentType = z.infer<typeof DocumentTypeSchema>;

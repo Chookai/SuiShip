@@ -86,7 +86,8 @@ function scoreFromVerdict(
 
 export async function runShipmentValidation(
   shipmentId: string,
-  db: Database.Database
+  db: Database.Database,
+  opts?: { uploadedCount?: number }
 ): Promise<ValidateResult | null> {
   const agentRun = ensureAgentRun(shipmentId, "validating", "Validating shipment documents", db);
   updateAgentRun(agentRun.id, { status: "validating", currentStep: "Cross-validating extracted shipment facts" }, db);
@@ -107,6 +108,10 @@ export async function runShipmentValidation(
     db.prepare("UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ?").run(shipmentId);
     db.prepare("UPDATE validation_findings SET status = 'superseded' WHERE shipment_id = ? AND status = 'unresolved'").run(shipmentId);
 
+    const runDocCount = (db.prepare(
+      "SELECT COUNT(*) as cnt FROM shipment_files WHERE shipment_id = ?"
+    ).get(shipmentId) as { cnt: number })?.cnt ?? 0;
+
     db.prepare(`
       INSERT INTO validation_runs
         (id, shipment_id, issues_json, overall_verdict, verdict_reason,
@@ -114,7 +119,8 @@ export async function runShipmentValidation(
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       runId, shipmentId, "[]", "aligned",
-      "Mock validation: all documents aligned", "{}", 0, 0, docSetHash, "mock"
+      "Mock validation: all documents aligned",
+      JSON.stringify({ doc_count: runDocCount, uploaded_count: opts?.uploadedCount ?? runDocCount }), 0, 0, docSetHash, "mock"
     );
 
     // Promote verified → validated
@@ -147,6 +153,11 @@ export async function runShipmentValidation(
     };
     updateAgentRun(agentRun.id, { status: "completed", currentStep: "Mock validation complete", riskLevel: "low", completed: true }, db);
 
+    const validatedFiles = (db.prepare(
+      "SELECT file_name, doc_type FROM shipment_files WHERE shipment_id = ?"
+    ).all(shipmentId) as Array<{ file_name: string; doc_type: string }>)
+      .map(f => ({ name: f.file_name, type: f.doc_type }));
+
     import("./memwal").then(({ writeProgressMemory }) => {
       writeProgressMemory(shipmentId, {
         kind: "ai_validation_complete",
@@ -157,6 +168,8 @@ export async function runShipmentValidation(
         warning_count: 0,
         score: 95,
         model: "mock",
+        documents_validated: validatedFiles.map(f => f.name),
+        document_count: validatedFiles.length,
         timestamp: new Date().toISOString(),
       }).catch(() => {});
     }).catch(() => {});
@@ -283,6 +296,20 @@ export async function runShipmentValidation(
 
   const docSetHash = computeDocSetHash(shipmentId, db);
   const runId = randomUUID();
+  const realDocCount = (db.prepare(
+    "SELECT COUNT(*) as cnt FROM shipment_files WHERE shipment_id = ?"
+  ).get(shipmentId) as { cnt: number })?.cnt ?? 0;
+
+  // Inject doc_count into the manifest for the activity log
+  let manifestWithCount = compactManifest;
+  try {
+    const parsed = JSON.parse(compactManifest);
+    parsed.doc_count = realDocCount;
+    parsed.uploaded_count = opts?.uploadedCount ?? realDocCount;
+    manifestWithCount = JSON.stringify(parsed);
+  } catch {
+    manifestWithCount = JSON.stringify({ doc_count: realDocCount, uploaded_count: opts?.uploadedCount ?? realDocCount });
+  }
 
   // Mark previous runs superseded and resolve stale findings
   db.prepare("UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ?").run(shipmentId);
@@ -300,7 +327,7 @@ export async function runShipmentValidation(
     JSON.stringify(allIssues),
     overallVerdict,
     verdictReason,
-    compactManifest,
+    manifestWithCount,
     result.inputTokens,
     result.outputTokens,
     docSetHash,
@@ -421,6 +448,10 @@ export async function runShipmentValidation(
   logger.info({ shipmentId, overallVerdict: result.overallVerdict, findingCount: findings.length, score }, "Validation complete");
 
   // Write validation result to MemWal
+  const validatedFileNames = (db.prepare(
+    "SELECT file_name FROM shipment_files WHERE shipment_id = ?"
+  ).all(shipmentId) as Array<{ file_name: string }>).map(f => f.file_name);
+
   import("./memwal").then(({ writeProgressMemory }) => {
     writeProgressMemory(shipmentId, {
       kind: "ai_validation_complete",
@@ -431,6 +462,8 @@ export async function runShipmentValidation(
       warning_count: findings.filter(f => f.severity === "warning").length,
       score,
       model,
+      documents_validated: validatedFileNames,
+      document_count: validatedFileNames.length,
       timestamp: new Date().toISOString(),
     }).catch(() => {});
   }).catch(() => {});

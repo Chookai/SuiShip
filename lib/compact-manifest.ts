@@ -32,112 +32,182 @@ export function buildCompactManifest(shipmentId: string, db: Database.Database):
   }
 }
 
+function summarizeInvoice(inv: AggregateResult["detected"]["commercial_invoice"][number]) {
+  if (inv.extraction_result.document_type !== "commercial_invoice") return null;
+  const d = inv.extraction_result.data;
+  return {
+    file: inv.file_name,
+    invoice_number: d.invoice_number,
+    invoice_date: d.invoice_date,
+    sender_reference: d.sender_reference,
+    payment_terms: d.payment_terms,
+    bank_name: d.bank_name,
+    bank_beneficiary_name: d.bank_beneficiary_name,
+    bank_account_number: d.bank_account_number,
+    bank_iban: d.bank_iban,
+    bank_swift: d.bank_swift,
+    shipper_name: d.sender?.name,
+    shipper_tax_id: d.sender?.tax_id,
+    shipper_address: d.sender,
+    recipient_name: d.recipient?.name,
+    recipient_tax_id: d.recipient?.tax_id,
+    recipient_address: d.recipient,
+    recipient_city: d.recipient?.city,
+    city_of_liability: d.city_of_liability,
+    incoterms: d.incoterms,
+    currency: d.currency,
+    total_invoice_amount: d.totals?.total_invoice_amount,
+    total_net_weight: d.totals?.total_net_weight,
+    line_items: d.line_items?.map((li) => ({
+      description: li.description,
+      hs_code: li.hs_code,
+      country_of_origin: li.country_of_origin,
+      quantity: li.quantity,
+      subtotal: li.subtotal,
+    })),
+  };
+}
+
+function summarizeBol(bol: AggregateResult["detected"]["bill_of_lading"][number]) {
+  if (bol.extraction_result.document_type !== "bill_of_lading") return null;
+  const d = bol.extraction_result.data;
+  const bolTotalPackages = d.cargo?.reduce((s, c) => s + (c.number_of_packages ?? 0), 0) ?? null;
+  const bolTotalGrossWeightKg =
+    d.cargo?.reduce(
+      (s, c) => (c.gross_weight?.unit === "kg" ? s + (c.gross_weight.value ?? 0) : s),
+      0
+    ) ?? null;
+  return {
+    file: bol.file_name,
+    bl_number: d.bl_number,
+    invoice_reference: d.invoice_reference,
+    shipper_name: d.shipper?.name,
+    shipper_tax_id: d.shipper?.tax_id,
+    shipper_address: d.shipper,
+    consignee_name: d.consignee?.name,
+    consignee_tax_id: d.consignee?.tax_id,
+    consignee_address: d.consignee,
+    carrier: d.carrier,
+    port_of_loading: d.port_of_loading,
+    port_of_discharge: d.port_of_discharge,
+    shipment_date: d.shipment_date,
+    total_cargo_packages: bolTotalPackages,
+    total_cargo_gross_weight_kg: bolTotalGrossWeightKg,
+  };
+}
+
+function summarizeCoo(coo: AggregateResult["detected"]["certificate_of_origin"][number]) {
+  if (coo.extraction_result.document_type !== "certificate_of_origin") return null;
+  const d = coo.extraction_result.data;
+  return {
+    file: coo.file_name,
+    certificate_number: d.certificate_number,
+    issue_date: d.issue_date,
+    country_of_origin: d.country_of_origin,
+    issuing_authority: d.issuing_authority,
+    exporter_name: d.exporter?.name,
+    exporter_tax_id: d.exporter?.tax_id,
+    exporter_address: d.exporter,
+    importer_name: d.importer?.name,
+    importer_tax_id: d.importer?.tax_id,
+    importer_address: d.importer,
+    goods: d.goods?.map((g) => ({
+      hs_code: g.hs_code,
+      description: g.description,
+      invoice_reference: g.invoice_reference,
+      quantity: g.quantity,
+    })),
+  };
+}
+
+function summarizePackingList(pl: AggregateResult["detected"]["packing_list"][number]) {
+  if (pl.extraction_result.document_type !== "packing_list") return null;
+  const d = pl.extraction_result.data;
+  return {
+    file: pl.file_name,
+    packing_list_number: d.packing_list_number,
+    invoice_number: d.invoice_number,
+    ship_date: d.ship_date,
+    shipper_name: d.shipper?.name,
+    consignee_name: d.consignee?.name,
+    consignee_city: d.consignee?.city,
+    total_packages: d.totals?.total_packages,
+    total_gross_weight: d.totals?.total_gross_weight,
+    total_net_weight: d.totals?.total_net_weight,
+  };
+}
+
+function detectFilenameMismatches(agg: AggregateResult): string[] {
+  const warnings: string[] = [];
+  const typeKeywords: Record<string, string[]> = {
+    commercial_invoice: ["invoice"],
+    packing_list: ["packing", "pack"],
+    bill_of_lading: ["bill", "lading", "bol", "bl"],
+    certificate_of_origin: ["certificate", "origin", "coo"],
+    insurance: ["insurance"],
+    permit: ["permit", "license", "licence"],
+  };
+  const allDocs = [
+    ...agg.detected.commercial_invoice,
+    ...agg.detected.packing_list,
+    ...agg.detected.bill_of_lading,
+    ...agg.detected.certificate_of_origin,
+    ...(agg.detected.other ?? []),
+  ];
+  for (const doc of allDocs) {
+    const fn = doc.file_name.toLowerCase().replace(/[_\-.]/g, " ");
+    const docType = doc.extraction_result.document_type;
+    const selfKeywords = typeKeywords[docType] ?? [];
+    const filenameMatchesSelf = selfKeywords.some(kw => fn.includes(kw));
+
+    if (!filenameMatchesSelf) {
+      for (const [suggestedType, keywords] of Object.entries(typeKeywords)) {
+        if (suggestedType === docType) continue;
+        if (keywords.some(kw => fn.includes(kw))) {
+          const readableType = docType.replace(/_/g, " ");
+          const readableSuggested = suggestedType.replace(/_/g, " ");
+          warnings.push(
+            `FILENAME MISMATCH: File "${doc.file_name}" filename suggests "${readableSuggested}", but AI classified its content as "${readableType}". This may indicate a mislabeled or fraudulent document.`
+          );
+          break;
+        }
+      }
+    }
+  }
+  return warnings;
+}
+
 export function buildDocSummaryFromAggregate(agg: AggregateResult): string {
   const summary: Record<string, unknown> = {};
 
-  const inv = agg.detected.commercial_invoice[0];
-  if (inv?.extraction_result.document_type === "commercial_invoice") {
-    const d = inv.extraction_result.data;
-    summary.commercial_invoice = {
-      file: inv.file_name,
-      invoice_number: d.invoice_number,
-      invoice_date: d.invoice_date,
-      sender_reference: d.sender_reference,
-      payment_terms: d.payment_terms,
-      bank_name: d.bank_name,
-      bank_beneficiary_name: d.bank_beneficiary_name,
-      bank_account_number: d.bank_account_number,
-      bank_iban: d.bank_iban,
-      bank_swift: d.bank_swift,
-      shipper_name: d.sender?.name,
-      shipper_tax_id: d.sender?.tax_id,
-      shipper_address: d.sender,
-      recipient_name: d.recipient?.name,
-      recipient_tax_id: d.recipient?.tax_id,
-      recipient_address: d.recipient,
-      recipient_city: d.recipient?.city,
-      city_of_liability: d.city_of_liability,
-      incoterms: d.incoterms,
-      currency: d.currency,
-      total_invoice_amount: d.totals?.total_invoice_amount,
-      total_net_weight: d.totals?.total_net_weight,
-      line_items: d.line_items?.map((li) => ({
-        description: li.description,
-        hs_code: li.hs_code,
-        country_of_origin: li.country_of_origin,
-        quantity: li.quantity,
-        subtotal: li.subtotal,
-      })),
-    };
-  }
+  const invoices = agg.detected.commercial_invoice.map(summarizeInvoice).filter(Boolean);
+  if (invoices.length === 1) summary.commercial_invoice = invoices[0];
+  else if (invoices.length > 1) summary.commercial_invoices = invoices;
 
-  const pl = agg.detected.packing_list[0];
-  if (pl?.extraction_result.document_type === "packing_list") {
-    const d = pl.extraction_result.data;
-    summary.packing_list = {
-      file: pl.file_name,
-      packing_list_number: d.packing_list_number,
-      invoice_number: d.invoice_number,
-      ship_date: d.ship_date,
-      shipper_name: d.shipper?.name,
-      consignee_name: d.consignee?.name,
-      consignee_city: d.consignee?.city,
-      total_packages: d.totals?.total_packages,
-      total_gross_weight: d.totals?.total_gross_weight,
-      total_net_weight: d.totals?.total_net_weight,
-    };
-  }
+  const packingLists = agg.detected.packing_list.map(summarizePackingList).filter(Boolean);
+  if (packingLists.length === 1) summary.packing_list = packingLists[0];
+  else if (packingLists.length > 1) summary.packing_lists = packingLists;
 
-  const bol = agg.detected.bill_of_lading[0];
-  if (bol?.extraction_result.document_type === "bill_of_lading") {
-    const d = bol.extraction_result.data;
-    const bolTotalPackages = d.cargo?.reduce((s, c) => s + (c.number_of_packages ?? 0), 0) ?? null;
-    const bolTotalGrossWeightKg =
-      d.cargo?.reduce(
-        (s, c) => (c.gross_weight?.unit === "kg" ? s + (c.gross_weight.value ?? 0) : s),
-        0
-      ) ?? null;
-    summary.bill_of_lading = {
-      file: bol.file_name,
-      bl_number: d.bl_number,
-      invoice_reference: d.invoice_reference,
-      shipper_name: d.shipper?.name,
-      shipper_tax_id: d.shipper?.tax_id,
-      shipper_address: d.shipper,
-      consignee_name: d.consignee?.name,
-      consignee_tax_id: d.consignee?.tax_id,
-      consignee_address: d.consignee,
-      carrier: d.carrier,
-      port_of_loading: d.port_of_loading,
-      port_of_discharge: d.port_of_discharge,
-      shipment_date: d.shipment_date,
-      total_cargo_packages: bolTotalPackages,
-      total_cargo_gross_weight_kg: bolTotalGrossWeightKg,
-    };
-  }
+  const bols = agg.detected.bill_of_lading.map(summarizeBol).filter(Boolean);
+  if (bols.length === 1) summary.bill_of_lading = bols[0];
+  else if (bols.length > 1) summary.bills_of_lading = bols;
 
-  const coo = agg.detected.certificate_of_origin[0];
-  if (coo?.extraction_result.document_type === "certificate_of_origin") {
-    const d = coo.extraction_result.data;
-    summary.certificate_of_origin = {
-      file: coo.file_name,
-      certificate_number: d.certificate_number,
-      issue_date: d.issue_date,
-      country_of_origin: d.country_of_origin,
-      issuing_authority: d.issuing_authority,
-      exporter_name: d.exporter?.name,
-      exporter_tax_id: d.exporter?.tax_id,
-      exporter_address: d.exporter,
-      importer_name: d.importer?.name,
-      importer_tax_id: d.importer?.tax_id,
-      importer_address: d.importer,
-      goods: d.goods?.map((g) => ({
-        hs_code: g.hs_code,
-        description: g.description,
-        invoice_reference: g.invoice_reference,
-        quantity: g.quantity,
-      })),
-    };
+  const coos = agg.detected.certificate_of_origin.map(summarizeCoo).filter(Boolean);
+  if (coos.length === 1) summary.certificate_of_origin = coos[0];
+  else if (coos.length > 1) summary.certificates_of_origin = coos;
+
+  const others = (agg.detected.other ?? []).map(doc => ({
+    file: doc.file_name,
+    detected_type: doc.extraction_result.document_type === "other"
+      ? (doc.extraction_result as { detected_label?: string }).detected_label ?? "unknown"
+      : doc.extraction_result.document_type,
+    data: (doc.extraction_result as { data?: unknown }).data ?? null,
+  }));
+  if (others.length > 0) summary.other_documents = others;
+
+  const filenameMismatches = detectFilenameMismatches(agg);
+  if (filenameMismatches.length > 0) {
+    summary._filename_warnings = filenameMismatches;
   }
 
   return JSON.stringify(summary, null, 2);

@@ -2,23 +2,13 @@
 
 import {
   AlertTriangle,
-  Brain,
   Building2,
-  CheckCircle2,
-  Clock3,
-  Copy,
-  ExternalLink,
   FileText,
-  Fingerprint,
-  Globe2,
   Loader2,
   Mail,
   Phone,
-  ShieldAlert,
-  ShieldCheck,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
-import { Button } from "@/components/ui";
 import type { ShipmentRecord } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
 import { maskAccount, type FieldComparison } from "@/lib/agents/field-comparisons";
@@ -38,48 +28,7 @@ interface ShipmentCaseFileProps {
   refreshKey?: number;
 }
 
-// ── Constants ──────────────────────────────────────────────────────────────
-
-const SUISCAN_BASE = "https://suiscan.xyz/testnet";
-const WALRUSCAN_BASE = "https://walruscan.com/testnet";
-
-// ── Helper functions ────────────────────────────────────────────────────────
-
-function truncateId(id: string, chars = 8) {
-  if (!id || id.length <= chars * 2 + 3) return id;
-  return `${id.slice(0, chars)}…${id.slice(-chars)}`;
-}
-
-function suiObjectUrl(id: string) { return `${SUISCAN_BASE}/object/${id}`; }
-function walrusBlobUrl(id: string) { return `${WALRUSCAN_BASE}/blob/${id}`; }
-function memwalUrl(spaceId: string) {
-  const ns = spaceId.includes(":") ? spaceId.split(":").slice(1).join(":") : spaceId;
-  return `https://memwal.ai?space=${encodeURIComponent(ns)}`;
-}
-
-
 // ── Sub-components ─────────────────────────────────────────────────────────
-
-function CopyButton({ value }: { value: string }) {
-  const [copied, setCopied] = useState(false);
-  return (
-    <button
-      type="button"
-      title="Copy to clipboard"
-      onClick={() => {
-        navigator.clipboard.writeText(value).catch(() => {});
-        setCopied(true);
-        setTimeout(() => setCopied(false), 1500);
-      }}
-      className="rounded p-1 text-steel transition hover:text-pearl"
-    >
-      {copied
-        ? <CheckCircle2 className="h-3.5 w-3.5 text-emerald-500" />
-        : <Copy className="h-3.5 w-3.5" />
-      }
-    </button>
-  );
-}
 
 function SeverityBadge({ severity }: { severity: "critical" | "warning" | "info" }) {
   const styles = {
@@ -96,10 +45,15 @@ function SeverityBadge({ severity }: { severity: "critical" | "warning" | "info"
 
 // ── Section 1: Recent Activities ────────────────────────────────────────────
 
+type IssueSummary = { severity: string; message: string; field?: string };
+
 type ActivityEntry = {
+  kind: "created" | "validation" | "cleared";
   docCount: number;
-  verdict: string;
+  uploadedCount: number;
+  verdict?: string;
   reason?: string;
+  issues?: IssueSummary[];
   timestamp: string;
 };
 
@@ -124,6 +78,27 @@ function useActivityLog(shipmentId: string, refreshKey?: number) {
   return { entries, loading };
 }
 
+function IssueList({ issues }: { issues: IssueSummary[] }) {
+  const errors = issues.filter(i => i.severity === "error");
+  const warnings = issues.filter(i => i.severity === "warning");
+  return (
+    <div className="mt-2 space-y-1">
+      {errors.map((issue, i) => (
+        <div key={`e-${i}`} className="flex items-start gap-2 text-sm">
+          <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-red-500" />
+          <span className="text-red-700">{issue.field ? <b>{issue.field}:</b> : null} {issue.message}</span>
+        </div>
+      ))}
+      {warnings.map((issue, i) => (
+        <div key={`w-${i}`} className="flex items-start gap-2 text-sm">
+          <span className="mt-0.5 h-2 w-2 shrink-0 rounded-full bg-amber-500" />
+          <span className="text-amber-700">{issue.field ? <b>{issue.field}:</b> : null} {issue.message}</span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function ActivityCard({
   entry,
   num,
@@ -132,8 +107,83 @@ function ActivityCard({
   num: number;
 }) {
   const [open, setOpen] = useState(false);
-  const matched = entry.verdict === "consistent" || entry.verdict === "matched";
+  const hasDetail = Boolean(entry.reason) || (entry.issues && entry.issues.length > 0);
 
+  if (entry.kind === "created") {
+    const hasValidation = Boolean(entry.verdict);
+    const matched = entry.verdict === "consistent" || entry.verdict === "matched" || entry.verdict === "aligned";
+    const errorCount = entry.issues?.filter(i => i.severity === "error").length ?? 0;
+    const warnCount = entry.issues?.filter(i => i.severity === "warning").length ?? 0;
+    return (
+      <button
+        type="button"
+        onClick={() => hasDetail && setOpen(!open)}
+        className={cn(
+          "w-full rounded-lg border border-blue-100 bg-blue-50/40 px-4 py-3 text-left",
+          hasDetail && "transition hover:bg-blue-50"
+        )}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-base font-semibold text-pearl">
+            <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
+            Shipment Created{entry.uploadedCount > 0 ? `, ${entry.uploadedCount} document${entry.uploadedCount !== 1 ? "s" : ""} uploaded` : ""}{entry.docCount > 0 && entry.docCount !== entry.uploadedCount ? `, ${entry.docCount} validated` : ""}
+            {hasValidation && (
+              <>
+                . AI validation:{" "}
+                <span className={matched ? "text-emerald-600" : "text-amber-600"}>
+                  {matched ? "Passed" : "Failed"}
+                </span>
+                {!matched && (errorCount > 0 || warnCount > 0) && (
+                  <span className="text-sm font-normal text-steel ml-1">
+                    ({errorCount > 0 ? `${errorCount} error${errorCount !== 1 ? "s" : ""}` : ""}{errorCount > 0 && warnCount > 0 ? ", " : ""}{warnCount > 0 ? `${warnCount} warning${warnCount !== 1 ? "s" : ""}` : ""})
+                  </span>
+                )}
+              </>
+            )}
+          </p>
+          <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
+            {new Date(entry.timestamp).toLocaleString()}
+          </span>
+        </div>
+        {open && (
+          <>
+            {entry.reason && <p className="mt-2 text-sm text-steel">{entry.reason}</p>}
+            {entry.issues && entry.issues.length > 0 && <IssueList issues={entry.issues} />}
+          </>
+        )}
+      </button>
+    );
+  }
+
+  if (entry.kind === "cleared") {
+    return (
+      <button
+        type="button"
+        onClick={() => entry.reason && setOpen(!open)}
+        className={cn(
+          "w-full rounded-lg border border-amber-100 bg-amber-50/40 px-4 py-3 text-left",
+          entry.reason && "transition hover:bg-amber-50"
+        )}
+      >
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-base font-semibold text-pearl">
+            <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
+            Documents cleared
+          </p>
+          <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
+            {new Date(entry.timestamp).toLocaleString()}
+          </span>
+        </div>
+        {open && entry.reason && (
+          <p className="mt-2 text-sm text-steel">{entry.reason}</p>
+        )}
+      </button>
+    );
+  }
+
+  const matched = entry.verdict === "consistent" || entry.verdict === "matched" || entry.verdict === "aligned";
+  const errorCount = entry.issues?.filter(i => i.severity === "error").length ?? 0;
+  const warnCount = entry.issues?.filter(i => i.severity === "warning").length ?? 0;
   return (
     <button
       type="button"
@@ -143,17 +193,25 @@ function ActivityCard({
       <div className="flex items-center justify-between gap-3">
         <p className="text-base font-semibold text-pearl">
           <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
-          {entry.docCount} doc{entry.docCount !== 1 ? "s" : ""} uploaded, AI validated:{" "}
+          {entry.uploadedCount} document{entry.uploadedCount !== 1 ? "s" : ""} uploaded{entry.docCount > entry.uploadedCount ? `, ${entry.docCount} validated` : ""}. AI validation:{" "}
           <span className={matched ? "text-emerald-600" : "text-amber-600"}>
-            {matched ? "matched" : entry.verdict.replace(/_/g, " ")}
+            {matched ? "Passed" : "Failed"}
           </span>
+          {!matched && (errorCount > 0 || warnCount > 0) && (
+            <span className="text-sm font-normal text-steel ml-1">
+              ({errorCount > 0 ? `${errorCount} error${errorCount !== 1 ? "s" : ""}` : ""}{errorCount > 0 && warnCount > 0 ? ", " : ""}{warnCount > 0 ? `${warnCount} warning${warnCount !== 1 ? "s" : ""}` : ""})
+            </span>
+          )}
         </p>
         <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
           {new Date(entry.timestamp).toLocaleString()}
         </span>
       </div>
-      {open && entry.reason && (
-        <p className="mt-2 text-sm text-steel">{entry.reason}</p>
+      {open && (
+        <>
+          {entry.reason && <p className="mt-2 text-sm text-steel">{entry.reason}</p>}
+          {entry.issues && entry.issues.length > 0 && <IssueList issues={entry.issues} />}
+        </>
       )}
     </button>
   );
@@ -206,58 +264,6 @@ function RecentActivities({
           )}
         </>
       )}
-    </div>
-  );
-}
-
-function TradePartiesSection({ shipment }: { shipment: ShipmentRecord }) {
-  const parties = [
-    {
-      role: "Exporter",
-      ...shipment.exporter,
-      country: shipment.shipment.origin
-    },
-    {
-      role: "Importer",
-      ...shipment.importer,
-      country: shipment.shipment.destination
-    }
-  ];
-
-  return (
-    <div className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
-      <h2 className="text-xl font-semibold text-pearl">Trade parties</h2>
-      <div className="mt-5 grid gap-5 lg:grid-cols-2">
-        {parties.map((party) => (
-          <div key={party.role} className="rounded-lg border border-blue-100 bg-white p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-bold text-[#4DA2FF]">{party.role}</p>
-                <h3 className="mt-1 text-lg font-extrabold text-pearl">{party.company}</h3>
-              </div>
-              <Building2 className="h-6 w-6 text-[#4DA2FF]" />
-            </div>
-            <div className="mt-4 grid gap-2 text-sm">
-              <p>
-                <span className="font-bold text-steel">Country:</span>{" "}
-                <span className="font-semibold text-pearl">{party.country}</span>
-              </p>
-              <p>
-                <span className="font-bold text-steel">Contact:</span>{" "}
-                <span className="font-semibold text-pearl">{party.contact}</span>
-              </p>
-              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
-                <Mail className="h-4 w-4 text-[#4DA2FF]" />
-                <span className="font-semibold text-pearl">{party.email}</span>
-              </div>
-              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
-                <Phone className="h-4 w-4 text-[#4DA2FF]" />
-                <span className="font-semibold text-pearl">{party.phone}</span>
-              </div>
-            </div>
-          </div>
-        ))}
-      </div>
     </div>
   );
 }
@@ -390,205 +396,6 @@ function formatEvidenceValue(field: string, value: unknown) {
 
 // ── Section 5: Verifiable Proof ─────────────────────────────────────────────
 
-function VerifiableProofSection({ shipment }: { shipment: ShipmentRecord }) {
-  const {
-    passportId, txDigest, walrusManifestBlobId,
-    memWalSpaceId, memWalSyncStatus,
-  } = shipment;
-
-  const syncBadge = memWalSyncStatus === "synced"
-    ? "border-emerald-200 bg-emerald-50 text-emerald-600"
-    : memWalSyncStatus === "failed"
-      ? "border-red-200 bg-red-50 text-red-600"
-      : "border-amber-200 bg-amber-50 text-amber-600";
-  const syncLabel = memWalSyncStatus === "synced" ? "Synced"
-    : memWalSyncStatus === "failed" ? "Failed"
-      : memWalSyncStatus === "pending" ? "Syncing…" : "Pending";
-
-  return (
-    <div className="space-y-3">
-      {/* MemWal — hero badge */}
-      <div className={cn(
-        "rounded-xl border p-4",
-        memWalSpaceId ? "border-emerald-200 bg-gradient-to-r from-emerald-50 to-blue-50" : "border-slate-200 bg-slate-50"
-      )}>
-        <div className="flex items-start justify-between gap-3">
-          <div className="flex items-start gap-3 min-w-0">
-            <Brain className={cn("mt-0.5 h-7 w-7 shrink-0", memWalSpaceId ? "text-emerald-600" : "text-steel")} />
-            <div className="min-w-0">
-              <div className="flex items-center gap-2">
-                <p className="text-xs font-black uppercase tracking-widest text-steel">MemWal Memory</p>
-                {memWalSpaceId && (
-                  <span className={cn("rounded-full border px-2 py-0.5 text-xs font-bold", syncBadge)}>
-                    {syncLabel}
-                  </span>
-                )}
-              </div>
-              {memWalSpaceId ? (
-                <>
-                  <p className="mt-0.5 font-mono text-xs text-pearl">{truncateId(memWalSpaceId, 10)}</p>
-                  <p className="mt-1 text-xs text-steel">Agent memory persisted and verifiable — exporter baseline stored, recalled on next shipment.</p>
-                </>
-              ) : (
-                <p className="mt-1 text-sm font-semibold text-steel">Pending — available after shipment is minted.</p>
-              )}
-            </div>
-          </div>
-          {memWalSpaceId && (
-            <div className="flex shrink-0 items-center gap-1">
-              <CopyButton value={memWalSpaceId} />
-              <a href={memwalUrl(memWalSpaceId)} target="_blank" rel="noopener noreferrer"
-                className="rounded p-1 text-steel hover:text-sui">
-                <ExternalLink className="h-3.5 w-3.5" />
-              </a>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Secondary badges */}
-      <div className="mt-3 grid gap-3 sm:grid-cols-3">
-        {/* Walrus */}
-        <div className={cn(
-          "rounded-xl border p-3",
-          walrusManifestBlobId ? "border-blue-100 bg-blue-50" : "border-slate-200 bg-slate-50"
-        )}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Globe2 className={cn("h-4 w-4", walrusManifestBlobId ? "text-sui" : "text-steel")} />
-              <p className="text-xs font-bold text-pearl">Walrus Evidence</p>
-            </div>
-            {walrusManifestBlobId && (
-              <div className="flex items-center gap-0.5">
-                <CopyButton value={walrusManifestBlobId} />
-                <a href={walrusBlobUrl(walrusManifestBlobId)} target="_blank" rel="noopener noreferrer"
-                  className="rounded p-1 text-steel hover:text-sui">
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            )}
-          </div>
-          {walrusManifestBlobId
-            ? <p className="mt-1 font-mono text-[10px] text-steel">{truncateId(walrusManifestBlobId, 6)}</p>
-            : <p className="mt-1 text-xs text-steel">Pending</p>
-          }
-          {walrusManifestBlobId && (
-            <span className="mt-1 inline-block rounded-full border border-blue-100 bg-white px-1.5 py-0.5 text-[10px] font-bold text-sui">
-              Stored
-            </span>
-          )}
-        </div>
-
-        {/* Sui Passport */}
-        <div className={cn(
-          "rounded-xl border p-3",
-          passportId ? "border-blue-100 bg-blue-50" : "border-slate-200 bg-slate-50"
-        )}>
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-2">
-              <Fingerprint className={cn("h-4 w-4", passportId ? "text-sui" : "text-steel")} />
-              <p className="text-xs font-bold text-pearl">Sui Passport</p>
-            </div>
-            {passportId && (
-              <div className="flex items-center gap-0.5">
-                <CopyButton value={passportId} />
-                <a href={suiObjectUrl(passportId)} target="_blank" rel="noopener noreferrer"
-                  className="rounded p-1 text-steel hover:text-sui">
-                  <ExternalLink className="h-3 w-3" />
-                </a>
-              </div>
-            )}
-          </div>
-          {passportId
-            ? <p className="mt-1 font-mono text-[10px] text-steel">{truncateId(passportId, 6)}</p>
-            : <p className="mt-1 text-xs text-steel">Pending</p>
-          }
-          {passportId && (
-            <span className="mt-1 inline-block rounded-full border border-blue-100 bg-white px-1.5 py-0.5 text-[10px] font-bold text-sui">
-              Minted
-            </span>
-          )}
-        </div>
-
-        {/* SEAL */}
-        <div className={cn(
-          "rounded-xl border p-3",
-          passportId ? "border-emerald-100 bg-emerald-50" : "border-slate-200 bg-slate-50"
-        )}>
-          <div className="flex items-center gap-2">
-            <ShieldCheck className={cn("h-4 w-4", passportId ? "text-emerald-600" : "text-steel")} />
-            <p className="text-xs font-bold text-pearl">SEAL Privacy</p>
-          </div>
-          <p className="mt-1 text-xs text-steel">
-            {passportId ? "Encryption active — data accessible only to authorised parties." : "Pending"}
-          </p>
-          {passportId && (
-            <span className="mt-1 inline-block rounded-full border border-emerald-100 bg-white px-1.5 py-0.5 text-[10px] font-bold text-emerald-600">
-              Active
-            </span>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-// ── Missing Document Banner ─────────────────────────────────────────────────
-
-function MissingDocsBanner({ shipment }: { shipment: ShipmentRecord }) {
-  const [copied, setCopied] = useState(false);
-  const missing = shipment.documents.filter(d => d.required && !d.uploaded);
-  if (missing.length === 0) return null;
-
-  const request = [
-    `Subject: Document Upload Request — Shipment ${shipment.id}`,
-    ``,
-    `Dear ${shipment.exporter.company},`,
-    ``,
-    `We are processing shipment ${shipment.id} and require the following documents:`,
-    ...missing.map(d => `  - ${d.name}`),
-    ``,
-    `Please upload at your earliest convenience.`,
-    ``,
-    `Best regards,`,
-    shipment.importer.company,
-  ].join("\n");
-
-  return (
-    <div className="rounded-2xl border border-amber-200 bg-amber-50 p-4 shadow-sm">
-      <div className="flex items-start gap-3">
-        <Clock3 className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
-        <div className="min-w-0 flex-1">
-          <p className="font-bold text-amber-800">
-            Agent Waiting — {missing.length} required document{missing.length !== 1 ? "s" : ""} missing
-          </p>
-          <ul className="mt-2 space-y-1">
-            {missing.map(d => (
-              <li key={d.name} className="flex items-center gap-2 text-sm text-amber-700">
-                <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
-                {d.name}
-              </li>
-            ))}
-          </ul>
-        </div>
-        <Button
-          variant="secondary"
-          className="shrink-0 border-amber-200 text-amber-700 hover:bg-amber-100"
-          onClick={() => {
-            navigator.clipboard.writeText(request).catch(() => {});
-            setCopied(true);
-            setTimeout(() => setCopied(false), 2000);
-          }}
-        >
-          {copied ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
-          {copied ? "Copied!" : "Generate Upload Request"}
-        </Button>
-      </div>
-    </div>
-  );
-}
-
-
 // ── Internal fetch hook ─────────────────────────────────────────────────────
 
 function useValidation(shipmentId: string, refreshKey = 0) {
@@ -623,33 +430,20 @@ function useValidation(shipmentId: string, refreshKey = 0) {
 
 // ── Main export ─────────────────────────────────────────────────────────────
 
-type AgentTab = "document" | "proof";
-
-const AGENT_TABS: Array<{ id: AgentTab; label: string; icon: React.ElementType }> = [
-  { id: "document", label: "Document Agent", icon: FileText },
-  { id: "proof", label: "Proof Agent", icon: ShieldCheck },
-];
-
-function AgentTabContent({
-  tab,
-  shipment,
-  fieldComparisons,
-}: {
-  tab: AgentTab;
-  shipment: ShipmentRecord;
-  fieldComparisons: FieldComparison[];
-}) {
-  switch (tab) {
-    case "document":
-      return <EvidenceDiffSection fieldComparisons={fieldComparisons} />;
-    case "proof":
-      return <VerifiableProofSection shipment={shipment} />;
-    default:
-      return null;
-  }
-}
-
 function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
+  const parties = [
+    {
+      role: "Exporter",
+      ...shipment.exporter,
+      country: shipment.shipment.origin,
+    },
+    {
+      role: "Importer",
+      ...shipment.importer,
+      country: shipment.shipment.destination,
+    },
+  ];
+
   const items = [
     ["Carrier", shipment.shipment.carrier],
     ["Incoterm", shipment.shipment.incoterm],
@@ -658,9 +452,43 @@ function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
     ["HS code", shipment.cargo.hsCode],
     ["Broker", shipment.broker || "—"],
   ];
+
   return (
     <div className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
       <h2 className="text-xl font-semibold text-pearl">Overview</h2>
+
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        {parties.map((party) => (
+          <div key={party.role} className="rounded-lg border border-blue-100 bg-white p-4">
+            <div className="flex items-start justify-between gap-4">
+              <div>
+                <p className="text-sm font-bold text-[#4DA2FF]">{party.role}</p>
+                <h3 className="mt-1 text-lg font-extrabold text-pearl">{party.company}</h3>
+              </div>
+              <Building2 className="h-6 w-6 text-[#4DA2FF]" />
+            </div>
+            <div className="mt-4 grid gap-2 text-sm">
+              <p>
+                <span className="font-bold text-steel">Country:</span>{" "}
+                <span className="font-semibold text-pearl">{party.country}</span>
+              </p>
+              <p>
+                <span className="font-bold text-steel">Contact:</span>{" "}
+                <span className="font-semibold text-pearl">{party.contact}</span>
+              </p>
+              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
+                <Mail className="h-4 w-4 text-[#4DA2FF]" />
+                <span className="font-semibold text-pearl">{party.email}</span>
+              </div>
+              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
+                <Phone className="h-4 w-4 text-[#4DA2FF]" />
+                <span className="font-semibold text-pearl">{party.phone}</span>
+              </div>
+            </div>
+          </div>
+        ))}
+      </div>
+
       <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
         {items.map(([label, value]) => (
           <div key={label} className="rounded-lg bg-blue-50 p-4">
@@ -673,47 +501,39 @@ function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
   );
 }
 
-function agentTabBadge(
-  tab: AgentTab,
-  fieldComparisons: FieldComparison[],
-  shipment: ShipmentRecord,
-): React.ReactNode {
-  if (tab === "document") {
-    const count = fieldComparisons.filter(c => c.extractedValue != null).length;
-    if (count > 0) return <span className="rounded-full bg-blue-100 px-1.5 py-0.5 text-[10px] font-bold text-sui">{count}</span>;
+type AgentTab = "document";
+
+const AGENT_TABS: Array<{ id: AgentTab; label: string; icon: React.ElementType }> = [
+  { id: "document", label: "Document Agent", icon: FileText },
+];
+
+function AgentTabContent({
+  tab,
+  fieldComparisons,
+}: {
+  tab: AgentTab;
+  fieldComparisons: FieldComparison[];
+}) {
+  switch (tab) {
+    case "document":
+      return <EvidenceDiffSection fieldComparisons={fieldComparisons} />;
+    default:
+      return null;
   }
-  if (tab === "proof") {
-    if (shipment.passportId) return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Minted</span>;
-  }
-  return null;
 }
 
 export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps) {
   const { data: validation, loading } = useValidation(shipment.id, refreshKey);
   const [activeTab, setActiveTab] = useState<AgentTab>("document");
-
   const fieldComparisons: FieldComparison[] = validation?.fieldComparisons ?? [];
 
   return (
     <div className="space-y-4">
-      {/* Missing docs banner */}
-      <MissingDocsBanner shipment={shipment} />
-
-      {/* Extraction in progress banner */}
-      {shipment.extractionStatus === "extracting" && (
-        <div className="flex items-center gap-3 rounded-2xl border border-blue-100 bg-blue-50 p-4">
-          <Loader2 className="h-5 w-5 animate-spin text-sui" />
-          <p className="font-semibold text-steel">AI is reading uploaded documents — please wait.</p>
-        </div>
-      )}
 
       {/* Recent Activities */}
       <RecentActivities shipmentId={shipment.id} shipment={shipment} refreshKey={refreshKey} />
 
-      {/* Trade Parties */}
-      <TradePartiesSection shipment={shipment} />
-
-      {/* Overview */}
+      {/* Overview (includes Trade Parties) */}
       <OverviewSection shipment={shipment} />
 
       {/* Agent Hub — tabbed */}
@@ -721,7 +541,6 @@ export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps
         <div className="flex items-center gap-1 border-b border-blue-100 px-4 pt-4 pb-0 overflow-x-auto">
           {AGENT_TABS.map(({ id, label, icon: Icon }) => {
             const isActive = activeTab === id;
-            const badge = agentTabBadge(id, fieldComparisons, shipment);
             return (
               <button
                 key={id}
@@ -736,7 +555,6 @@ export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps
               >
                 <Icon className="h-4 w-4" />
                 {label}
-                {badge}
               </button>
             );
           })}
@@ -745,7 +563,6 @@ export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps
         <div className="p-5">
           <AgentTabContent
             tab={activeTab}
-            shipment={shipment}
             fieldComparisons={fieldComparisons}
           />
         </div>

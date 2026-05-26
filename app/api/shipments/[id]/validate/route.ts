@@ -23,14 +23,20 @@ type ValidationRunRow = {
 };
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: shipmentId } = await params;
     const db = getDb();
 
-    const result = await runShipmentValidation(shipmentId, db);
+    let uploadedCount: number | undefined;
+    try {
+      const body = await request.json();
+      if (typeof body.uploadedCount === "number") uploadedCount = body.uploadedCount;
+    } catch { /* no body or not JSON — that's fine */ }
+
+    const result = await runShipmentValidation(shipmentId, db, { uploadedCount });
     if (!result) {
       return NextResponse.json(
         { error: "No extraction runs found for this shipment. Upload documents first." },

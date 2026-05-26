@@ -32,6 +32,15 @@ Severity rules:
 - "warning": Soft mismatch — minor formatting differences, date format ambiguity, abbreviated vs full names that could refer to the same entity, COO pre-dating invoice by a small margin.
 - "info": Observation only — a field is present in some docs but null in others (not necessarily a problem).
 
+DUPLICATE DOCUMENTS OF THE SAME TYPE:
+If multiple documents of the same type exist (e.g. two certificates_of_origin), compare them. If their key values (names, numbers, dates, amounts) are completely different, flag as error — one is likely fraudulent or belongs to a different shipment.
+
+FILENAME vs CONTENT MISMATCH:
+The manifest may include a "_filename_warnings" array. Treat each warning as an error-severity issue. A file named "Insurance.pdf" whose content is a certificate of origin is a serious red flag indicating a mislabeled or fraudulent document.
+
+FRAUDULENT / DUMMY DOCUMENTS:
+If a document's extracted values (names, addresses, amounts, reference numbers) are completely different from the corresponding fields in other documents in the same shipment, flag as error. For example, if Invoice says shipper is "Acme Robotics LLC" but a certificate of origin says exporter is "XYZ Trading Corp", that's a clear mismatch indicating fraud.
+
 Allow for reasonable abbreviations and aliases. For example "Java Highlands Co." and "Java Highlands Cooperative Sdn Bhd" are the SAME company — do NOT flag. Be strict on reference numbers and HS codes.
 
 If a field is null in one or more documents, that alone is NOT an error — only flag when two non-null values clearly conflict.
@@ -208,7 +217,7 @@ export async function llmCrossValidateCompact(
     `## Existing documents (compact manifest from cache)\n${compactManifest}`,
     newExtractionsJson ? `## New/updated document extractions\n${newExtractionsJson}` : null,
     retrievedChunks ? `## Relevant context chunks from prior extractions\n${retrievedChunks}` : null,
-    "Cross-validate all of the above for consistency.",
+    "Cross-validate ALL of the above for consistency. Pay special attention to:\n1. If multiple documents of the same type exist (e.g. two certificates of origin), compare their values — completely different names/addresses/numbers indicate fraud.\n2. Any _filename_warnings in the manifest — these are critical.\n3. Documents whose values (names, addresses, amounts) don't match the rest of the shipment.\n\nRespond with ONLY valid JSON, starting with { — no preamble text.",
   ]
     .filter(Boolean)
     .join("\n\n");
@@ -238,7 +247,12 @@ export async function llmCrossValidateCompact(
       .map((b) => (b as Anthropic.TextBlock).text)
       .join("");
 
-    const cleanText = rawText.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/, "$1").trim();
+    let cleanText = rawText.replace(/^```(?:json)?\s*\n?([\s\S]*?)\n?```\s*$/, "$1").trim();
+    const firstBrace = cleanText.indexOf("{");
+    const lastBrace = cleanText.lastIndexOf("}");
+    if (firstBrace >= 0 && lastBrace > firstBrace) {
+      cleanText = cleanText.slice(firstBrace, lastBrace + 1);
+    }
     const parsed = JSON.parse(cleanText);
     const validated = LLMValidationResponseSchema.parse(parsed);
 
@@ -257,8 +271,9 @@ export async function llmCrossValidateCompact(
       outputTokens,
     };
   } catch (err) {
-    logger.warn({ err }, "llmCrossValidateCompact failed — returning empty issues");
-    return { issues: [], overallVerdict: "insufficient_data", verdictReason: "Compact validation failed", inputTokens: 0, outputTokens: 0 };
+    const errMsg = err instanceof Error ? err.message : String(err);
+    logger.error({ err: errMsg, stack: err instanceof Error ? err.stack : undefined }, "llmCrossValidateCompact failed");
+    return { issues: [], overallVerdict: "insufficient_data", verdictReason: `Compact validation failed: ${errMsg.slice(0, 200)}`, inputTokens: 0, outputTokens: 0 };
   }
 }
 

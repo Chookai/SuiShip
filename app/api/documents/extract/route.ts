@@ -56,6 +56,7 @@ function recordExtractionRun(
       ...result.detected.packing_list.map((d) => ({ doc: d, docType: "packing_list" })),
       ...result.detected.bill_of_lading.map((d) => ({ doc: d, docType: "bill_of_lading" })),
       ...result.detected.certificate_of_origin.map((d) => ({ doc: d, docType: "certificate_of_origin" })),
+      ...result.detected.other.map((d) => ({ doc: d, docType: "other" })),
       ...result.garbage.map((g) => ({ doc: g.file, docType: "unknown" })),
       ...result.errors.map((d) => ({ doc: d, docType: "unknown" })),
     ];
@@ -81,6 +82,7 @@ function mergeAggregateResults(base: AggregateResult, extraDocs: ExtractedDoc[])
     ...base.detected.packing_list,
     ...base.detected.bill_of_lading,
     ...base.detected.certificate_of_origin,
+    ...base.detected.other,
     ...base.garbage.map((g) => g.file),
     ...base.errors,
     ...base.low_confidence,
@@ -103,6 +105,7 @@ function aggregateDocs(result: AggregateResult): ExtractedDoc[] {
     ...result.detected.packing_list,
     ...result.detected.bill_of_lading,
     ...result.detected.certificate_of_origin,
+    ...result.detected.other,
     ...result.garbage.map((g) => g.file),
     ...result.errors,
     ...result.low_confidence,

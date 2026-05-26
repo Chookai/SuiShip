@@ -18,6 +18,7 @@ export const AggregateResultSchema = z.object({
     packing_list: z.array(ExtractedDocSchema),
     bill_of_lading: z.array(ExtractedDocSchema),
     certificate_of_origin: z.array(ExtractedDocSchema),
+    other: z.array(ExtractedDocSchema),
   }),
   // Required types not uploaded
   missing: z.array(DocumentTypeSchema),

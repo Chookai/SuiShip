@@ -20,6 +20,7 @@ export function aggregate(
     packing_list: [],
     bill_of_lading: [],
     certificate_of_origin: [],
+    other: [],
   };
   const garbage: AggregateResult["garbage"] = [];
   const errors: ExtractedDoc[] = [];
@@ -45,8 +46,12 @@ export function aggregate(
       low_confidence.push(doc);
     }
 
-    // document_type is now narrowed to the 4 known types (unknown handled above)
-    const knownType = document_type as keyof typeof detected;
+    if (document_type === "other") {
+      detected.other.push(doc);
+      continue;
+    }
+
+    const knownType = document_type as keyof Omit<typeof detected, "other">;
     detected[knownType].push(doc);
   }
 

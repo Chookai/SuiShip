@@ -283,22 +283,73 @@ export default function CreateShipmentPage() {
     result: AggregateResult
   ): DocumentRequirement[] {
     const now = new Date().toISOString();
-    return current.map((doc) => {
+    const usedFileNames = new Set<string>();
+    const nextDocs = current.map((doc) => {
       const docLower = doc.name.toLowerCase();
       if (docLower.includes("commercial invoice") && result.detected.commercial_invoice.length > 0) {
-        return withExtractionProvenance(doc, result.detected.commercial_invoice[0].file_name, result, now);
+        const fn = result.detected.commercial_invoice[0].file_name;
+        usedFileNames.add(fn);
+        return withExtractionProvenance(doc, fn, result, now);
       }
       if (docLower.includes("packing list") && result.detected.packing_list.length > 0) {
-        return withExtractionProvenance(doc, result.detected.packing_list[0].file_name, result, now);
+        const fn = result.detected.packing_list[0].file_name;
+        usedFileNames.add(fn);
+        return withExtractionProvenance(doc, fn, result, now);
       }
       if ((docLower.includes("bill of lading") || docLower.includes("air waybill")) && result.detected.bill_of_lading.length > 0) {
-        return withExtractionProvenance(doc, result.detected.bill_of_lading[0].file_name, result, now);
+        const fn = result.detected.bill_of_lading[0].file_name;
+        usedFileNames.add(fn);
+        return withExtractionProvenance(doc, fn, result, now);
       }
       if (docLower.includes("certificate of origin") && result.detected.certificate_of_origin.length > 0) {
-        return withExtractionProvenance(doc, result.detected.certificate_of_origin[0].file_name, result, now);
+        const fn = result.detected.certificate_of_origin[0].file_name;
+        usedFileNames.add(fn);
+        return withExtractionProvenance(doc, fn, result, now);
       }
       return doc;
     });
+
+    // Match remaining files to unmatched checklist entries by filename similarity
+    const unmatchedDocs = nextDocs.filter(d => !d.uploaded && !d.fileName);
+    const unassignedFiles = (result.extractionProvenance ?? [])
+      .map(p => p.fileName)
+      .filter(fn => !usedFileNames.has(fn));
+    for (const fileName of unassignedFiles) {
+      const fileBase = fileName.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ").toLowerCase();
+      const match = unmatchedDocs.find(d => {
+        const dl = d.name.toLowerCase();
+        return fileBase.includes(dl) || dl.includes(fileBase);
+      });
+      if (match) {
+        const idx = nextDocs.indexOf(match);
+        if (idx >= 0) {
+          nextDocs[idx] = withExtractionProvenance(match, fileName, result, now);
+          usedFileNames.add(fileName);
+        }
+      }
+    }
+
+    // Auto-create entries for "other" detected docs not yet matched
+    const existingNames = new Set(nextDocs.map(d => d.name.toLowerCase()));
+    for (const otherDoc of result.detected.other ?? []) {
+      if (usedFileNames.has(otherDoc.file_name)) continue;
+      const label = otherDoc.extraction_result.document_type === "other"
+        ? (otherDoc.extraction_result as { detected_label?: string }).detected_label
+          ?? otherDoc.file_name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ").replace(/\b\w/g, c => c.toUpperCase())
+        : otherDoc.file_name.replace(/\.[^.]+$/, "").replace(/[_-]/g, " ").replace(/\b\w/g, c => c.toUpperCase());
+      let name = label;
+      if (existingNames.has(name.toLowerCase())) name = `${label} 2`;
+      existingNames.add(name.toLowerCase());
+      usedFileNames.add(otherDoc.file_name);
+      nextDocs.push(withExtractionProvenance({
+        name,
+        owner: creatorOwner,
+        required: false,
+        uploaded: true,
+      }, otherDoc.file_name, result, now));
+    }
+
+    return nextDocs;
   }
 
   function withExtractionProvenance(
@@ -527,14 +578,18 @@ export default function CreateShipmentPage() {
 
       // Write creation event to MemWal
       try {
+        const uploadedDocs = docs.filter((d) => d.uploaded);
         await fetch(`/api/shipments/${encodeURIComponent(id)}/memory-write`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({
             kind: "shipment_created",
             timestamp: new Date().toISOString(),
+            created_by: workflow === "importer" ? "Importer" : "Exporter",
+            company: workflow === "importer" ? importer.company : exporter.company,
             status,
-            documentCount: docs.filter((d) => d.uploaded).length,
+            document_count: uploadedDocs.length,
+            documents_uploaded: uploadedDocs.map((d) => d.name),
           }),
         });
       } catch {
@@ -1028,6 +1083,7 @@ function mergeExtractionResults(existing: AggregateResult, incoming: AggregateRe
     certificate_of_origin: incoming.detected.certificate_of_origin.length > 0
       ? incoming.detected.certificate_of_origin
       : existing.detected.certificate_of_origin,
+    other: [...existing.detected.other, ...incoming.detected.other],
   };
   const allTypes = ["commercial_invoice", "packing_list", "bill_of_lading", "certificate_of_origin"] as const;
   const missing = allTypes.filter((t) => detected[t].length === 0);
