@@ -1,7 +1,7 @@
 "use client";
 
 import { ConnectButton, useCurrentAccount } from "@mysten/dapp-kit";
-import { Bell, Boxes, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, Search, Ship, Sparkles } from "lucide-react";
+import { Bell, Boxes, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, Search, ShieldAlert, Ship, Sparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -19,6 +19,7 @@ const nav = [
   { href: "/shipments", label: "Shipments", icon: Ship },
   { href: "/create", label: "Create", icon: FilePlus2 },
   { href: "/memory", label: "Memory", icon: BrainCircuit },
+  { href: "/risk-memory", label: "Risk Memory", icon: ShieldAlert },
 ];
 
 export function Shell({ children }: { children: React.ReactNode }) {

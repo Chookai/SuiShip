@@ -9,6 +9,11 @@ import {
   Phone,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+<<<<<<< HEAD
+=======
+import { Button } from "@/components/ui";
+import { RiskAgentPanel } from "@/components/RiskAgentPanel";
+>>>>>>> 4bdaff5 (Add risk memory agent scan flow)
 import type { ShipmentRecord } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
 import { maskAccount, type FieldComparison } from "@/lib/agents/field-comparisons";
@@ -430,6 +435,40 @@ function useValidation(shipmentId: string, refreshKey = 0) {
 
 // ── Main export ─────────────────────────────────────────────────────────────
 
+<<<<<<< HEAD
+=======
+type AgentTab = "document" | "proof" | "risk";
+
+const AGENT_TABS: Array<{ id: AgentTab; label: string; icon: React.ElementType }> = [
+  { id: "document", label: "Document Agent", icon: FileText },
+  { id: "proof", label: "Proof Agent", icon: ShieldCheck },
+  { id: "risk", label: "Risk Agent", icon: ShieldAlert },
+];
+
+function AgentTabContent({
+  tab,
+  shipment,
+  fieldComparisons,
+  refreshKey,
+}: {
+  tab: AgentTab;
+  shipment: ShipmentRecord;
+  fieldComparisons: FieldComparison[];
+  refreshKey?: number;
+}) {
+  switch (tab) {
+    case "document":
+      return <EvidenceDiffSection fieldComparisons={fieldComparisons} />;
+    case "proof":
+      return <VerifiableProofSection shipment={shipment} />;
+    case "risk":
+      return <RiskAgentPanel shipment={shipment} refreshKey={refreshKey} />;
+    default:
+      return null;
+  }
+}
+
+>>>>>>> 4bdaff5 (Add risk memory agent scan flow)
 function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
   const parties = [
     {
@@ -520,6 +559,16 @@ function AgentTabContent({
     default:
       return null;
   }
+<<<<<<< HEAD
+=======
+  if (tab === "proof") {
+    if (shipment.passportId) return <span className="rounded-full bg-emerald-100 px-1.5 py-0.5 text-[10px] font-bold text-emerald-700">Minted</span>;
+  }
+  if (tab === "risk") {
+    if (shipment.ai) return <span className="rounded-full bg-amber-100 px-1.5 py-0.5 text-[10px] font-bold text-amber-700">Scan</span>;
+  }
+  return null;
+>>>>>>> 4bdaff5 (Add risk memory agent scan flow)
 }
 
 export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps) {
@@ -564,6 +613,7 @@ export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps
           <AgentTabContent
             tab={activeTab}
             fieldComparisons={fieldComparisons}
+            refreshKey={refreshKey}
           />
         </div>
       </div>

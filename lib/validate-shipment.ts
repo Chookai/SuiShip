@@ -31,6 +31,7 @@ import { ensureAgentRun, recordAgentStep, updateAgentRun, recordWaitingForDocume
 import { registerArtifact } from "./artifacts";
 import { generateShipmentCaseFile, type ShipmentCaseFileArtifact } from "./case-files";
 import { isMemWalConfigured } from "./memwal/client";
+import { runRiskScanForShipment } from "./agents/risk-agent";
 
 const logger = pino({ name: "validate-shipment" });
 
@@ -173,6 +174,8 @@ export async function runShipmentValidation(
         timestamp: new Date().toISOString(),
       }).catch(() => {});
     }).catch(() => {});
+
+    await runRiskScanAfterValidation(shipmentId, db);
 
     return mockResult;
   }
@@ -468,6 +471,8 @@ export async function runShipmentValidation(
     }).catch(() => {});
   }).catch(() => {});
 
+  await runRiskScanAfterValidation(shipmentId, db);
+
   return {
     issues: allIssues,
     findings,
@@ -484,6 +489,17 @@ export async function runShipmentValidation(
     agentRunId: agentRun.id,
     caseFile,
   };
+}
+
+async function runRiskScanAfterValidation(
+  shipmentId: string,
+  db: Database.Database
+): Promise<void> {
+  try {
+    await runRiskScanForShipment(shipmentId, db);
+  } catch (err) {
+    logger.warn({ err, shipmentId }, "Risk scan failed after validation");
+  }
 }
 
 function getMissingRequiredDocuments(shipmentId: string): string[] {

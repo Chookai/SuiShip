@@ -11,3 +11,6 @@ move/build/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+.superpowers
+.env
+.idea.md
