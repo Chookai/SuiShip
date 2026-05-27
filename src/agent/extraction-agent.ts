@@ -24,7 +24,7 @@ export async function extract(
 
   if (files.length === 0) {
     return {
-      detected: { commercial_invoice: [], packing_list: [], bill_of_lading: [], certificate_of_origin: [] },
+      detected: { commercial_invoice: [], packing_list: [], bill_of_lading: [], certificate_of_origin: [], other: [] },
       missing: ["commercial_invoice", "packing_list", "bill_of_lading", "certificate_of_origin"],
       duplicates: [],
       garbage: [],

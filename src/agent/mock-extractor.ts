@@ -231,6 +231,7 @@ export function mockExtractPass(files: PdfFile[]): AggregateResult {
     packing_list: [],
     bill_of_lading: [],
     certificate_of_origin: [],
+    other: [],
   };
 
   if (files.length === 0) {
@@ -293,6 +294,7 @@ export function mockExtractFail(files: PdfFile[]): AggregateResult {
       packing_list: [],
       bill_of_lading: [],
       certificate_of_origin: [],
+      other: [],
     },
     missing: ["packing_list", "bill_of_lading", "certificate_of_origin"],
     duplicates: [],
