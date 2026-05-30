@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import "./globals.css";
+import { ThemeProvider } from "next-themes";
 import { Providers } from "@/components/providers";
 import { RoleProvider } from "@/components/role-context";
 import { Shell } from "@/components/shell";
@@ -12,15 +13,17 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
-    <html lang="en">
+    <html lang="en" suppressHydrationWarning>
       <body className="font-sans antialiased">
-        <Providers>
-          <RoleProvider>
-            <ShipmentsProvider>
-              <Shell>{children}</Shell>
-            </ShipmentsProvider>
-          </RoleProvider>
-        </Providers>
+        <ThemeProvider attribute="class" defaultTheme="system" enableSystem>
+          <Providers>
+            <RoleProvider>
+              <ShipmentsProvider>
+                <Shell>{children}</Shell>
+              </ShipmentsProvider>
+            </RoleProvider>
+          </Providers>
+        </ThemeProvider>
       </body>
     </html>
   );

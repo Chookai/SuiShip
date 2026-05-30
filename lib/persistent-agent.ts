@@ -51,7 +51,7 @@ export type PersistentAgentShipmentRow = MonitoredShipmentConfig & {
 export const DEFAULT_MONITORED_SIMULATION: MonitoredShipmentConfig = {
   simulationId: "SF-2026-LIVE",
   shipmentId: "SF-2026-LIVE",
-  sourceUrl: "http://localhost:8081/mock/ais/simulations/SF-2026-LIVE",
+  sourceUrl: `${process.env.AIS_BASE_URL ?? "http://localhost:8081"}/mock/ais/simulations/SF-2026-LIVE`,
   displayName: "SF-2026-LIVE",
 };
 
@@ -211,7 +211,7 @@ export function recordPersistentAgentEvent(
     shipmentId: event.shipmentId,
     sourceUrl: event.simulationId === DEFAULT_MONITORED_SIMULATION.simulationId
       ? DEFAULT_MONITORED_SIMULATION.sourceUrl
-      : `http://localhost:8081/mock/ais/simulations/${event.simulationId}`,
+      : `${process.env.AIS_BASE_URL ?? "http://localhost:8081"}/mock/ais/simulations/${event.simulationId}`,
     displayName: event.simulationId,
   }, db);
   const id = event.id ?? randomUUID();
@@ -361,6 +361,14 @@ export async function checkAllPersistentAgentShipments(
     const result = await checkPersistentAgentShipment(row, db);
     results.push({ simulationId: row.simulationId, ...result });
   }
+
+  // Retry any tracker registrations that failed during FF picked_up endorsements
+  void import("./tracker-api/retry").then(({ retryFailedRegistrations }) =>
+    retryFailedRegistrations().catch((err) =>
+      console.warn("[persistent-agent] retryFailedRegistrations error:", err)
+    )
+  );
+
   return results;
 }
 
@@ -376,7 +384,7 @@ export async function ingestPersistentAgentWebhook(
   const config = simulationId ? getMonitoredShipment(simulationId, db) ?? {
     simulationId,
     shipmentId: firstString(readPath(payload, ["shipmentId"]), readPath(payload, ["shipment_id"]), simulationId) ?? simulationId,
-    sourceUrl: `http://localhost:8081/mock/ais/simulations/${simulationId}`,
+    sourceUrl: `${process.env.AIS_BASE_URL ?? "http://localhost:8081"}/mock/ais/simulations/${simulationId}`,
     displayName: simulationId,
   } : DEFAULT_MONITORED_SIMULATION;
   const event = recordPersistentAgentEvent(normalizeAisSimulationPayload(payload, config), db);

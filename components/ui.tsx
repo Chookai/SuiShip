@@ -11,8 +11,8 @@ export function Button({ className, variant = "primary", ...props }: ButtonProps
       className={cn(
         "inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition disabled:cursor-not-allowed disabled:opacity-50",
         variant === "primary" && "blue-gradient text-white shadow-glow hover:brightness-105",
-        variant === "secondary" && "border border-blue-100 bg-white text-pearl shadow-sm hover:bg-blue-50",
-        variant === "ghost" && "text-steel hover:bg-blue-50 hover:text-pearl",
+        variant === "secondary" && "border border-blue-100 bg-white text-pearl shadow-sm hover:bg-blue-50 dark:border-slate-700 dark:bg-midnight dark:hover:bg-ink",
+        variant === "ghost" && "text-steel hover:bg-blue-50 hover:text-pearl dark:hover:bg-ink dark:hover:text-pearl",
         className
       )}
       {...props}
@@ -37,8 +37,8 @@ export function LinkButton({
       className={cn(
         "inline-flex min-h-11 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold transition",
         variant === "primary" && "blue-gradient text-white shadow-glow hover:brightness-105",
-        variant === "secondary" && "border border-blue-100 bg-white text-pearl shadow-sm hover:bg-blue-50",
-        variant === "ghost" && "text-steel hover:bg-blue-50 hover:text-pearl",
+        variant === "secondary" && "border border-blue-100 bg-white text-pearl shadow-sm hover:bg-blue-50 dark:border-slate-700 dark:bg-midnight dark:hover:bg-ink",
+        variant === "ghost" && "text-steel hover:bg-blue-50 hover:text-pearl dark:hover:bg-ink dark:hover:text-pearl",
         className
       )}
     >
@@ -72,7 +72,7 @@ export function Field({
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="min-h-12 rounded-2xl border border-blue-100 bg-white px-4 text-pearl shadow-sm outline-none transition placeholder:text-steel/55 focus:border-sui/70 focus:bg-blue-50/50"
+        className="min-h-12 rounded-2xl border border-blue-100 bg-white px-4 text-pearl shadow-sm outline-none transition placeholder:text-steel/55 focus:border-sui/70 focus:bg-blue-50/50 dark:border-slate-700 dark:bg-midnight dark:placeholder:text-steel/60 dark:focus:bg-ink"
       />
     </label>
   );

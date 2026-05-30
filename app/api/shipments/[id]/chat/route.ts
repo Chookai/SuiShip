@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
+import { insertChatMessage } from "@/lib/chat-tools/history";
 import { recallLatestCompanyProfile } from "@/lib/profile-memwal";
 import Anthropic from "@anthropic-ai/sdk";
 
@@ -103,9 +104,10 @@ ${memwalContext}
 `.trim();
 
     if (process.env.MOCK_DOC_AI === "true") {
-      return NextResponse.json({
-        reply: `[Mock] Based on the shipment data for ${exporter.company} → ${importer.company}, here's a mock answer to: "${message}"`,
-      });
+      const mockReply = `[Mock] Based on the shipment data for ${exporter.company} → ${importer.company}, here's a mock answer to: "${message}"`;
+      insertChatMessage({ shipmentId, role: "user", content: message });
+      insertChatMessage({ shipmentId, role: "assistant", content: mockReply });
+      return NextResponse.json({ reply: mockReply });
     }
 
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
@@ -139,6 +141,9 @@ ${context}`,
       .filter((b) => b.type === "text")
       .map((b) => (b as Anthropic.TextBlock).text)
       .join("");
+
+    insertChatMessage({ shipmentId, role: "user", content: message });
+    insertChatMessage({ shipmentId, role: "assistant", content: reply });
 
     return NextResponse.json({ reply });
   } catch (err) {

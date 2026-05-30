@@ -42,6 +42,11 @@ export function EndorsementPanel({
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [lastTxDigest, setLastTxDigest] = useState<string | null>(null);
+  const [trackingInfo, setTrackingInfo] = useState<
+    | { id: string; status: "active"; registeredAt: string }
+    | { status: "registration_failed"; willRetry: true }
+    | null
+  >(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -126,6 +131,7 @@ export function EndorsementPanel({
     setLoading(true);
     setError(null);
     setSuccess(null);
+    setTrackingInfo(null);
     try {
       const capObjectId = await ensureCapObjectId();
       const response = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/passport/endorse`, {
@@ -139,13 +145,23 @@ export function EndorsementPanel({
           capObjectId,
         }),
       });
-      const payload = await response.json();
+      const payload = await response.json() as {
+        txDigest?: string;
+        tracking?: { id?: string; status: string; registeredAt?: string; willRetry?: boolean };
+      };
       if (!response.ok) {
-        throw new Error(typeof payload?.error === "string" ? payload.error : `HTTP ${response.status}`);
+        throw new Error(typeof (payload as { error?: string })?.error === "string" ? (payload as { error: string }).error : `HTTP ${response.status}`);
       }
       const txDigest = typeof payload?.txDigest === "string" ? payload.txDigest : "";
       setLastTxDigest(txDigest || null);
       setSuccess(`${role.replace(/_/g, " ")} endorsed shipment with "${selectedAction}".`);
+      if (payload?.tracking) {
+        if (payload.tracking.status === "active" && payload.tracking.id) {
+          setTrackingInfo({ id: payload.tracking.id, status: "active", registeredAt: payload.tracking.registeredAt ?? new Date().toISOString() });
+        } else if (payload.tracking.status === "registration_failed") {
+          setTrackingInfo({ status: "registration_failed", willRetry: true });
+        }
+      }
       onEndorsed?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not submit endorsement");
@@ -269,6 +285,23 @@ export function EndorsementPanel({
             <p>{success}</p>
             {lastTxDigest ? <p className="mt-1 break-all text-xs text-emerald-800/80">{lastTxDigest}</p> : null}
           </div>
+        </div>
+      ) : null}
+
+      {trackingInfo?.status === "active" ? (
+        <div className="mt-2 flex items-start gap-2 rounded-2xl border border-emerald-100 bg-emerald-50 px-4 py-3 text-sm font-semibold text-emerald-700">
+          <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0" />
+          <div className="min-w-0">
+            <p>Tracking started — vessel will appear on the Persistent Agent dashboard within 30s.</p>
+            <p className="mt-1 break-all text-xs text-emerald-800/80">Tracking ID: {trackingInfo.id}</p>
+          </div>
+        </div>
+      ) : null}
+
+      {trackingInfo?.status === "registration_failed" ? (
+        <div className="mt-2 flex items-start gap-2 rounded-2xl border border-amber-100 bg-amber-50 px-4 py-3 text-sm font-semibold text-amber-700">
+          <AlertCircle className="mt-0.5 h-4 w-4 shrink-0" />
+          <span>Endorsement succeeded but tracker registration failed — will retry automatically.</span>
         </div>
       ) : null}
 

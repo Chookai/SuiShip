@@ -5,6 +5,9 @@ import { validateDemoEndorsementAttempt } from "@/lib/endorsement-flow";
 import { writeProgressMemory } from "@/lib/memwal";
 import { getSuiPassportClient } from "@/lib/sui-passport";
 import { parseEd25519Keypair } from "@/lib/sui-keypair";
+import { registerShipmentForTracking } from "@/lib/tracker-api/client";
+import { logTrackerFailure } from "@/lib/tracker-api/retry";
+import { ensureMonitoredShipment } from "@/lib/persistent-agent";
 
 function getServerAddress(): string {
   const key = process.env.SUI_PRIVATE_KEY;
@@ -142,6 +145,72 @@ export async function POST(
       signedAtMs, txDigest
     );
 
+    // When the freight forwarder signs picked_up, cargo enters physical transit.
+    // Register with the mock tracker and start AIS monitoring — best-effort:
+    // a failure here must never block the on-chain endorsement.
+    let trackingOutcome:
+      | { id: string; status: "active"; registeredAt: string }
+      | { status: "registration_failed"; willRetry: true }
+      | undefined;
+
+    if (role === "freight_forwarder" && action === "picked_up") {
+      try {
+        const shipmentRow = db.prepare(
+          "SELECT shipment_json FROM shipments WHERE id = ?"
+        ).get(shipmentId) as { shipment_json: string } | undefined;
+
+        let origin = "Singapore";
+        let destination = "Los Angeles";
+        if (shipmentRow?.shipment_json) {
+          try {
+            const parsed = JSON.parse(shipmentRow.shipment_json) as Record<string, unknown>;
+            if (typeof parsed.origin === "string" && parsed.origin) origin = parsed.origin;
+            if (typeof parsed.destination === "string" && parsed.destination) destination = parsed.destination;
+          } catch {
+            // malformed JSON — use defaults
+          }
+        }
+
+        const { freight, ais } = await registerShipmentForTracking({ shipmentId, origin, destination });
+
+        if (freight.ok) {
+          const aisBase = process.env.AIS_BASE_URL ?? "http://localhost:8081";
+          ensureMonitoredShipment({
+            simulationId: shipmentId,
+            shipmentId,
+            sourceUrl: `${aisBase}/mock/ais/simulations/${shipmentId}`,
+            displayName: shipmentId,
+          }, db);
+
+          // Stamp the tracking_number added by migration 017
+          try {
+            db.prepare(`
+              UPDATE persistent_agent_monitored_shipments
+              SET tracking_number = ?, last_check_status = 'monitoring',
+                  updated_at = strftime('%Y-%m-%dT%H:%M:%SZ', 'now')
+              WHERE simulation_id = ?
+            `).run(freight.trackingNumber, shipmentId);
+          } catch {
+            // Column may not exist in older DBs that haven't applied 017 yet
+          }
+
+          trackingOutcome = { id: freight.trackingNumber, status: "active", registeredAt: timestamp };
+          console.log(
+            `[endorse] FF picked_up → tracker ${freight.trackingNumber}, AIS ${ais.ok ? "started" : "skipped ("+ais.error+")"}`
+          );
+        } else {
+          logTrackerFailure({ shipmentId, role, action, error: freight.error });
+          trackingOutcome = { status: "registration_failed", willRetry: true };
+          console.warn(`[endorse] Tracker registration failed for ${shipmentId}: ${freight.error}`);
+        }
+      } catch (err) {
+        // Endorsement already succeeded on-chain — don't surface this error
+        logTrackerFailure({ shipmentId, role, action, error: String(err) });
+        trackingOutcome = { status: "registration_failed", willRetry: true };
+        console.error("[endorse] Tracker registration threw:", err);
+      }
+    }
+
     void writeProgressMemory(shipmentId, {
       kind: "endorsement_recorded",
       passport_id: row.passport_id,
@@ -150,9 +219,16 @@ export async function POST(
       signer: signerAddress,
       tx_digest: txDigest,
       timestamp,
+      ...(trackingOutcome && "id" in trackingOutcome
+        ? { tracking_number: trackingOutcome.id, ais_monitoring: true }
+        : {}),
     });
 
-    return NextResponse.json({ txDigest, endorsement: { role, signer: signerAddress, action, signedAtMs } });
+    return NextResponse.json({
+      txDigest,
+      endorsement: { role, signer: signerAddress, action, signedAtMs },
+      ...(trackingOutcome ? { tracking: trackingOutcome } : {}),
+    });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

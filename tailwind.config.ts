@@ -6,17 +6,18 @@ const config: Config = {
     "./components/**/*.{js,ts,jsx,tsx,mdx}",
     "./lib/**/*.{js,ts,jsx,tsx,mdx}"
   ],
+  darkMode: "class",
   theme: {
     extend: {
       colors: {
-        ink: "#f6f9ff",
-        midnight: "#eaf1ff",
-        ocean: "#4DA2FF",
-        sui: "#4DA2FF",
-        mint: "#5eead4",
-        steel: "#8a96b8",
-        pearl: "#111a45",
-        amber: "#fbbf24"
+        ink:      "var(--color-ink)",
+        midnight: "var(--color-midnight)",
+        ocean:    "#4DA2FF",
+        sui:      "#4DA2FF",
+        mint:     "#5eead4",
+        steel:    "var(--color-steel)",
+        pearl:    "var(--color-pearl)",
+        amber:    "#fbbf24"
       },
       boxShadow: {
         glow: "0 18px 60px rgba(77, 162, 255, 0.24)",

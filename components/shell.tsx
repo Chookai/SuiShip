@@ -1,7 +1,8 @@
 "use client";
 
 import { ConnectButton, useCurrentAccount } from "@mysten/dapp-kit";
-import { Activity, Bell, Boxes, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, Search, ShieldAlert, Ship, Sparkles } from "lucide-react";
+import { Activity, Bell, Boxes, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, Search, ShieldAlert, Ship, Sparkles, Sun } from "lucide-react";
+import { useTheme } from "next-themes";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -32,6 +33,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  const { resolvedTheme, setTheme } = useTheme();
 
   useEffect(() => {
     function onDocClick(event: MouseEvent) {
@@ -58,13 +60,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 key={item.href}
                 href={item.href}
                 className={cn(
-                  "flex h-14 items-center rounded-xl px-3 text-sm font-bold text-steel transition hover:bg-white/35 hover:text-sui",
-                  active && "bg-white/45 text-sui"
+                  "flex h-14 items-center rounded-xl px-3 text-sm font-bold text-steel transition hover:bg-white/35 hover:text-sui dark:hover:bg-sui/10",
+                  active && "bg-white/45 text-sui dark:bg-sui/15"
                 )}
                 title={item.label}
               >
                 <span className="flex min-w-0 flex-1 items-center gap-4">
-                  <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition", active ? "bg-white/55 text-sui" : "text-sui")}>
+                  <span className={cn("flex h-10 w-10 shrink-0 items-center justify-center rounded-xl transition", active ? "bg-white/55 text-sui dark:bg-sui/20" : "text-sui")}>
                     <Icon className="h-5 w-5" />
                   </span>
                   <span className="whitespace-nowrap">{item.label}</span>
@@ -75,7 +77,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </nav>
         <div className="relative mt-auto px-4 pb-8">
           {roleMenuOpen && (
-            <div className="absolute bottom-24 left-4 right-4 z-20 rounded-2xl border border-white/70 bg-white/88 p-2 shadow-panel backdrop-blur-xl">
+            <div className="absolute bottom-24 left-4 right-4 z-20 rounded-2xl border border-white/70 bg-white/88 p-2 shadow-panel backdrop-blur-xl dark:border-slate-700/70 dark:bg-midnight/95">
               {roles.map((item) => (
                 <button
                   key={item}
@@ -121,7 +123,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       </aside>
 
       <div className="min-w-0 lg:pl-[240px]">
-        <header className="sticky top-0 z-[70] bg-[#EAF4FF]/60 px-5 py-4 backdrop-blur-xl lg:-ml-[240px] lg:px-8">
+        <header className="sticky top-0 z-[70] bg-[#EAF4FF]/60 px-5 py-4 backdrop-blur-xl dark:bg-ink/80 lg:-ml-[240px] lg:px-8">
           <div className="flex w-full items-center gap-5">
             <div className="hidden lg:block">
               <Link href="/" className="flex min-w-0 items-center gap-3" aria-label="SuiShip home">
@@ -132,7 +134,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <div className="lg:hidden">
               <Logo />
             </div>
-            <div className="ml-auto flex w-full items-center gap-3 rounded-full bg-white/88 p-2 shadow-panel backdrop-blur-xl md:max-w-[860px]">
+            <div className="ml-auto flex w-full items-center gap-3 rounded-full bg-white/88 p-2 shadow-panel backdrop-blur-xl dark:bg-midnight/90 md:max-w-[860px]">
               <label className="hidden h-10 flex-1 items-center gap-2 rounded-full bg-ink px-4 md:flex">
                 <Search className="h-4 w-4 text-sui" />
                 <input className="w-full bg-transparent text-sm text-pearl outline-none placeholder:text-steel" placeholder="Search" />
@@ -158,13 +160,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   )}
                 </button>
                 {notifOpen && (
-                  <div className="absolute right-0 top-12 z-30 w-[360px] rounded-2xl border border-blue-100 bg-white p-3 shadow-panel">
+                  <div className="absolute right-0 top-12 z-30 w-[360px] rounded-2xl border border-blue-100 bg-white p-3 shadow-panel dark:border-slate-700 dark:bg-midnight">
                     <div className="flex items-center justify-between px-2 pb-2">
                       <p className="text-sm font-extrabold text-pearl">Invitations</p>
                       <span className="text-xs font-bold text-steel">{invitations.length} total</span>
                     </div>
                     {invitations.length === 0 ? (
-                      <div className="rounded-2xl bg-blue-50 p-4 text-sm text-steel">
+                      <div className="rounded-2xl bg-blue-50 p-4 text-sm text-steel dark:bg-ink">
                         No shipment invitations yet. When the {role === "Importer" ? "exporter" : "importer"} starts a
                         shipment with you, it shows up here.
                       </div>
@@ -184,8 +186,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
                               className={cn(
                                 "block rounded-2xl border p-3 transition",
                                 unread
-                                  ? "border-[#4DA2FF]/40 bg-blue-50 hover:border-[#4DA2FF]"
-                                  : "border-blue-100 bg-white hover:bg-blue-50"
+                                  ? "border-[#4DA2FF]/40 bg-blue-50 hover:border-[#4DA2FF] dark:bg-ink dark:hover:border-sui"
+                                  : "border-blue-100 bg-white hover:bg-blue-50 dark:border-slate-700 dark:bg-midnight dark:hover:bg-ink"
                               )}
                             >
                               <div className="flex items-start justify-between gap-2">
@@ -215,8 +217,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   </div>
                 )}
               </div>
-              <button className="flex h-10 w-10 items-center justify-center rounded-full text-steel hover:bg-blue-50 hover:text-sui" aria-label="Theme">
-                <Moon className="h-5 w-5" />
+              <button
+                onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
+                className="flex h-10 w-10 items-center justify-center rounded-full text-steel transition-colors hover:bg-midnight hover:text-sui"
+                aria-label="Toggle theme"
+              >
+                {resolvedTheme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </button>
               <div className="hidden items-center gap-2 rounded-full bg-blue-50 px-3 py-2 text-xs font-semibold text-steel xl:flex">
                 <Boxes className="h-4 w-4 text-sui" />
@@ -225,7 +231,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <ConnectButton />
             </div>
           </div>
-          <nav className="flex gap-1 overflow-x-auto border-t border-blue-100 px-4 py-2 lg:hidden">
+          <nav className="flex gap-1 overflow-x-auto border-t border-blue-100 px-4 py-2 dark:border-slate-700 lg:hidden">
             {nav.map((item) => {
               const Icon = item.icon;
               const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
