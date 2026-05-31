@@ -16,6 +16,7 @@ import {
 } from "./shipment-file-commitments";
 import type { DocCommitInput } from "./sui-passport/types";
 import { getSuiPassportClient } from "./sui-passport";
+import { resolveOnChainPartyAddresses } from "./party-slush-accounts";
 import { parseEd25519Keypair } from "./sui-keypair";
 
 const logger = pino({ name: "real-sui-bootstrap" });
@@ -485,9 +486,20 @@ export async function ensureOnChainShipmentInitialized(
 
   const manifestDigest = buildManifestDigest(shipmentId, db);
   const serverAddr = getServerAddress();
+  const slushParties = resolveOnChainPartyAddresses(serverAddr);
   const counterpartyAddress = deriveCounterpartyAddress(`${shipmentId}:${shipment.workflow}`, serverAddr);
-  const importerAddress = shipment.workflow === "importer" ? serverAddr : counterpartyAddress;
-  const exporterAddress = shipment.workflow === "exporter" ? serverAddr : counterpartyAddress;
+  const importerAddress =
+    slushParties?.importerAddress ??
+    (shipment.workflow === "importer" ? serverAddr : counterpartyAddress);
+  const exporterAddress =
+    slushParties?.exporterAddress ??
+    (shipment.workflow === "exporter" ? serverAddr : counterpartyAddress);
+  if (slushParties) {
+    logger.info(
+      { shipmentId, importerAddress, exporterAddress },
+      "Using party slush wallets for on-chain importer/exporter"
+    );
+  }
 
   if (typeof client.createShipment !== "function") {
     throw new Error("Real Sui client does not implement createShipment().");

@@ -23,17 +23,19 @@ const profileFields: Array<{
 const STORAGE_PROFILE_VERSIONS = "suiship-profile-versions-v1";
 
 function readProfileVersions(): Record<MockRole, number> {
-  if (typeof window === "undefined") return { Importer: 0, Exporter: 0 };
+  const empty = { Importer: 0, Exporter: 0, "Freight Forwarder": 0 };
+  if (typeof window === "undefined") return empty;
   try {
     const raw = window.localStorage.getItem(STORAGE_PROFILE_VERSIONS);
-    if (!raw) return { Importer: 0, Exporter: 0 };
+    if (!raw) return empty;
     const parsed = JSON.parse(raw) as Partial<Record<MockRole, number>>;
     return {
       Importer: parsed.Importer ?? 0,
       Exporter: parsed.Exporter ?? 0,
+      "Freight Forwarder": parsed["Freight Forwarder"] ?? 0,
     };
   } catch {
-    return { Importer: 0, Exporter: 0 };
+    return empty;
   }
 }
 
@@ -82,7 +84,7 @@ export default function ProfilePage() {
           profile: { ...draft },
         }),
       });
-      const data = (await res.json()) as { ok?: boolean; error?: string };
+      const data = (await res.json()) as { ok?: boolean; error?: string; skipped?: boolean };
       if (!res.ok || !data.ok) {
         throw new Error(data.error ?? "MemWal sync failed");
       }

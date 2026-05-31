@@ -112,12 +112,12 @@ export const CHAT_AGENT_TOOLS: Anthropic.Tool[] = [
       properties: {
         role: {
           type: "string",
-          enum: ["exporter", "freight_forwarder", "customs", "importer"],
-          description: "Role that should perform the endorsement.",
+          enum: ["freight_forwarder", "importer"],
+          description: "Role that should perform the endorsement (FF handles logistics and customs steps; importer signs receipt).",
         },
         action: {
           type: "string",
-          description: "Endorsement action to propose (e.g. 'released', 'picked_up', 'cleared_customs', 'received').",
+          description: "Endorsement action: picked_up, handed_off, reviewed, cleared_customs, or received.",
         },
         reasoning: {
           type: "string",

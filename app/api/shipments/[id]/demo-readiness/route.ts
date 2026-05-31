@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { getLatestAgentRun } from "@/lib/agent-runs";
 import { getLatestCaseFile } from "@/lib/case-files";
 import { getDb } from "@/lib/db";
-import { isMemWalConfigured, memwalHealth } from "@/lib/memwal";
+import { isMemWalConfigured, isMemWalEnabled, memwalHealth } from "@/lib/memwal";
 import { getShipmentById } from "@/lib/shipments-server";
 import { SEAL_ENABLED } from "@/lib/seal-client";
 
@@ -25,7 +25,8 @@ export async function GET(
     return NextResponse.json({
       shipmentId: id,
       memwal: {
-        mode: memwalConfigured ? "live" : "degraded",
+        enabled: isMemWalEnabled(),
+        mode: memwalConfigured ? "live" : isMemWalEnabled() ? "degraded" : "disabled",
         connected: memwalConnected,
         baselineMemorySynced: shipment?.memWalSyncStatus === "synced",
         syncStatus: shipment?.memWalSyncStatus ?? null,

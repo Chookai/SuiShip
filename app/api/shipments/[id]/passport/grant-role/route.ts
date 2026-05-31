@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { getSuiPassportClient } from "@/lib/sui-passport";
+import { getPartySlushAddress } from "@/lib/party-slush-accounts";
 import { parseEd25519Keypair } from "@/lib/sui-keypair";
 
 function getServerAddress(): string {
@@ -30,7 +31,10 @@ export async function POST(
         { status: 400 }
       );
     }
-    const effectiveGrantee = granteeAddress || getServerAddress();
+    const ffSlush = getPartySlushAddress("Freight Forwarder");
+    const effectiveGrantee =
+      granteeAddress ??
+      (role === "freight_forwarder" && ffSlush ? ffSlush : getServerAddress());
     if (role !== "freight_forwarder" && role !== "customs") {
       return NextResponse.json(
         { error: "role must be 'freight_forwarder' or 'customs'" },

@@ -3,7 +3,7 @@
 import { useCurrentAccount } from "@mysten/dapp-kit";
 import {
   AlertCircle,
-  AlertTriangle,
+  Building2,
   CheckCircle2,
   FilePlus2,
   Loader2,
@@ -18,7 +18,7 @@ import {
 import { useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRole } from "@/components/role-context";
-import { Button, Field, Panel, StatusBadge } from "@/components/ui";
+import { Button, Field, Panel } from "@/components/ui";
 import {
   generateInviteToken,
   generateShipmentId,
@@ -38,10 +38,12 @@ import {
   type DemoPartyDetails,
 } from "@/lib/scenario-c-demo-defaults";
 import type { CompanyProfile } from "@/components/role-context";
+import { applyExtractionToShipmentForm } from "@/lib/apply-extraction-to-shipment-form";
 
-const steps = ["Workflow", "Trade parties", "Shipment details", "Cargo details", "Document upload"];
-const visibleStepIndexes = [0, 1, 2, 3, 4];
-const lastVisibleStep = 4;
+const steps = ["Workflow", "Trade parties", "Document upload", "Details"];
+const visibleStepIndexes = [0, 1, 2, 3];
+const lastVisibleStep = 3;
+const detailsStepIndex = 3;
 
 const workflowTitles: Record<WorkflowKey, string> = {
   importer: "Importer",
@@ -120,6 +122,7 @@ export default function CreateShipmentPage() {
   // Async extraction state
   const [extractionStatus, setExtractionStatus] = useState<"idle" | "extracting" | "complete" | "failed">("idle");
   const [extractResult, setExtractResult] = useState<AggregateResult | null>(null);
+  const [formAutofilledFromDocs, setFormAutofilledFromDocs] = useState(false);
 
   const [importer, setImporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Importer));
   const [exporter, setExporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Exporter));
@@ -144,7 +147,6 @@ export default function CreateShipmentPage() {
   const [uploadedFiles, setUploadedFiles] = useState<File[]>([]);
 
   const otherCompanyProfile = profiles[role === "Importer" ? "Exporter" : "Importer"];
-  const counterpartyKey: "Importer" | "Exporter" = workflow === "importer" ? "Exporter" : "Importer";
 
   // Workflow picks which side is yours; tax ID / address follow each company name from the catalog.
   useEffect(() => {
@@ -169,7 +171,12 @@ export default function CreateShipmentPage() {
     setUploadedFiles([]);
     setExtractResult(null);
     setExtractionStatus("idle");
+    setFormAutofilledFromDocs(false);
   }, [workflow, profile, otherCompanyProfile, initialDocs]);
+
+  useEffect(() => {
+    setError(null);
+  }, [activeStep]);
 
   function updateParty(
     side: "importer" | "exporter",
@@ -180,9 +187,7 @@ export default function CreateShipmentPage() {
     else setExporter(enriched);
   }
 
-  // Step enforcement — steps 2, 3, 4 all require step 1 to be complete
-
-  const selectedWorkflow = workflowTitles[workflow];
+  // Step enforcement — steps 2, 3 all require step 1 to be complete
 
   // Step enforcement
   const isStep1Complete = useMemo(() => {
@@ -220,6 +225,11 @@ export default function CreateShipmentPage() {
     ].every((value) => value.trim().length > 0);
   }, [cargo]);
 
+  const isDetailsComplete = useMemo(
+    () => isShipmentDetailsComplete && isCargoComplete,
+    [isShipmentDetailsComplete, isCargoComplete]
+  );
+
   function canAccessStep(stepIndex: number): boolean {
     return stepIndex <= maxUnlockedStep;
   }
@@ -227,9 +237,10 @@ export default function CreateShipmentPage() {
   function isStepComplete(stepIndex: number): boolean {
     if (stepIndex === 0) return true;
     if (stepIndex === 1) return isStep1Complete;
-    if (stepIndex === 2) return isShipmentDetailsComplete;
-    if (stepIndex === 3) return isCargoComplete;
-    if (stepIndex === 4) return docs.some((doc) => doc.uploaded);
+    if (stepIndex === 2) {
+      return extractionStatus === "complete" && docs.some((doc) => doc.uploaded);
+    }
+    if (stepIndex === 3) return isDetailsComplete;
     return true;
   }
 
@@ -466,12 +477,6 @@ export default function CreateShipmentPage() {
     return res.json() as Promise<AggregateResult>;
   }
 
-  async function postShipmentValidation(shipmentId: string) {
-    const res = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`, { method: "POST" });
-    if (!res.ok) throw new Error(`Validation failed with HTTP ${res.status}`);
-    return res.json() as Promise<{ issues?: AggregateResult["cross_validation"] }>;
-  }
-
   function mergeUploadedFiles(current: File[], incoming: File[]) {
     const files = new Map(current.map((file) => [file.name, file]));
     incoming.forEach((file) => files.set(file.name, file));
@@ -486,18 +491,26 @@ export default function CreateShipmentPage() {
       const incoming = await postDocumentExtraction(files, draftId);
       const updatedDocs = docsWithExtractionResult(baseDocs, incoming);
 
-      const validation = await postShipmentValidation(draftId);
-      const incomingWithValidation: AggregateResult = {
-        ...incoming,
-        cross_validation: validation.issues ?? [],
-      };
-      let merged = incomingWithValidation;
+      let merged = incoming;
       setExtractResult((prev) => {
-        merged = prev ? mergeExtractionResults(prev, incomingWithValidation) : incomingWithValidation;
+        merged = prev ? mergeExtractionResults(prev, incoming) : incoming;
         return merged;
       });
       setExtractionStatus("complete");
       setDocs(updatedDocs);
+
+      const applied = applyExtractionToShipmentForm(
+        merged,
+        { details, cargo },
+        { overwrite: true }
+      );
+      setDetails(applied.details);
+      setCargo(applied.cargo);
+      if (applied.filledCount > 0) setFormAutofilledFromDocs(true);
+
+      setMaxUnlockedStep((current) => Math.max(current, detailsStepIndex));
+      setActiveStep(detailsStepIndex);
+      setError(null);
     } catch (err) {
       setExtractionStatus("failed");
       setError(err instanceof Error ? err.message : "Document extraction failed");
@@ -546,10 +559,6 @@ export default function CreateShipmentPage() {
       updateShipment(shipmentRecordId, { documents: nextDocs });
     }
   }
-
-  const hasValidationErrors = (extractResult?.cross_validation ?? []).some(
-    (v) => v.severity === "error"
-  );
 
   async function createShipmentNow() {
     if (extractionStatus === "extracting") {
@@ -613,13 +622,14 @@ export default function CreateShipmentPage() {
 
   function goNext() {
     if (!isStepComplete(activeStep)) {
+      if (activeStep === 2) return;
       const message =
         activeStep === 1
           ? "Please fill in company, contact, and email for both importer and exporter before continuing."
           : activeStep === 2
-            ? "Please complete the required shipment details before continuing."
+            ? "Upload documents and wait for AI extraction to finish before continuing."
             : activeStep === 3
-              ? "Please complete the required cargo details before continuing."
+              ? "Please complete the required shipment and cargo details before continuing."
               : "Please complete this step before continuing.";
       setError(message);
       return;
@@ -636,15 +646,7 @@ export default function CreateShipmentPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] px-5 py-8 lg:px-10">
-      <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
-        <div>
-          <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
-        </div>
-        <div className="flex flex-wrap gap-2">
-          <StatusBadge value={selectedWorkflow} />
-          <StatusBadge value={createdInProgress ? "In Progress" : "Draft"} />
-        </div>
-      </div>
+      <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
 
       <div className="mt-8 grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Panel className="hidden h-fit xl:block">
@@ -747,57 +749,36 @@ export default function CreateShipmentPage() {
             </div>
 
             {activeStep === 0 && (
-              <div className="grid gap-5">
-                <p className="text-sm text-steel">
-                  You are using <span className="font-bold text-pearl">{profile.company}</span>. Pick whether this company
-                  is acting as the importer or exporter for this shipment.
-                </p>
+              <div className="grid gap-4">
+                <p className="text-sm font-bold text-pearl">You are:</p>
                 <div className="grid gap-4 md:grid-cols-2">
                   {workflowOptions.map((key) => {
-                    const active = workflow === key;
-                    return (
-                      <button
-                        key={key}
-                        type="button"
-                        onClick={() => setWorkflow(key)}
-                        className={cn(
-                          "flex min-h-32 flex-col items-center justify-center gap-2 rounded-2xl border p-5 text-center text-xl font-extrabold transition",
-                          active
-                            ? "border-[#4DA2FF] bg-[#4DA2FF] text-white shadow-glow"
-                            : "border-blue-100 bg-white text-pearl hover:border-[#4DA2FF]/50"
-                        )}
-                      >
-                        <span>{workflowTitles[key]}</span>
-                        <span className={cn("text-xs font-semibold", active ? "text-white/85" : "text-steel")}>
-                          {key === "importer"
-                            ? "Your side receives the goods"
-                            : key === "exporter"
-                              ? "Your side ships the goods"
-                              : "You coordinate both sides"}
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-steel">
-                  <span className="font-bold text-pearl">{profile.company}</span> will be the{" "}
-                  {selectedWorkflow.toLowerCase()}. <span className="font-bold text-pearl">{otherCompanyProfile.company}</span>{" "}
-                  will be the {counterpartyKey.toLowerCase()}. Tax ID and registered details are applied from each
-                  company&apos;s profile (e.g. Acme → US-123456789, Shanghai → CN-987654321).
+                  const active = workflow === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setWorkflow(key)}
+                      className={cn(
+                        "flex min-h-24 items-center justify-center rounded-2xl border p-5 text-center text-xl font-extrabold transition",
+                        active
+                          ? "border-[#4DA2FF] bg-[#4DA2FF] text-white shadow-glow"
+                          : "border-blue-100 bg-white text-pearl hover:border-[#4DA2FF]/50"
+                      )}
+                    >
+                      {workflowTitles[key]}
+                    </button>
+                  );
+                })}
                 </div>
               </div>
             )}
 
             {activeStep === 1 && (
               <div className="grid gap-6">
-                <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-steel">
-                  You are the {selectedWorkflow.toLowerCase()} ({profile.company}). The counterparty can be edited;
-                  when the company name matches a known party, the correct tax ID is filled in automatically.
-                </div>
-
                 {workflow === "importer" ? (
                   <>
-                    <PartySummaryCard title="Importer (your company)" party={importer} />
+                    <PartySummaryCard title="Importer" party={importer} />
                     <PartyCard
                       title="Exporter"
                       locked={false}
@@ -807,7 +788,7 @@ export default function CreateShipmentPage() {
                   </>
                 ) : (
                   <>
-                    <PartySummaryCard title="Exporter (your company)" party={exporter} />
+                    <PartySummaryCard title="Exporter" party={exporter} />
                     <PartyCard
                       title="Importer"
                       locked={false}
@@ -853,66 +834,6 @@ export default function CreateShipmentPage() {
             )}
 
             {activeStep === 2 && (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field
-                  label="Shipment ID / Reference No."
-                  value={details.shipmentId}
-                  onChange={(value) => setDetails((current) => ({ ...current, shipmentId: value }))}
-                />
-                <Field
-                  label="Carrier booking reference"
-                  value={details.bookingRef}
-                  onChange={(value) => setDetails((current) => ({ ...current, bookingRef: value }))}
-                  placeholder="e.g. HLCU1234567"
-                />
-                <Field
-                  label="Transport mode"
-                  value={details.transportMode}
-                  onChange={(value) => setDetails((current) => ({ ...current, transportMode: value }))}
-                />
-                <Field label="Incoterm" value={details.incoterm} onChange={(value) => setDetails((current) => ({ ...current, incoterm: value }))} />
-                <Field label="Origin country" value={details.origin} onChange={(value) => setDetails((current) => ({ ...current, origin: value }))} />
-                <Field label="Origin port / airport" value={details.originPort} onChange={(value) => setDetails((current) => ({ ...current, originPort: value }))} />
-                <Field label="Destination country" value={details.destination} onChange={(value) => setDetails((current) => ({ ...current, destination: value }))} />
-                <Field label="Destination port / airport" value={details.destinationPort} onChange={(value) => setDetails((current) => ({ ...current, destinationPort: value }))} />
-                <Field label="Carrier" value={details.carrier} onChange={(value) => setDetails((current) => ({ ...current, carrier: value }))} />
-                <Field
-                  label="B/L type"
-                  value={details.blType}
-                  onChange={(value) => setDetails((current) => ({ ...current, blType: value }))}
-                  placeholder="e.g. Original / Telex Release / Seaway Bill"
-                />
-                <Field label="ETD" type="date" value={details.etd} onChange={(value) => setDetails((current) => ({ ...current, etd: value }))} />
-                <Field label="ETA" type="date" value={details.eta} onChange={(value) => setDetails((current) => ({ ...current, eta: value }))} />
-                <Field label="Declared value" value={details.declaredValue} onChange={(value) => setDetails((current) => ({ ...current, declaredValue: value }))} />
-                <Field label="Currency" value={details.currency} onChange={(value) => setDetails((current) => ({ ...current, currency: value }))} />
-                <Field
-                  label="Payment terms"
-                  value={details.paymentTerms}
-                  onChange={(value) => setDetails((current) => ({ ...current, paymentTerms: value }))}
-                  placeholder="e.g. 30 days net / Letter of Credit / TT"
-                />
-              </div>
-            )}
-
-            {activeStep === 3 && (
-              <div className="grid gap-4 md:grid-cols-2">
-                <Field label="Product description" value={cargo.description} onChange={(value) => setCargo((current) => ({ ...current, description: value }))} />
-                <Field label="SKU / part number" value={cargo.sku} onChange={(value) => setCargo((current) => ({ ...current, sku: value }))} />
-                <Field label="HS code" value={cargo.hsCode} onChange={(value) => setCargo((current) => ({ ...current, hsCode: value }))} />
-                <Field label="Quantity" value={cargo.quantity} onChange={(value) => setCargo((current) => ({ ...current, quantity: value }))} />
-                <Field label="Gross weight" value={cargo.grossWeight} onChange={(value) => setCargo((current) => ({ ...current, grossWeight: value }))} />
-                <Field label="Net weight" value={cargo.netWeight} onChange={(value) => setCargo((current) => ({ ...current, netWeight: value }))} />
-                <Field label="Cartons / pallets / containers" value={cargo.handlingUnits} onChange={(value) => setCargo((current) => ({ ...current, handlingUnits: value }))} />
-                <Field label="Container number" value={cargo.container} onChange={(value) => setCargo((current) => ({ ...current, container: value }))} />
-                <Field label="Seal number" value={cargo.seal} onChange={(value) => setCargo((current) => ({ ...current, seal: value }))} />
-                <Field label="Country of origin" value={cargo.countryOfOrigin} onChange={(value) => setCargo((current) => ({ ...current, countryOfOrigin: value }))} />
-                <Field label="Dangerous goods" value={cargo.dangerousGoods} onChange={(value) => setCargo((current) => ({ ...current, dangerousGoods: value }))} />
-                <Field label="Temperature controlled" value={cargo.temperatureControlled} onChange={(value) => setCargo((current) => ({ ...current, temperatureControlled: value }))} />
-              </div>
-            )}
-
-            {activeStep === 4 && (
               <DocumentUploadStep
                 docs={docs}
                 transportMode={details.transportMode}
@@ -921,14 +842,77 @@ export default function CreateShipmentPage() {
                 onRemoveDocument={removeDocumentRequirement}
                 extractionStatus={extractionStatus}
                 extractResult={extractResult}
-                error={error}
-                hasValidationErrors={hasValidationErrors}
               />
+            )}
+
+            {activeStep === 3 && (
+              <div className="grid gap-6">
+                <div>
+                  <p className="mb-3 text-xs font-bold uppercase tracking-widest text-steel">Shipment</p>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Field
+                      label="Shipment ID / Reference No."
+                      value={details.shipmentId}
+                      onChange={(value) => setDetails((current) => ({ ...current, shipmentId: value }))}
+                    />
+                    <Field
+                      label="Carrier booking reference"
+                      value={details.bookingRef}
+                      onChange={(value) => setDetails((current) => ({ ...current, bookingRef: value }))}
+                      placeholder="e.g. HLCU1234567"
+                    />
+                    <Field
+                      label="Transport mode"
+                      value={details.transportMode}
+                      onChange={(value) => setDetails((current) => ({ ...current, transportMode: value }))}
+                    />
+                    <Field label="Incoterm" value={details.incoterm} onChange={(value) => setDetails((current) => ({ ...current, incoterm: value }))} />
+                    <Field label="Origin country" value={details.origin} onChange={(value) => setDetails((current) => ({ ...current, origin: value }))} />
+                    <Field label="Origin port / airport" value={details.originPort} onChange={(value) => setDetails((current) => ({ ...current, originPort: value }))} />
+                    <Field label="Destination country" value={details.destination} onChange={(value) => setDetails((current) => ({ ...current, destination: value }))} />
+                    <Field label="Destination port / airport" value={details.destinationPort} onChange={(value) => setDetails((current) => ({ ...current, destinationPort: value }))} />
+                    <Field label="Carrier" value={details.carrier} onChange={(value) => setDetails((current) => ({ ...current, carrier: value }))} />
+                    <Field
+                      label="B/L type"
+                      value={details.blType}
+                      onChange={(value) => setDetails((current) => ({ ...current, blType: value }))}
+                      placeholder="e.g. Original / Telex Release / Seaway Bill"
+                    />
+                    <Field label="ETD" type="date" value={details.etd} onChange={(value) => setDetails((current) => ({ ...current, etd: value }))} />
+                    <Field label="ETA" type="date" value={details.eta} onChange={(value) => setDetails((current) => ({ ...current, eta: value }))} />
+                    <Field label="Declared value" value={details.declaredValue} onChange={(value) => setDetails((current) => ({ ...current, declaredValue: value }))} />
+                    <Field label="Currency" value={details.currency} onChange={(value) => setDetails((current) => ({ ...current, currency: value }))} />
+                    <Field
+                      label="Payment terms"
+                      value={details.paymentTerms}
+                      onChange={(value) => setDetails((current) => ({ ...current, paymentTerms: value }))}
+                      placeholder="e.g. 30 days net / Letter of Credit / TT"
+                    />
+                  </div>
+                </div>
+                <div>
+                  <p className="mb-3 text-xs font-bold uppercase tracking-widest text-steel">Cargo</p>
+                  <div className="grid gap-4 md:grid-cols-2">
+                    <Field label="Product description" value={cargo.description} onChange={(value) => setCargo((current) => ({ ...current, description: value }))} />
+                    <Field label="SKU / part number" value={cargo.sku} onChange={(value) => setCargo((current) => ({ ...current, sku: value }))} />
+                    <Field label="HS code" value={cargo.hsCode} onChange={(value) => setCargo((current) => ({ ...current, hsCode: value }))} />
+                    <Field label="Quantity" value={cargo.quantity} onChange={(value) => setCargo((current) => ({ ...current, quantity: value }))} />
+                    <Field label="Gross weight" value={cargo.grossWeight} onChange={(value) => setCargo((current) => ({ ...current, grossWeight: value }))} />
+                    <Field label="Net weight" value={cargo.netWeight} onChange={(value) => setCargo((current) => ({ ...current, netWeight: value }))} />
+                    <Field label="Cartons / pallets / containers" value={cargo.handlingUnits} onChange={(value) => setCargo((current) => ({ ...current, handlingUnits: value }))} />
+                    <Field label="Container number" value={cargo.container} onChange={(value) => setCargo((current) => ({ ...current, container: value }))} />
+                    <Field label="Seal number" value={cargo.seal} onChange={(value) => setCargo((current) => ({ ...current, seal: value }))} />
+                    <Field label="Country of origin" value={cargo.countryOfOrigin} onChange={(value) => setCargo((current) => ({ ...current, countryOfOrigin: value }))} />
+                    <Field label="Dangerous goods" value={cargo.dangerousGoods} onChange={(value) => setCargo((current) => ({ ...current, dangerousGoods: value }))} />
+                    <Field label="Temperature controlled" value={cargo.temperatureControlled} onChange={(value) => setCargo((current) => ({ ...current, temperatureControlled: value }))} />
+                  </div>
+                </div>
+              </div>
             )}
 
           </Panel>
 
-          {error && activeStep !== 1 && (
+          {error && activeStep === 3 && (
             <p className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-600">
               <XCircle className="h-4 w-4 shrink-0" />
               {error}
@@ -942,20 +926,13 @@ export default function CreateShipmentPage() {
             {activeStep < lastVisibleStep ? (
               <Button onClick={goNext}>Next step</Button>
             ) : (
-              <div className="flex flex-col items-end gap-1">
-                <Button
-                  onClick={createShipmentNow}
-                  disabled={extractionStatus === "extracting" || createdInProgress}
-                >
-                  {createdInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
-                  {createdInProgress ? "Creating shipment..." : "Create shipment"}
-                </Button>
-                {hasValidationErrors && (
-                  <span className="max-w-xs text-right text-xs font-bold text-red-500">
-                    Mismatches can be fixed after creation. Final storage stays blocked until validation passes.
-                  </span>
-                )}
-              </div>
+              <Button
+                onClick={createShipmentNow}
+                disabled={extractionStatus === "extracting" || createdInProgress}
+              >
+                {createdInProgress ? <Loader2 className="h-4 w-4 animate-spin" /> : <FilePlus2 className="h-4 w-4" />}
+                {createdInProgress ? "Creating shipment..." : "Create shipment"}
+              </Button>
             )}
           </div>
         </div>
@@ -994,6 +971,8 @@ function PartyCard({
   subtitle?: string;
   onRemove?: () => void;
 }) {
+  const isTradeParty = title === "Importer" || title === "Exporter";
+
   return (
     <div
       className={cn(
@@ -1009,10 +988,20 @@ function PartyCard({
               locked ? "bg-[#4DA2FF] text-white" : "bg-blue-50 text-[#4DA2FF]"
             )}
           >
-            {locked ? <Lock className="h-4 w-4" /> : <UserCheck className="h-4 w-4" />}
+            {locked ? (
+              <Lock className="h-4 w-4" />
+            ) : isTradeParty ? (
+              <Building2 className="h-4 w-4" />
+            ) : (
+              <UserCheck className="h-4 w-4" />
+            )}
           </span>
           <div>
-            <p className="text-xs font-bold uppercase tracking-wide text-steel">{locked ? "Auto-filled" : subtitle ? "Optional party" : "Counterparty"}</p>
+            {locked ? (
+              <p className="text-xs font-bold uppercase tracking-wide text-steel">Auto-filled</p>
+            ) : subtitle ? (
+              <p className="text-xs font-bold uppercase tracking-wide text-steel">Optional party</p>
+            ) : null}
             <h3 className="text-lg font-extrabold text-pearl">{title}</h3>
             {subtitle && <p className="text-xs text-steel">{subtitle}</p>}
           </div>
@@ -1132,8 +1121,6 @@ function DocumentUploadStep({
   onRemoveDocument,
   extractionStatus,
   extractResult,
-  error,
-  hasValidationErrors
 }: {
   docs: DocumentRequirement[];
   transportMode: string;
@@ -1142,8 +1129,6 @@ function DocumentUploadStep({
   onRemoveDocument: (name: string) => void;
   extractionStatus: "idle" | "extracting" | "complete" | "failed";
   extractResult: AggregateResult | null;
-  error: string | null;
-  hasValidationErrors: boolean;
 }) {
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [dragOver, setDragOver] = useState(false);
@@ -1198,12 +1183,6 @@ function DocumentUploadStep({
 
   return (
     <div className="grid gap-6">
-      <div className="rounded-2xl border border-blue-100 bg-blue-50 p-4 text-sm text-steel">
-        Stage your shipment documents in the box below, then click{" "}
-        <span className="font-bold text-pearl">Extract documents</span> to run AI analysis. You can add more files and
-        extract again if some are missing — results accumulate automatically.
-      </div>
-
       <div className="rounded-2xl border border-blue-100 bg-white p-4">
         <p className="text-xs font-bold uppercase tracking-widest text-steel">Additional documents</p>
         <div className="mt-3 flex flex-col gap-3 sm:flex-row">
@@ -1253,7 +1232,7 @@ function DocumentUploadStep({
                     {!doc.fileName && isExtracting && (
                       <p className="mt-0.5 flex items-center gap-1 text-xs text-[#4DA2FF]">
                         <Loader2 className="h-3 w-3 animate-spin" />
-                        Analyzing…
+                        Extracting Details…
                       </p>
                     )}
                   </div>
@@ -1267,7 +1246,7 @@ function DocumentUploadStep({
                     ) : isExtracting ? (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-blue-100 px-2.5 py-1 text-xs font-bold text-[#4DA2FF]">
                         <Loader2 className="h-3 w-3 animate-spin" />
-                        Analyzing
+                        Extracting Details
                       </span>
                     ) : (
                       <span className="inline-flex items-center gap-1.5 rounded-full bg-red-100 px-2.5 py-1 text-xs font-bold text-red-600">
@@ -1309,7 +1288,7 @@ function DocumentUploadStep({
         {isExtracting ? (
           <div className="flex flex-col items-center gap-3">
             <Loader2 className="h-10 w-10 animate-spin text-[#4DA2FF]" />
-            <h3 className="text-xl font-extrabold text-pearl">Analyzing with AI...</h3>
+            <h3 className="text-xl font-extrabold text-pearl">Extracting Details</h3>
             <p className="mx-auto max-w-sm text-sm text-steel">
               Claude Haiku is reading your documents. You can navigate away — extraction continues in the background.
             </p>
@@ -1338,7 +1317,7 @@ function DocumentUploadStep({
       {stagedFiles.length > 0 && !isExtracting && (
         <div className="rounded-2xl border border-blue-100 bg-white p-4 grid gap-3">
           <p className="text-xs font-bold uppercase text-steel">
-            Staged — {stagedFiles.length} file{stagedFiles.length !== 1 ? "s" : ""} ready to extract
+            {stagedFiles.length} file{stagedFiles.length !== 1 ? "s" : ""} uploaded
           </p>
           <div className="flex flex-wrap gap-2">
             {stagedFiles.map((file) => (
@@ -1370,55 +1349,27 @@ function DocumentUploadStep({
         </div>
       )}
 
-      {/* Extraction status banner — contextual based on validation outcome */}
-      {(isComplete || isFailed) && (() => {
-        const errorCount = extractResult?.cross_validation.filter((v) => v.severity === "error").length ?? 0;
-        const warnCount = extractResult?.cross_validation.filter((v) => v.severity === "warning").length ?? 0;
-        if (isFailed) return (
-          <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
-            <XCircle className="h-5 w-5 shrink-0 text-red-500" />
-            <div>
-              <p className="font-bold text-red-700">Extraction failed</p>
-              <p className="text-sm text-red-600">Drop your files above and click Extract to retry.</p>
-            </div>
+      {isFailed && (
+        <div className="flex items-center gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
+          <XCircle className="h-5 w-5 shrink-0 text-red-500" />
+          <div>
+            <p className="font-bold text-red-700">Extraction failed</p>
+            <p className="text-sm text-red-600">Drop your files above and click Extract to retry.</p>
           </div>
-        );
-        if (errorCount > 0) return (
-          <div className="flex items-start gap-3 rounded-2xl border border-red-200 bg-red-50 p-4">
-            <XCircle className="h-5 w-5 shrink-0 text-red-500" />
-            <div>
-              <p className="font-bold text-red-700">{errorCount} mismatch{errorCount !== 1 ? "es" : ""}</p>
-              <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-red-600">
-                {extractResult?.cross_validation.filter((v) => v.severity === "error").map((v, i) => (
-                  <li key={i}>{v.message}</li>
-                ))}
-              </ul>
-            </div>
+        </div>
+      )}
+
+      {isComplete && (
+        <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
+          <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
+          <div>
+            <p className="font-bold text-emerald-700">Extraction complete</p>
+            <p className="text-sm text-emerald-600">
+              Review the AI-filled Details below, then create the shipment when ready.
+            </p>
           </div>
-        );
-        if (warnCount > 0) return (
-          <div className="flex items-start gap-3 rounded-2xl border border-amber-200 bg-amber-50 p-4">
-            <AlertTriangle className="h-5 w-5 shrink-0 text-amber-500" />
-            <div>
-              <p className="font-bold text-amber-700">{warnCount} warning{warnCount !== 1 ? "s" : ""}</p>
-              <ul className="mt-2 list-inside list-disc space-y-1 text-sm text-amber-600">
-                {extractResult?.cross_validation.filter((v) => v.severity === "warning").map((v, i) => (
-                  <li key={i}>{v.message}</li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        );
-        return (
-          <div className="flex items-center gap-3 rounded-2xl border border-emerald-200 bg-emerald-50 p-4">
-            <CheckCircle2 className="h-5 w-5 shrink-0 text-emerald-500" />
-            <div>
-              <p className="font-bold text-emerald-700">AI validation passed</p>
-              <p className="text-sm text-emerald-600">All documents are consistent. Drop more files above to add missing ones.</p>
-            </div>
-          </div>
-        );
-      })()}
+        </div>
+      )}
 
       {/* Extracted document details — one expandable card per detected doc */}
       {isComplete && extractResult && (
@@ -1664,12 +1615,6 @@ function DocumentUploadStep({
         </div>
       )}
 
-      {error && (
-        <p className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-600">
-          <XCircle className="h-4 w-4 shrink-0" />
-          {error}
-        </p>
-      )}
     </div>
   );
 }

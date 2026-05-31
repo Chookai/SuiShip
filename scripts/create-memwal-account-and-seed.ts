@@ -1,8 +1,10 @@
 /**
  * Create a fresh MemWal account on Sui testnet (new wallet → no prior document memory),
- * register a delegate key, update .env.local, and seed Importer + Exporter profile v1.
+ * register a delegate key, and update .env.local.
  *
- * Usage: npx tsx scripts/create-memwal-account-and-seed.ts
+ * Usage:
+ *   npx tsx scripts/create-memwal-account-and-seed.ts           # also seeds company profiles
+ *   npx tsx scripts/create-memwal-account-and-seed.ts --no-seed # empty account only
  */
 import { readFileSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
@@ -11,7 +13,11 @@ import { getJsonRpcFullnodeUrl, SuiJsonRpcClient } from "@mysten/sui/jsonRpc";
 import { Transaction } from "@mysten/sui/transactions";
 import { parseEd25519Keypair } from "../lib/sui-keypair";
 import { pathToFileURL } from "node:url";
-import { SCENARIO_C_EXPORTER, SCENARIO_C_IMPORTER } from "../lib/scenario-c-demo-defaults";
+import {
+  SCENARIO_C_EXPORTER,
+  SCENARIO_C_FREIGHT_FORWARDER,
+  SCENARIO_C_IMPORTER,
+} from "../lib/scenario-c-demo-defaults";
 import { writeCompanyProfileToMemWal } from "../lib/profile-memwal";
 
 function loadEnvLocal(): void {
@@ -109,10 +115,13 @@ function updateEnvLocal(delegateKey: string, accountId: string): void {
 async function seedProfiles(): Promise<void> {
   const importer = { ...SCENARIO_C_IMPORTER };
   const exporter = { ...SCENARIO_C_EXPORTER };
+  const freightForwarder = { ...SCENARIO_C_FREIGHT_FORWARDER };
   const importerResult = await writeCompanyProfileToMemWal(importer, "Importer", 1);
   const exporterResult = await writeCompanyProfileToMemWal(exporter, "Exporter", 1);
+  const ffResult = await writeCompanyProfileToMemWal(freightForwarder, "Freight Forwarder", 1);
   console.log("Seeded Importer profile v1:", importerResult.namespace, importerResult.blobId);
   console.log("Seeded Exporter profile v1:", exporterResult.namespace, exporterResult.blobId);
+  console.log("Seeded Freight Forwarder profile v1:", ffResult.namespace, ffResult.blobId);
 }
 
 async function loadMemwalAccountApi() {
@@ -127,6 +136,7 @@ async function loadMemwalAccountApi() {
 }
 
 async function main() {
+  const noSeed = process.argv.includes("--no-seed");
   const { createAccount, addDelegateKey, generateDelegateKey } = await loadMemwalAccountApi();
   const suiClient = createTestnetSuiClient();
   const ownerKeypair = Ed25519Keypair.generate();
@@ -169,8 +179,12 @@ async function main() {
   console.log("Updated .env.local with new MEMWAL_ED25519_KEY and MEMWAL_ACCOUNT_ID");
   console.log("MEMWAL_SERVER_URL:", MEMWAL_SERVER_URL);
 
-  console.log("Seeding company profiles to MemWal…");
-  await seedProfiles();
+  if (noSeed) {
+    console.log("Skipping profile seed (--no-seed). MemWal account has no stored memory yet.");
+  } else {
+    console.log("Seeding company profiles to MemWal…");
+    await seedProfiles();
+  }
 
   console.log("\nDone. Restart `npm run dev` so the server picks up the new MemWal credentials.");
   console.log("Save owner Sui secret offline if you need to add more delegate keys later:");

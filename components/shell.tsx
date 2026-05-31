@@ -1,7 +1,6 @@
 "use client";
 
-import { ConnectButton, useCurrentAccount } from "@mysten/dapp-kit";
-import { Activity, Bell, Boxes, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, Search, ShieldAlert, Ship, Sparkles, Sun } from "lucide-react";
+import { Activity, Bell, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, ShieldAlert, Ship, Sparkles, Sun } from "lucide-react";
 import { useTheme } from "next-themes";
 import Image from "next/image";
 import Link from "next/link";
@@ -26,7 +25,6 @@ const nav = [
 
 export function Shell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const account = useCurrentAccount();
   const { role, roles, setRole, profile, profiles } = useRole();
   const { shipments } = useShipments();
   const { invitations, unreadCount, markAllRead, markRead } = useInvitations(role, shipments);
@@ -134,11 +132,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <div className="lg:hidden">
               <Logo />
             </div>
-            <div className="ml-auto flex w-full items-center gap-3 rounded-full bg-white/88 p-2 shadow-panel backdrop-blur-xl dark:bg-midnight/90 md:max-w-[860px]">
-              <label className="hidden h-10 flex-1 items-center gap-2 rounded-full bg-ink px-4 md:flex">
-                <Search className="h-4 w-4 text-sui" />
-                <input className="w-full bg-transparent text-sm text-pearl outline-none placeholder:text-steel" placeholder="Search" />
-              </label>
+            <div className="ml-auto flex items-center gap-2">
               <div ref={notifRef} className="relative">
                 <button
                   type="button"
@@ -167,14 +161,18 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     </div>
                     {invitations.length === 0 ? (
                       <div className="rounded-2xl bg-blue-50 p-4 text-sm text-steel dark:bg-ink">
-                        No shipment invitations yet. When the {role === "Importer" ? "exporter" : "importer"} starts a
-                        shipment with you, it shows up here.
+                        No shipment invitations yet. When a trade party starts a shipment involving you, it shows up
+                        here.
                       </div>
                     ) : (
                       <div className="grid max-h-[400px] gap-2 overflow-y-auto">
                         {invitations.map(({ shipment, unread }) => {
                           const counterparty =
-                            role === "Importer" ? shipment.exporter.company : shipment.importer.company;
+                            role === "Importer"
+                              ? shipment.exporter.company
+                              : role === "Exporter"
+                                ? shipment.importer.company
+                                : shipment.freightForwarder || shipment.exporter.company;
                           return (
                             <Link
                               key={shipment.id}
@@ -224,11 +222,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
               >
                 {resolvedTheme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
               </button>
-              <div className="hidden items-center gap-2 rounded-full bg-blue-50 px-3 py-2 text-xs font-semibold text-steel xl:flex">
-                <Boxes className="h-4 w-4 text-sui" />
-                <span>Testnet</span>
-              </div>
-              <ConnectButton />
             </div>
           </div>
           <nav className="flex gap-1 overflow-x-auto border-t border-blue-100 px-4 py-2 dark:border-slate-700 lg:hidden">

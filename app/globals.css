@@ -68,7 +68,7 @@ body::before {
     1440px 240px,
     1440px 240px;
   opacity: var(--wave-opacity);
-  animation: oceanDrift 18s ease-in-out infinite;
+  animation: oceanDrift 48s linear infinite;
   mask-image: linear-gradient(to top, black 0%, black 58%, transparent 100%);
 }
 
@@ -82,6 +82,7 @@ body::after {
   filter: blur(28px);
 }
 
+/* One full 1440px tile shift — loops seamlessly with background-repeat */
 @keyframes oceanDrift {
   0% {
     background-position:
@@ -89,25 +90,14 @@ body::after {
       0 10px,
       180px 34px,
       -240px 62px;
-    opacity: 0.78;
-  }
-
-  50% {
-    background-position:
-      0 0,
-      120px 34px,
-      80px 18px,
-      -80px 76px;
-    opacity: 0.52;
   }
 
   100% {
     background-position:
       0 0,
-      240px 10px,
-      -20px 34px,
-      90px 62px;
-    opacity: 0.78;
+      -1440px 10px,
+      -1260px 34px,
+      -1680px 62px;
   }
 }
 

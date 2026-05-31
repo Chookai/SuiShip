@@ -106,7 +106,9 @@ export async function runShipmentValidation(
     const runId = randomUUID();
 
     // Mark previous runs superseded and resolve stale findings
-    db.prepare("UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ?").run(shipmentId);
+    db.prepare(
+      "UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ? AND overall_verdict != 'documents_cleared'"
+    ).run(shipmentId);
     db.prepare("UPDATE validation_findings SET status = 'superseded' WHERE shipment_id = ? AND status = 'unresolved'").run(shipmentId);
 
     const runDocCount = (db.prepare(
@@ -315,7 +317,9 @@ export async function runShipmentValidation(
   }
 
   // Mark previous runs superseded and resolve stale findings
-  db.prepare("UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ?").run(shipmentId);
+  db.prepare(
+    "UPDATE validation_runs SET is_superseded = 1 WHERE shipment_id = ? AND overall_verdict != 'documents_cleared'"
+  ).run(shipmentId);
   db.prepare("UPDATE validation_findings SET status = 'superseded' WHERE shipment_id = ? AND status = 'unresolved'").run(shipmentId);
 
   db.prepare(`

@@ -13,6 +13,18 @@ export const SCENARIO_C_IMPORTER = {
   registeredAddress: "88 Pudong Avenue, Shanghai, China",
 };
 
+export const SCENARIO_C_FREIGHT_FORWARDER = {
+  company: "Freight Forwarder",
+  contact: "Logistics Desk",
+  email: "ops@freightforwarder.com",
+  phone: "+1-310-555-0300",
+  country: "United States",
+  taxId: "US-FF-900001",
+  registeredAddress: "500 Harbor Logistics Park, Los Angeles, CA 90021, United States",
+  bankBeneficiaryName: "Freight Forwarder",
+  bankAccountNumber: "FF-SETTLE-4401",
+};
+
 export const SCENARIO_C_EXPORTER = {
   company: "Acme Robotics LLC",
   contact: "Sarah Chen",
@@ -70,6 +82,7 @@ export type DemoPartyDetails = {
 
 export const SCENARIO_C_IMPORTER_PARTY: DemoPartyDetails = { ...SCENARIO_C_IMPORTER };
 export const SCENARIO_C_EXPORTER_PARTY: DemoPartyDetails = { ...SCENARIO_C_EXPORTER };
+export const SCENARIO_C_FREIGHT_FORWARDER_PARTY: DemoPartyDetails = { ...SCENARIO_C_FREIGHT_FORWARDER };
 
 function normalizeCompanyKey(name: string): string {
   return name.trim().toLowerCase().replace(/[^a-z0-9]+/g, " ");
@@ -78,6 +91,7 @@ function normalizeCompanyKey(name: string): string {
 const COMPANY_PARTY_CATALOG: Record<string, DemoPartyDetails> = {
   [normalizeCompanyKey(SCENARIO_C_EXPORTER.company)]: SCENARIO_C_EXPORTER_PARTY,
   [normalizeCompanyKey(SCENARIO_C_IMPORTER.company)]: SCENARIO_C_IMPORTER_PARTY,
+  [normalizeCompanyKey(SCENARIO_C_FREIGHT_FORWARDER.company)]: SCENARIO_C_FREIGHT_FORWARDER_PARTY,
 };
 
 /** Look up canonical tax ID, address, and bank fields for a known demo company name. */

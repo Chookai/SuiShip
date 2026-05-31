@@ -12,6 +12,9 @@
     "test:watch": "vitest",
     "demo:docs": "tsx scripts/generate-memory-demo-docs.ts",
     "memwal:setup": "tsx scripts/create-memwal-account-and-seed.ts",
+    "memwal:fresh": "tsx scripts/create-memwal-account-and-seed.ts --no-seed",
+    "slush:setup": "tsx scripts/setup-party-slush-accounts.ts",
+    "slush:fund": "tsx scripts/fund-party-slush-accounts.ts",
     "verify:seal-demo": "tsx scripts/verify-seal-demo.ts"
   },
   "dependencies": {

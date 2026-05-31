@@ -7,7 +7,13 @@ export type {
   MemWalSpaceDescriptor,
 } from "./types";
 
-export { memwalRemember, memwalRecall, memwalHealth, isMemWalConfigured } from "./client";
+export {
+  memwalRemember,
+  memwalRecall,
+  memwalHealth,
+  isMemWalConfigured,
+  isMemWalEnabled,
+} from "./client";
 
 /**
  * Fire-and-forget doc event write. Never throws to the caller.

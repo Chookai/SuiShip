@@ -5,37 +5,38 @@ import {
   CheckCircle2,
   ExternalLink,
   Loader2,
-  Package,
   ShieldCheck,
   Truck,
   UserCheck,
   Warehouse,
 } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
+import { useRole, type MockRole } from "@/components/role-context";
 import { Button } from "@/components/ui";
 import {
   DEMO_ENDORSEMENT_FLOW,
+  ENDORSEMENT_STEP_LABELS,
+  actionKey,
   getCompletedStepKeys,
   getNextRequiredStep,
-  actionKey,
   type DemoEndorsementRecord,
   type DemoEndorsementRole,
 } from "@/lib/endorsement-flow";
 import { cn } from "@/lib/utils";
 
-const SUISCAN_BASE = "https://suiscan.xyz/testnet";
-
-type PassportData = {
-  passportId: string;
-  endorsementLogId?: string;
-  ownerAddress?: string;
-  importerAddress?: string;
-  exporterAddress?: string;
-  endorsements: DemoEndorsementRecord[];
+type PartySlushState = {
+  signingEnabled: boolean;
+  accounts: Array<{ role: MockRole; address: string }>;
 };
 
+const MOCK_ROLE_TO_ENDORSE: Partial<Record<MockRole, DemoEndorsementRole>> = {
+  Importer: "importer",
+  "Freight Forwarder": "freight_forwarder",
+};
+
+const SUISCAN_BASE = "https://suiscan.xyz/testnet";
+
 const STEP_ICONS: Record<string, React.ElementType> = {
-  released: Package,
   picked_up: Truck,
   handed_off: Warehouse,
   reviewed: ShieldCheck,
@@ -43,30 +44,23 @@ const STEP_ICONS: Record<string, React.ElementType> = {
   received: UserCheck,
 };
 
-const STEP_LABELS: Record<string, string> = {
-  released: "Released",
-  picked_up: "Picked Up",
-  handed_off: "Handed Off",
-  reviewed: "Reviewed",
-  cleared_customs: "Cleared",
-  received: "Received",
+type PassportData = {
+  passportId: string;
+  endorsementLogId?: string;
+  endorsements: DemoEndorsementRecord[];
 };
 
-const ROLE_LABELS: Record<string, string> = {
-  exporter: "Exporter",
-  freight_forwarder: "Freight Forwarder",
-  customs: "Customs",
-  importer: "Importer",
-};
-
-function truncAddr(addr: string) {
-  if (!addr || addr.length < 14) return addr;
-  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
-}
-
-export function CustodyChain({ shipmentId }: { shipmentId: string }) {
+export function CustodyChain({
+  shipmentId,
+  onEndorsed,
+}: {
+  shipmentId: string;
+  onEndorsed?: () => void | Promise<void>;
+}) {
   const account = useCurrentAccount();
+  const { role: mockRole } = useRole();
   const [passport, setPassport] = useState<PassportData | null>(null);
+  const [partySlush, setPartySlush] = useState<PartySlushState | null>(null);
   const [loading, setLoading] = useState(true);
   const [endorsing, setEndorsing] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -74,10 +68,18 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
 
   const fetchPassport = useCallback(async () => {
     try {
-      const res = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/passport`);
-      if (!res.ok) return;
-      const data = await res.json();
-      setPassport(data as PassportData);
+      const [passportRes, slushRes] = await Promise.all([
+        fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/passport`),
+        fetch("/api/party-slush"),
+      ]);
+      if (passportRes.ok) {
+        const data = await passportRes.json();
+        setPassport(data as PassportData);
+      }
+      if (slushRes.ok) {
+        const slush = (await slushRes.json()) as PartySlushState;
+        setPartySlush(slush);
+      }
     } catch {
       // silent
     } finally {
@@ -96,11 +98,25 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
   const nextStep = getNextRequiredStep(endorsements);
   const allComplete = !nextStep;
   const walletAddress = account?.address;
+  const partyAddress = partySlush?.accounts.find((a) => a.role === mockRole)?.address;
+  const mappedEndorseRole = MOCK_ROLE_TO_ENDORSE[mockRole];
 
-  const canEndorseNext = !!nextStep && !!walletAddress;
+  const canEndorseNext = Boolean(
+    nextStep &&
+      (partySlush?.signingEnabled
+        ? mappedEndorseRole === nextStep.role && partyAddress
+        : walletAddress),
+  );
 
   async function handleEndorse() {
-    if (!nextStep || !walletAddress || endorsing) return;
+    if (!nextStep || !canEndorseNext || endorsing) return;
+
+    const requesterAddress =
+      partySlush?.signingEnabled && mappedEndorseRole === nextStep.role
+        ? partyAddress
+        : walletAddress;
+    if (!requesterAddress) return;
+
     setError(null);
     setSuccessTx(null);
     setEndorsing(true);
@@ -108,8 +124,7 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
     try {
       let capObjectId: string | undefined;
 
-      // freight_forwarder and customs need a capability object
-      if (nextStep.role === "freight_forwarder" || nextStep.role === "customs") {
+      if (nextStep.role === "freight_forwarder") {
         const grantRes = await fetch(
           `/api/shipments/${encodeURIComponent(shipmentId)}/passport/grant-role`,
           {
@@ -126,6 +141,10 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
         capObjectId = grantData.capObjectId;
       }
 
+      const actingAsParty = Boolean(
+        partySlush?.signingEnabled && mappedEndorseRole === nextStep.role,
+      );
+
       const res = await fetch(
         `/api/shipments/${encodeURIComponent(shipmentId)}/passport/endorse`,
         {
@@ -134,7 +153,8 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
           body: JSON.stringify({
             role: nextStep.role,
             action: nextStep.action,
-            requesterAddress: walletAddress,
+            requesterAddress,
+            usePartySlushSigner: actingAsParty,
             capObjectId,
           }),
         },
@@ -145,6 +165,7 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
 
       setSuccessTx(data.txDigest);
       await fetchPassport();
+      await onEndorsed?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : "Endorsement failed");
     } finally {
@@ -154,15 +175,8 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
 
   return (
     <div className="rounded-2xl border border-blue-100 bg-white p-6 shadow-sm">
-      <div className="flex items-center justify-between">
-        <div>
-          <h2 className="text-lg font-bold text-pearl">Custody Chain</h2>
-          <p className="mt-0.5 text-xs text-steel">
-            {allComplete
-              ? "All custody steps completed — shipment fully endorsed on-chain."
-              : "Each party endorses on Sui when they handle the cargo. Endorsing grants SEAL decryption access."}
-          </p>
-        </div>
+      <div className="flex items-center justify-between gap-4">
+        <h2 className="text-lg font-bold text-pearl">Custody Chain</h2>
         {allComplete && (
           <span className="rounded-full border border-emerald-200 bg-emerald-50 px-3 py-1 text-xs font-bold text-emerald-700">
             Complete
@@ -170,130 +184,88 @@ export function CustodyChain({ shipmentId }: { shipmentId: string }) {
         )}
       </div>
 
-      {/* Timeline */}
-      <div className="mt-5 relative">
-        <div className="grid grid-cols-6 gap-0">
-          {DEMO_ENDORSEMENT_FLOW.map((step, idx) => {
-            const key = actionKey(step.role, step.action);
-            const isComplete = completedKeys.has(key);
-            const isNext = nextStep?.role === step.role && nextStep?.action === step.action;
-            const record = endorsements.find(
-              (e) => e.role === step.role && e.action === step.action,
+      <div className="mt-5 flex w-full items-start">
+        {DEMO_ENDORSEMENT_FLOW.map((step, idx) => {
+          const key = actionKey(step.role, step.action);
+          const isComplete = completedKeys.has(key);
+          const isNext =
+            nextStep?.role === step.role && nextStep?.action === step.action;
+          const Icon = STEP_ICONS[step.action] ?? CheckCircle2;
+          const segmentComplete =
+            idx === 0 ||
+            completedKeys.has(
+              actionKey(
+                DEMO_ENDORSEMENT_FLOW[idx - 1].role,
+                DEMO_ENDORSEMENT_FLOW[idx - 1].action,
+              ),
             );
-            const Icon = STEP_ICONS[step.action] ?? CheckCircle2;
 
-            return (
-              <div key={key} className="flex flex-col items-center text-center">
-                {/* Connector line */}
-                <div className="relative flex w-full items-center justify-center">
-                  {idx > 0 && (
-                    <div
-                      className={cn(
-                        "absolute left-0 right-1/2 top-1/2 h-0.5 -translate-y-1/2",
-                        isComplete || isNext ? "bg-emerald-300" : "bg-slate-200",
-                      )}
-                    />
+          return (
+            <div key={key} className="contents">
+              {idx > 0 && (
+                <div
+                  className={cn(
+                    "mt-[18px] h-0.5 min-w-[6px] flex-1",
+                    segmentComplete ? "bg-emerald-300" : "bg-slate-200",
                   )}
-                  {idx < DEMO_ENDORSEMENT_FLOW.length - 1 && (
-                    <div
-                      className={cn(
-                        "absolute left-1/2 right-0 top-1/2 h-0.5 -translate-y-1/2",
-                        isComplete ? "bg-emerald-300" : "bg-slate-200",
-                      )}
-                    />
+                  aria-hidden
+                />
+              )}
+              <div className="flex w-[72px] shrink-0 flex-col items-center">
+                <div
+                  className={cn(
+                    "relative z-10 flex h-9 w-9 items-center justify-center rounded-full bg-white ring-4 ring-white",
+                    isComplete
+                      ? "bg-emerald-500 text-white"
+                      : isNext
+                        ? "bg-sui text-white"
+                        : "bg-slate-100 text-slate-400",
                   )}
-                  {/* Step dot */}
-                  <div
-                    className={cn(
-                      "relative z-10 flex h-9 w-9 items-center justify-center rounded-full ring-4 ring-white transition",
-                      isComplete
-                        ? "bg-emerald-500 text-white"
-                        : isNext
-                          ? "bg-sui text-white animate-pulse"
-                          : "bg-slate-200 text-slate-400",
-                    )}
-                  >
-                    <Icon className="h-4 w-4" />
-                  </div>
+                >
+                  <Icon className="h-4 w-4" />
                 </div>
-
-                {/* Label */}
                 <p
                   className={cn(
-                    "mt-2 text-[10px] font-bold leading-tight",
+                    "mt-2 text-center text-[10px] font-bold leading-tight",
                     isComplete ? "text-emerald-700" : isNext ? "text-sui" : "text-steel",
                   )}
                 >
-                  {STEP_LABELS[step.action]}
+                  {ENDORSEMENT_STEP_LABELS[step.action]}
                 </p>
-                <p className="text-[9px] text-steel/70">{ROLE_LABELS[step.role]}</p>
-
-                {/* Signer address */}
-                {isComplete && record?.signer_address && (
-                  <a
-                    href={`${SUISCAN_BASE}/account/${record.signer_address}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="mt-0.5 flex items-center gap-0.5 font-mono text-[9px] text-sui hover:underline"
-                  >
-                    {truncAddr(record.signer_address)}
-                    <ExternalLink className="h-2 w-2" />
-                  </a>
-                )}
-                {isComplete && record?.tx_digest && (
-                  <a
-                    href={`${SUISCAN_BASE}/tx/${record.tx_digest}`}
-                    target="_blank"
-                    rel="noopener noreferrer"
-                    className="flex items-center gap-0.5 font-mono text-[8px] text-steel hover:text-sui"
-                  >
-                    tx
-                    <ExternalLink className="h-2 w-2" />
-                  </a>
-                )}
               </div>
-            );
-          })}
-        </div>
+            </div>
+          );
+        })}
       </div>
 
-      {/* Endorse action */}
-      {nextStep && canEndorseNext && (
-        <div className="mt-5 flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
-          <div className="min-w-0 flex-1">
-            <p className="text-sm font-bold text-pearl">
-              Your turn: {ROLE_LABELS[nextStep.role]} — {STEP_LABELS[nextStep.action]}
-            </p>
-            <p className="mt-0.5 text-xs text-steel">{nextStep.label}</p>
-          </div>
-          <Button onClick={handleEndorse} disabled={endorsing}>
-            {endorsing ? <Loader2 className="h-4 w-4 animate-spin" /> : <CheckCircle2 className="h-4 w-4" />}
-            {endorsing ? "Signing…" : "Endorse"}
-          </Button>
-        </div>
+      {!allComplete && (
+        <Button
+          className="mt-6 w-full shadow-none"
+          disabled={!canEndorseNext || endorsing}
+          onClick={() => void handleEndorse()}
+        >
+          {endorsing ? (
+            <>
+              <Loader2 className="h-4 w-4 animate-spin" />
+              Signing…
+            </>
+          ) : (
+            "Endorse"
+          )}
+        </Button>
       )}
 
-      {nextStep && !walletAddress && (
-        <div className="mt-4 rounded-lg bg-slate-50 px-4 py-3 text-xs text-steel">
-          Next step: <span className="font-bold text-pearl">{ROLE_LABELS[nextStep.role]}</span> — {nextStep.label}.
-          <span> Connect a wallet to endorse.</span>
-        </div>
-      )}
-
-      {error && (
-        <p className="mt-3 text-xs font-semibold text-red-600">{error}</p>
-      )}
+      {error && <p className="mt-3 text-xs font-semibold text-red-600">{error}</p>}
       {successTx && (
         <div className="mt-3 flex items-center gap-2 text-xs text-emerald-700">
-          <CheckCircle2 className="h-3.5 w-3.5" />
-          <span className="font-semibold">Endorsed on-chain</span>
+          <CheckCircle2 className="h-3.5 w-3.5 shrink-0" />
           <a
             href={`${SUISCAN_BASE}/tx/${successTx}`}
             target="_blank"
             rel="noopener noreferrer"
             className="flex items-center gap-0.5 font-mono text-sui hover:underline"
           >
-            {successTx.slice(0, 10)}…
+            Endorsed · {successTx.slice(0, 10)}…
             <ExternalLink className="h-3 w-3" />
           </a>
         </div>

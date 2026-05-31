@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import pino from "pino";
 
 const logger = pino({ name: "memwal-client" });
@@ -58,6 +59,9 @@ export async function memwalRememberAndWait(
   namespace: string,
   timeoutMs = 60_000
 ): Promise<MemWalWriteResult> {
+  if (!isMemWalConfigured()) {
+    return mockWriteResult(namespace);
+  }
   const MemWal = await getMemWalClass();
   const client = MemWal.create({
     key: process.env.MEMWAL_ED25519_KEY!,
@@ -103,6 +107,9 @@ export async function memwalRememberBulkAndWait(
   if (items.length === 0) {
     return { succeeded: 0, failed: 0, results: [] };
   }
+  if (!isMemWalConfigured()) {
+    return mockBulkResult(items);
+  }
 
   const MemWal = await getMemWalClass();
   const client = MemWal.create({
@@ -138,6 +145,9 @@ export async function memwalAnalyzeAndWait(
   namespace: string,
   timeoutMs = 120_000
 ): Promise<MemWalAnalyzeResult> {
+  if (!isMemWalConfigured()) {
+    return { ...mockBulkResult([{ namespace }]), facts: [] };
+  }
   const MemWal = await getMemWalClass();
   const client = MemWal.create({
     key: process.env.MEMWAL_ED25519_KEY!,
@@ -169,6 +179,9 @@ export async function memwalAnalyzeAndWait(
 }
 
 export async function memwalRestore(namespace: string, limit = 10): Promise<{ restored: number; skipped: number; total: number; namespace: string }> {
+  if (!isMemWalConfigured()) {
+    return { restored: 0, skipped: 0, total: 0, namespace };
+  }
   const MemWal = await getMemWalClass();
   const client = MemWal.create({
     key: process.env.MEMWAL_ED25519_KEY!,
@@ -199,6 +212,9 @@ export async function memwalRecall(
   namespace: string,
   limit = 10
 ): Promise<MemWalRecallItem[]> {
+  if (!isMemWalConfigured()) {
+    return [];
+  }
   const MemWal = await getMemWalClass();
   const client = MemWal.create({
     key: process.env.MEMWAL_ED25519_KEY!,
@@ -224,6 +240,7 @@ export async function memwalRecall(
  * Check MemWal connectivity.
  */
 export async function memwalHealth(): Promise<boolean> {
+  if (!isMemWalConfigured()) return false;
   try {
     const MemWal = await getMemWalClass();
     const client = MemWal.create({
@@ -240,13 +257,39 @@ export async function memwalHealth(): Promise<boolean> {
 }
 
 /**
- * Whether MemWal is configured with real credentials.
- * Returns false if env vars are missing or placeholder values.
+ * Master switch: set ENABLE_MEMWAL=true in .env.local to use MemWal; false or unset = off.
+ */
+export function isMemWalEnabled(): boolean {
+  const raw = process.env.ENABLE_MEMWAL?.trim().toLowerCase();
+  if (raw === "true" || raw === "1" || raw === "yes") return true;
+  if (raw === "false" || raw === "0" || raw === "no") return false;
+  return false;
+}
+
+/**
+ * MemWal is active only when ENABLE_MEMWAL=true and credentials are present.
  */
 export function isMemWalConfigured(): boolean {
+  if (!isMemWalEnabled()) return false;
   const key = process.env.MEMWAL_ED25519_KEY;
   const accountId = process.env.MEMWAL_ACCOUNT_ID;
   return !!(key && accountId && !key.startsWith("your-") && !accountId.startsWith("0xTODO"));
+}
+
+function mockWriteResult(namespace: string): MemWalWriteResult {
+  const stub = createHash("sha256").update(`${namespace}:${Date.now()}`).digest("hex").slice(0, 32);
+  return { jobId: `disabled_${stub}`, blobId: `memwal_disabled_${stub}`, namespace };
+}
+
+function mockBulkResult(items: Array<{ namespace: string }>): MemWalBulkWriteResult {
+  return {
+    succeeded: items.length,
+    failed: 0,
+    results: items.map((item) => ({
+      ...mockWriteResult(item.namespace),
+      status: "done" as const,
+    })),
+  };
 }
 
 function isRetriableMemWalError(err: unknown): boolean {

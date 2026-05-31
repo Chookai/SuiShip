@@ -5,6 +5,9 @@ import { AlertCircle, CheckCircle2, Loader2, ShieldCheck, Truck } from "lucide-r
 import { useEffect, useMemo, useState } from "react";
 import { Button, Panel } from "@/components/ui";
 import {
+  ACTIVE_ENDORSEMENT_ROLES,
+  ENDORSEMENT_ROLE_LABELS,
+  ENDORSEMENT_STEP_LABELS,
   getNextRequiredStep,
   getRoleActionsForUi,
   type DemoEndorsementRecord,
@@ -35,7 +38,7 @@ export function EndorsementPanel({
 }) {
   const account = useCurrentAccount();
   const [passport, setPassport] = useState<PassportSummary | null>(null);
-  const [role, setRole] = useState<DemoEndorsementRole>("exporter");
+  const [role, setRole] = useState<DemoEndorsementRole>("freight_forwarder");
   const [signerAddress, setSignerAddress] = useState("");
   const [signerKeyHex, setSignerKeyHex] = useState(process.env.NEXT_PUBLIC_DEMO_KEYPAIR_HEX ?? "");
   const [loading, setLoading] = useState(false);
@@ -75,31 +78,25 @@ export function EndorsementPanel({
   }, [shipmentId, refreshKey]);
 
   useEffect(() => {
-    if (role === "exporter" && passport?.exporterAddress) {
-      setSignerAddress(passport.exporterAddress);
-      return;
-    }
     if (role === "importer" && passport?.importerAddress) {
       setSignerAddress(passport.importerAddress);
       return;
     }
-    if ((role === "freight_forwarder" || role === "customs") && account?.address) {
+    if (role === "freight_forwarder" && account?.address) {
       setSignerAddress((current) => current || account.address);
     }
-  }, [role, passport?.exporterAddress, passport?.importerAddress, account?.address]);
+  }, [role, passport?.importerAddress, account?.address]);
 
   const endorsements = passport?.endorsements ?? [];
   const nextStep = getNextRequiredStep(endorsements);
   const availableActions = getRoleActionsForUi(role, endorsements);
   const roleHint = useMemo(() => {
-    if (role === "exporter") return "Exporter endorsements must be signed by the matching shipment role address.";
-    if (role === "importer") return "Importer endorsements must be signed by the matching shipment role address.";
-    if (role === "freight_forwarder") return "The panel will auto-grant a freight forwarder cap for this signer if needed.";
-    return "The panel will auto-grant a customs cap for this signer if needed.";
+    if (role === "importer") return "Importer receipt must be signed by the shipment importer address.";
+    return "Freight forwarder steps (pickup, handoff, customs review/clearance) use an FF capability grant.";
   }, [role]);
 
   async function ensureCapObjectId(): Promise<string | undefined> {
-    if (role !== "freight_forwarder" && role !== "customs") return undefined;
+    if (role !== "freight_forwarder") return undefined;
     const cacheKey = capCacheKey(shipmentId, role, signerAddress);
     const cached = typeof window !== "undefined" ? window.sessionStorage.getItem(cacheKey) : null;
     if (cached) return cached;
@@ -185,7 +182,7 @@ export function EndorsementPanel({
           <p className="font-semibold text-pearl">Current step</p>
           <p className="mt-1">
             {nextStep
-              ? `${nextStep.role.replace(/_/g, " ")} -> ${nextStep.action.replace(/_/g, " ")}`
+              ? `${ENDORSEMENT_ROLE_LABELS[nextStep.role]} → ${ENDORSEMENT_STEP_LABELS[nextStep.action]}`
               : "Custody flow complete"}
           </p>
         </div>
@@ -193,7 +190,7 @@ export function EndorsementPanel({
         <div className="grid gap-2">
           <span className="text-sm font-medium text-steel">Role</span>
           <div className="flex flex-wrap gap-2">
-            {(["exporter", "freight_forwarder", "customs", "importer"] as DemoEndorsementRole[]).map((option) => (
+            {ACTIVE_ENDORSEMENT_ROLES.map((option) => (
               <button
                 key={option}
                 type="button"
@@ -205,7 +202,7 @@ export function EndorsementPanel({
                     : "border-blue-100 bg-white text-steel hover:bg-blue-50 hover:text-pearl",
                 )}
               >
-                {option.replace(/_/g, " ")}
+                {ENDORSEMENT_ROLE_LABELS[option]}
               </button>
             ))}
           </div>
@@ -251,7 +248,7 @@ export function EndorsementPanel({
                 ) : (
                   <ShieldCheck className="h-4 w-4" />
                 )}
-                {roleAction.action.replace(/_/g, " ")}
+                {ENDORSEMENT_STEP_LABELS[roleAction.action]}
               </Button>
               {!roleAction.enabled ? (
                 <p className="text-[11px] font-semibold text-steel">

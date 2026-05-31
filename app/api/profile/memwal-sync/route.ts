@@ -1,11 +1,11 @@
 import { NextResponse } from "next/server";
 import { z } from "zod";
 import type { MockRole } from "@/components/role-context";
-import { isMemWalConfigured } from "@/lib/memwal/client";
+import { isMemWalConfigured, isMemWalEnabled } from "@/lib/memwal/client";
 import { writeCompanyProfileToMemWal } from "@/lib/profile-memwal";
 
 const bodySchema = z.object({
-  role: z.enum(["Importer", "Exporter"]),
+  role: z.enum(["Importer", "Exporter", "Freight Forwarder"]),
   profileVersion: z.number().int().min(1),
   profile: z.object({
     company: z.string().min(1),
@@ -21,9 +21,16 @@ const bodySchema = z.object({
 });
 
 export async function POST(request: Request) {
+  if (!isMemWalEnabled()) {
+    return NextResponse.json({
+      ok: true,
+      skipped: true,
+      reason: "MemWal is disabled (ENABLE_MEMWAL=false). Profile saved locally only.",
+    });
+  }
   if (!isMemWalConfigured()) {
     return NextResponse.json(
-      { ok: false, error: "MemWal is not configured (MEMWAL_ED25519_KEY / MEMWAL_ACCOUNT_ID)." },
+      { ok: false, error: "MemWal is enabled but not configured (MEMWAL_ED25519_KEY / MEMWAL_ACCOUNT_ID)." },
       { status: 503 }
     );
   }

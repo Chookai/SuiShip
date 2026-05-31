@@ -83,7 +83,10 @@ export function parseCompanyProfileFromMemoryText(
   const profileVersion = Number(extractProfileField(text, "profile_version"));
   if (!Number.isFinite(profileVersion) || profileVersion < 1) return null;
   const roleRaw = extractProfileField(text, "role");
-  const role = roleRaw === "Importer" || roleRaw === "Exporter" ? roleRaw : undefined;
+  const role =
+    roleRaw === "Importer" || roleRaw === "Exporter" || roleRaw === "Freight Forwarder"
+      ? roleRaw
+      : undefined;
   return {
     profileVersion,
     role,

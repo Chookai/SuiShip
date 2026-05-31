@@ -2,14 +2,16 @@
 
 import {
   AlertTriangle,
-  Building2,
+  ExternalLink,
   FileText,
   Loader2,
   Mail,
+  Package,
   Phone,
   ShieldAlert,
+  Ship,
 } from "lucide-react";
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { RiskAgentPanel } from "@/components/RiskAgentPanel";
 import type { ShipmentRecord } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
@@ -50,14 +52,27 @@ function SeverityBadge({ severity }: { severity: "critical" | "warning" | "info"
 type IssueSummary = { severity: string; message: string; field?: string };
 
 type ActivityEntry = {
-  kind: "created" | "validation" | "cleared";
+  kind: "created" | "validation" | "cleared" | "endorsement" | "passport_minted";
   docCount: number;
   uploadedCount: number;
   verdict?: string;
   reason?: string;
   issues?: IssueSummary[];
+  clearedDocuments?: string[];
   timestamp: string;
+  role?: string;
+  action?: string;
+  signerAddress?: string;
+  txDigest?: string;
+  summary?: string;
 };
+
+const SUISCAN_BASE = "https://suiscan.xyz/testnet";
+
+function truncAddr(addr: string) {
+  if (!addr || addr.length < 14) return addr;
+  return `${addr.slice(0, 6)}…${addr.slice(-4)}`;
+}
 
 function useActivityLog(shipmentId: string, refreshKey?: number) {
   const [entries, setEntries] = useState<ActivityEntry[]>([]);
@@ -112,72 +127,78 @@ function ActivityCard({
   const hasDetail = Boolean(entry.reason) || (entry.issues && entry.issues.length > 0);
 
   if (entry.kind === "created") {
-    const hasValidation = Boolean(entry.verdict);
-    const matched = entry.verdict === "consistent" || entry.verdict === "matched" || entry.verdict === "aligned";
-    const errorCount = entry.issues?.filter(i => i.severity === "error").length ?? 0;
-    const warnCount = entry.issues?.filter(i => i.severity === "warning").length ?? 0;
+    const label = entry.summary ?? "Shipment created";
+    return (
+      <div className="w-full rounded-lg border border-blue-100 bg-blue-50/40 px-4 py-3 text-left">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-base font-semibold text-pearl">
+            <span className="text-2xl font-bold text-sui">#{num}</span> {label}
+          </p>
+          <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
+            {new Date(entry.timestamp).toLocaleString()}
+          </span>
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.kind === "endorsement" || entry.kind === "passport_minted") {
+    const summary =
+      entry.summary ??
+      (entry.kind === "passport_minted" ? "Passport created on-chain" : "Custody step recorded on-chain");
+    return (
+      <div className="w-full rounded-lg border border-blue-100 bg-blue-50/40 px-4 py-3 text-left">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-base font-semibold text-pearl">
+            <span className="text-2xl font-bold text-sui">#{num}</span> {summary}
+          </p>
+          <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
+            {new Date(entry.timestamp).toLocaleString()}
+          </span>
+        </div>
+        <div className="mt-2 flex flex-wrap items-center gap-3 text-xs text-steel">
+          {entry.txDigest && (
+            <a
+              href={`${SUISCAN_BASE}/tx/${entry.txDigest}`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-0.5 font-mono text-sui hover:underline"
+            >
+              tx: {truncAddr(entry.txDigest)}
+              <ExternalLink className="h-3 w-3" />
+            </a>
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.kind === "cleared") {
+    const label = entry.summary ?? "Documents cleared";
+    const hasDetail = (entry.clearedDocuments?.length ?? 0) > 0;
     return (
       <button
         type="button"
         onClick={() => hasDetail && setOpen(!open)}
         className={cn(
-          "w-full rounded-lg border border-blue-100 bg-blue-50/40 px-4 py-3 text-left",
-          hasDetail && "transition hover:bg-blue-50"
-        )}
-      >
-        <div className="flex items-center justify-between gap-3">
-          <p className="text-base font-semibold text-pearl">
-            <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
-            Shipment Created{entry.uploadedCount > 0 ? `, ${entry.uploadedCount} document${entry.uploadedCount !== 1 ? "s" : ""} uploaded` : ""}{entry.docCount > 0 && entry.docCount !== entry.uploadedCount ? `, ${entry.docCount} validated` : ""}
-            {hasValidation && (
-              <>
-                . AI validation:{" "}
-                <span className={matched ? "text-emerald-600" : "text-amber-600"}>
-                  {matched ? "Passed" : "Failed"}
-                </span>
-                {!matched && (errorCount > 0 || warnCount > 0) && (
-                  <span className="text-sm font-normal text-steel ml-1">
-                    ({errorCount > 0 ? `${errorCount} error${errorCount !== 1 ? "s" : ""}` : ""}{errorCount > 0 && warnCount > 0 ? ", " : ""}{warnCount > 0 ? `${warnCount} warning${warnCount !== 1 ? "s" : ""}` : ""})
-                  </span>
-                )}
-              </>
-            )}
-          </p>
-          <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
-            {new Date(entry.timestamp).toLocaleString()}
-          </span>
-        </div>
-        {open && (
-          <>
-            {entry.reason && <p className="mt-2 text-sm text-steel">{entry.reason}</p>}
-            {entry.issues && entry.issues.length > 0 && <IssueList issues={entry.issues} />}
-          </>
-        )}
-      </button>
-    );
-  }
-
-  if (entry.kind === "cleared") {
-    return (
-      <button
-        type="button"
-        onClick={() => entry.reason && setOpen(!open)}
-        className={cn(
           "w-full rounded-lg border border-amber-100 bg-amber-50/40 px-4 py-3 text-left",
-          entry.reason && "transition hover:bg-amber-50"
+          hasDetail && "transition hover:bg-amber-50"
         )}
       >
         <div className="flex items-center justify-between gap-3">
           <p className="text-base font-semibold text-pearl">
-            <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
-            Documents cleared
+            <span className="text-2xl font-bold text-sui">#{num}</span> {label}
           </p>
           <span className="shrink-0 text-xs text-steel/60 whitespace-nowrap">
             {new Date(entry.timestamp).toLocaleString()}
           </span>
         </div>
-        {open && entry.reason && (
-          <p className="mt-2 text-sm text-steel">{entry.reason}</p>
+        {open && entry.clearedDocuments && entry.clearedDocuments.length > 0 && (
+          <ul className="mt-2 list-inside list-disc text-sm text-steel">
+            {entry.clearedDocuments.map((doc) => (
+              <li key={doc}>{doc}</li>
+            ))}
+          </ul>
         )}
       </button>
     );
@@ -195,7 +216,7 @@ function ActivityCard({
       <div className="flex items-center justify-between gap-3">
         <p className="text-base font-semibold text-pearl">
           <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
-          {entry.uploadedCount} document{entry.uploadedCount !== 1 ? "s" : ""} uploaded{entry.docCount > entry.uploadedCount ? `, ${entry.docCount} validated` : ""}. AI validation:{" "}
+          {entry.uploadedCount} document{entry.uploadedCount !== 1 ? "s" : ""} uploaded and AI validation:{" "}
           <span className={matched ? "text-emerald-600" : "text-amber-600"}>
             {matched ? "Passed" : "Failed"}
           </span>
@@ -400,30 +421,58 @@ function formatEvidenceValue(field: string, value: unknown) {
 
 // ── Internal fetch hook ─────────────────────────────────────────────────────
 
-function useValidation(shipmentId: string, refreshKey = 0) {
+const validationInflight = new Map<string, Promise<ValidationResult | null>>();
+
+function useValidation(
+  shipmentId: string,
+  refreshKey = 0,
+  onComplete?: () => void,
+) {
   const [data, setData] = useState<ValidationResult | null>(null);
   const [loading, setLoading] = useState(true);
+  const onCompleteRef = useRef(onComplete);
+  onCompleteRef.current = onComplete;
 
   useEffect(() => {
     let cancelled = false;
     setLoading(true);
 
     async function loadOrRunValidation() {
-      const getRes = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`);
-      if (getRes.ok) {
-        return getRes.json() as Promise<ValidationResult>;
+      const inflight = validationInflight.get(shipmentId);
+      if (inflight) return inflight;
+
+      const promise = (async () => {
+        const getRes = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`);
+        if (getRes.ok) {
+          return getRes.json() as Promise<ValidationResult>;
+        }
+        const postRes = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`, { method: "POST" });
+        if (postRes.ok) {
+          return postRes.json() as Promise<ValidationResult>;
+        }
+        return null;
+      })();
+
+      validationInflight.set(shipmentId, promise);
+      try {
+        return await promise;
+      } finally {
+        if (validationInflight.get(shipmentId) === promise) {
+          validationInflight.delete(shipmentId);
+        }
       }
-      // No cached validation — trigger a fresh run with MemWal profile recall
-      const postRes = await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/validate`, { method: "POST" });
-      if (postRes.ok) {
-        return postRes.json() as Promise<ValidationResult>;
-      }
-      return null;
     }
 
     loadOrRunValidation()
-      .then(d => { if (!cancelled) { setData(d); setLoading(false); } })
-      .catch(() => { if (!cancelled) setLoading(false); });
+      .then((d) => {
+        if (cancelled) return;
+        setData(d);
+        setLoading(false);
+        onCompleteRef.current?.();
+      })
+      .catch(() => {
+        if (!cancelled) setLoading(false);
+      });
     return () => { cancelled = true; };
   }, [shipmentId, refreshKey]);
 
@@ -432,27 +481,114 @@ function useValidation(shipmentId: string, refreshKey = 0) {
 
 // ── Main export ─────────────────────────────────────────────────────────────
 
+function formatOverviewDate(iso: string | undefined) {
+  if (!iso?.trim()) return null;
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return iso;
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function formatRouteDuration(etdIso: string | undefined, etaIso: string | undefined): string | null {
+  if (!etdIso?.trim() || !etaIso?.trim()) return null;
+  const start = new Date(etdIso);
+  const end = new Date(etaIso);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const days = Math.round((end.getTime() - start.getTime()) / (1000 * 60 * 60 * 24));
+  if (days < 0) return null;
+  if (days === 0) return "Same day";
+  if (days === 1) return "1 day";
+  return `${days} days`;
+}
+
+function overviewValue(value: string | undefined | null, fallback = "—") {
+  const v = value?.trim();
+  return v && v.length > 0 ? v : fallback;
+}
+
+function OverviewField({
+  label,
+  value,
+  className,
+}: {
+  label: string;
+  value: string;
+  className?: string;
+}) {
+  return (
+    <div className={cn("rounded-lg bg-blue-50/80 p-3", className)}>
+      <p className="text-xs font-bold uppercase tracking-wide text-steel">{label}</p>
+      <p className="mt-1 text-sm font-semibold text-pearl">{value}</p>
+    </div>
+  );
+}
+
+function OverviewSubheading({ icon: Icon, title }: { icon: React.ElementType; title: string }) {
+  return (
+    <div className="flex items-center gap-2">
+      <Icon className="h-4 w-4 text-sui" />
+      <h3 className="text-sm font-bold uppercase tracking-widest text-steel">{title}</h3>
+    </div>
+  );
+}
+
 function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
+  const s = shipment.shipment;
+  const c = shipment.cargo;
+  const transportLabel =
+    s.transportMode?.trim().toLowerCase() === "air" ? "Air Waybill (AWB)" : "Bill of Lading";
+  const etd = formatOverviewDate(s.etd);
+  const eta = formatOverviewDate(s.eta);
+  const routeDuration = formatRouteDuration(s.etd, s.eta);
+  const declared =
+    s.currency && s.declaredValue
+      ? `${s.currency} ${s.declaredValue}`
+      : overviewValue(s.declaredValue);
+
   const parties = [
     {
       role: "Exporter",
-      ...shipment.exporter,
-      country: shipment.shipment.origin,
+      party: shipment.exporter,
+      region: overviewValue(s.origin),
+      port: overviewValue(s.originPort),
     },
     {
       role: "Importer",
-      ...shipment.importer,
-      country: shipment.shipment.destination,
+      party: shipment.importer,
+      region: overviewValue(s.destination),
+      port: overviewValue(s.destinationPort),
     },
   ];
 
-  const items = [
-    ["Carrier", shipment.shipment.carrier],
-    ["Incoterm", shipment.shipment.incoterm],
-    ["Declared value", `${shipment.shipment.currency} ${shipment.shipment.declaredValue}`],
-    ["Country of origin", shipment.cargo.countryOfOrigin],
-    ["HS code", shipment.cargo.hsCode],
-    ["Broker", shipment.broker || "—"],
+  const logisticsFields: Array<{ label: string; value: string }> = [
+    { label: "Transport mode", value: overviewValue(s.transportMode) },
+    { label: "Carrier", value: overviewValue(s.carrier) },
+    { label: "ETD", value: etd ?? "—" },
+    { label: "ETA", value: eta ?? "—" },
+    { label: transportLabel + " ref", value: overviewValue(s.bookingRef) },
+    { label: "B/L type", value: overviewValue(s.blType) },
+    { label: "Freight forwarder", value: overviewValue(shipment.freightForwarder) },
+    { label: "Customs broker", value: overviewValue(shipment.broker) },
+  ];
+
+  const commercialFields: Array<{ label: string; value: string }> = [
+    { label: "Incoterm", value: overviewValue(s.incoterm) },
+    { label: "Declared value", value: declared },
+    { label: "Payment terms", value: overviewValue(s.paymentTerms) },
+  ];
+
+  const cargoFields: Array<{ label: string; value: string }> = [
+    { label: "Product", value: overviewValue(c.description) },
+    { label: "Quantity", value: overviewValue(c.quantity) },
+    { label: "HS code", value: overviewValue(c.hsCode) },
+    { label: "Country of origin", value: overviewValue(c.countryOfOrigin) },
+    { label: "Gross weight", value: overviewValue(c.grossWeight) },
+    { label: "Net weight", value: overviewValue(c.netWeight) },
+    { label: "Handling units", value: overviewValue(c.handlingUnits) },
+    { label: "SKU / part no.", value: overviewValue(c.sku) },
+    { label: "Container", value: overviewValue(c.container) },
+    { label: "Seal", value: overviewValue(c.seal) },
+    { label: "Dangerous goods", value: overviewValue(c.dangerousGoods) },
+    { label: "Temperature controlled", value: overviewValue(c.temperatureControlled) },
   ];
 
   return (
@@ -460,30 +596,39 @@ function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
       <h2 className="text-xl font-semibold text-pearl">Overview</h2>
 
       <div className="mt-5 grid gap-5 lg:grid-cols-2">
-        {parties.map((party) => (
-          <div key={party.role} className="rounded-lg border border-blue-100 bg-white p-4">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <p className="text-sm font-bold text-[#4DA2FF]">{party.role}</p>
-                <h3 className="mt-1 text-lg font-extrabold text-pearl">{party.company}</h3>
-              </div>
-              <Building2 className="h-6 w-6 text-[#4DA2FF]" />
+        {parties.map(({ role, party, region, port }) => (
+          <div key={role} className="rounded-lg border border-blue-100 bg-white p-4">
+            <div>
+              <p className="text-sm font-bold text-sui">{role}</p>
+              <h3 className="mt-1 text-lg font-extrabold text-pearl">{party.company}</h3>
+              <p className="mt-1 text-xs text-steel">
+                {region}
+                {port !== "—" ? ` · ${port}` : ""}
+              </p>
             </div>
             <div className="mt-4 grid gap-2 text-sm">
-              <p>
-                <span className="font-bold text-steel">Country:</span>{" "}
-                <span className="font-semibold text-pearl">{party.country}</span>
-              </p>
+              {party.taxId && (
+                <p>
+                  <span className="font-bold text-steel">Tax ID:</span>{" "}
+                  <span className="font-semibold text-pearl">{party.taxId}</span>
+                </p>
+              )}
+              {party.registeredAddress && (
+                <p>
+                  <span className="font-bold text-steel">Address:</span>{" "}
+                  <span className="font-semibold text-pearl">{party.registeredAddress}</span>
+                </p>
+              )}
               <p>
                 <span className="font-bold text-steel">Contact:</span>{" "}
                 <span className="font-semibold text-pearl">{party.contact}</span>
               </p>
-              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
-                <Mail className="h-4 w-4 text-[#4DA2FF]" />
-                <span className="font-semibold text-pearl">{party.email}</span>
+              <div className="flex items-center gap-3 rounded-xl bg-ink p-3">
+                <Mail className="h-4 w-4 shrink-0 text-sui" />
+                <span className="truncate font-semibold text-pearl">{party.email}</span>
               </div>
-              <div className="flex items-center gap-3 rounded-2xl bg-ink p-3">
-                <Phone className="h-4 w-4 text-[#4DA2FF]" />
+              <div className="flex items-center gap-3 rounded-xl bg-ink p-3">
+                <Phone className="h-4 w-4 shrink-0 text-sui" />
                 <span className="font-semibold text-pearl">{party.phone}</span>
               </div>
             </div>
@@ -491,13 +636,73 @@ function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
         ))}
       </div>
 
-      <div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
-        {items.map(([label, value]) => (
-          <div key={label} className="rounded-lg bg-blue-50 p-4">
-            <p className="text-sm text-steel">{label}</p>
-            <p className="mt-1 font-medium text-pearl">{value}</p>
+      {shipment.notifyParty?.company && (
+        <div className="mt-4 rounded-lg border border-dashed border-blue-200 bg-blue-50/40 p-4">
+          <p className="text-sm font-bold text-sui">Notify party</p>
+          <p className="mt-1 font-extrabold text-pearl">{shipment.notifyParty.company}</p>
+          <p className="mt-1 text-sm text-steel">
+            {shipment.notifyParty.contact}
+            {shipment.notifyParty.email ? ` · ${shipment.notifyParty.email}` : ""}
+          </p>
+        </div>
+      )}
+
+      {/* Route summary + logistics */}
+      <div className="mt-6 grid gap-4 lg:grid-cols-2 lg:items-start">
+        <div className="rounded-xl border border-blue-100 bg-gradient-to-r from-blue-50/80 to-white p-4">
+          <div className="flex justify-between gap-4">
+            <div className="min-w-0">
+              <p className="text-xs font-bold uppercase text-steel">Origin</p>
+              <p className="mt-0.5 font-extrabold text-pearl">{overviewValue(s.origin)}</p>
+              <p className="text-sm text-steel">{overviewValue(s.originPort)}</p>
+            </div>
+            <div className="min-w-0 text-right">
+              <p className="text-xs font-bold uppercase text-steel">Destination</p>
+              <p className="mt-0.5 font-extrabold text-pearl">{overviewValue(s.destination)}</p>
+              <p className="text-sm text-steel">{overviewValue(s.destinationPort)}</p>
+            </div>
           </div>
-        ))}
+          <div className="mt-4">
+            <div
+              className="h-2 w-full rounded-sm bg-sui [clip-path:polygon(0_30%,calc(100%-14px)_30%,calc(100%-14px)_0,100%_50%,calc(100%-14px)_100%,calc(100%-14px)_70%,0_70%)]"
+              aria-hidden
+            />
+            {routeDuration && (
+              <p className="mt-2 text-center text-xs font-bold text-steel">{routeDuration}</p>
+            )}
+          </div>
+        </div>
+
+        <div className="rounded-xl border border-blue-100 bg-white p-4">
+          <OverviewSubheading icon={Ship} title="Route & logistics" />
+          <div className="mt-3 grid gap-3 sm:grid-cols-2">
+            {logisticsFields.map(({ label, value }) => (
+              <OverviewField key={label} label={label} value={value} />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      {/* Commercial */}
+      <div className="mt-6">
+        <OverviewSubheading icon={FileText} title="Commercial terms" />
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {commercialFields.map(({ label, value }) => (
+            <OverviewField key={label} label={label} value={value} />
+          ))}
+        </div>
+      </div>
+
+      {/* Cargo */}
+      <div className="mt-6">
+        <OverviewSubheading icon={Package} title="Cargo" />
+        <div className="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4">
+          {cargoFields
+            .filter(({ value }) => value !== "—")
+            .map(({ label, value }) => (
+              <OverviewField key={label} label={label} value={value} />
+            ))}
+        </div>
       </div>
     </div>
   );
@@ -514,15 +719,27 @@ function AgentTabContent({
   tab,
   shipment,
   fieldComparisons,
+  validationLoading,
   refreshKey,
 }: {
   tab: AgentTab;
   shipment: ShipmentRecord;
   fieldComparisons: FieldComparison[];
+  validationLoading?: boolean;
   refreshKey?: number;
 }) {
   switch (tab) {
     case "document":
+      if (validationLoading) {
+        return (
+          <div className="flex items-center gap-3 rounded-xl border border-blue-100 bg-blue-50/40 px-4 py-8">
+            <Loader2 className="h-5 w-5 animate-spin text-sui" />
+            <p className="text-sm font-semibold text-steel">
+              AI is cross-validating documents against MemWal profiles and shipment data…
+            </p>
+          </div>
+        );
+      }
       return <EvidenceDiffSection fieldComparisons={fieldComparisons} />;
     case "risk":
       return <RiskAgentPanel shipment={shipment} refreshKey={refreshKey} />;
@@ -532,17 +749,26 @@ function AgentTabContent({
 }
 
 export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps) {
-  const { data: validation, loading } = useValidation(shipment.id, refreshKey);
+  const [activityRefreshKey, setActivityRefreshKey] = useState(0);
+  const handleValidationComplete = useCallback(() => {
+    setActivityRefreshKey((key) => key + 1);
+  }, []);
+  const { data: validation, loading } = useValidation(
+    shipment.id,
+    refreshKey,
+    handleValidationComplete,
+  );
   const [activeTab, setActiveTab] = useState<AgentTab>("document");
   const fieldComparisons: FieldComparison[] = validation?.fieldComparisons ?? [];
+  const activityRefreshNonce = (refreshKey ?? 0) + activityRefreshKey;
 
   return (
     <div className="space-y-4">
 
       {/* Recent Activities */}
-      <RecentActivities shipmentId={shipment.id} shipment={shipment} refreshKey={refreshKey} />
+      <RecentActivities shipmentId={shipment.id} shipment={shipment} refreshKey={activityRefreshNonce} />
 
-      {/* Overview (includes Trade Parties) */}
+      {/* Overview */}
       <OverviewSection shipment={shipment} />
 
       {/* Agent Hub — tabbed */}
@@ -574,6 +800,7 @@ export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps
             tab={activeTab}
             shipment={shipment}
             fieldComparisons={fieldComparisons}
+            validationLoading={loading}
             refreshKey={refreshKey}
           />
         </div>

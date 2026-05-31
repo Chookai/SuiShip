@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
 import { getDb } from "@/lib/db";
 import { validateDemoEndorsementAttempt } from "@/lib/endorsement-flow";
+import {
+  getPartySlushKeypairForEndorsementRole,
+  isPartySlushSigningEnabled,
+} from "@/lib/party-slush-accounts";
 import { writeProgressMemory } from "@/lib/memwal";
 import { getSuiPassportClient } from "@/lib/sui-passport";
 import { parseEd25519Keypair } from "@/lib/sui-keypair";
@@ -30,9 +34,11 @@ export async function POST(
       capObjectId?: string;
       requesterAddress?: string;
       signerKeyHex?: string;
+      usePartySlushSigner?: boolean;
     };
 
-    const { role, action, noteHash, capObjectId, requesterAddress, signerKeyHex } = body;
+    const { role, action, noteHash, capObjectId, requesterAddress, signerKeyHex, usePartySlushSigner } =
+      body;
     if (!role || !action || !requesterAddress) {
       return NextResponse.json(
         { error: "role, action, and requesterAddress are required" },
@@ -57,15 +63,33 @@ export async function POST(
 
     const client = getSuiPassportClient();
     const logObjectId = row.endorsement_log_object_id;
-    const signerKeypair = signerKeyHex ? parseEd25519Keypair(signerKeyHex) : undefined;
     const serverAddr = getServerAddress();
-    const effectiveSigner = (role === "exporter" || role === "importer") && !signerKeypair
-      ? serverAddr
-      : (signerKeypair?.toSuiAddress() ?? requesterAddress);
+
+    let signerKeypair = signerKeyHex ? parseEd25519Keypair(signerKeyHex) : undefined;
+    if (usePartySlushSigner) {
+      if (!isPartySlushSigningEnabled()) {
+        return NextResponse.json(
+          { error: "Party slush signing is disabled (set ENABLE_PARTY_SLUSH_SIGNING=true)" },
+          { status: 400 }
+        );
+      }
+      signerKeypair = getPartySlushKeypairForEndorsementRole(role) ?? undefined;
+      if (!signerKeypair) {
+        return NextResponse.json(
+          { error: `No slush key configured for endorsement role "${role}"` },
+          { status: 400 }
+        );
+      }
+    }
+
+    const effectiveSigner =
+      signerKeypair?.toSuiAddress() ??
+      (role === "importer" && !usePartySlushSigner ? serverAddr : requesterAddress);
     const signerAddress = effectiveSigner;
-    if (signerKeypair && signerKeypair.toSuiAddress() !== requesterAddress) {
+
+    if (signerKeypair && signerKeypair.toSuiAddress().toLowerCase() !== requesterAddress.toLowerCase()) {
       return NextResponse.json(
-        { error: "signerKeyHex does not match requesterAddress" },
+        { error: "Signer does not match requesterAddress" },
         { status: 400 }
       );
     }

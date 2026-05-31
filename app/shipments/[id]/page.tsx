@@ -15,7 +15,7 @@ import {
   XCircle
 } from "lucide-react";
 import Link from "next/link";
-import { useParams } from "next/navigation";
+import { useParams, useRouter } from "next/navigation";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CustodyChain } from "@/components/CustodyChain";
 import { ShipmentCaseFile } from "@/components/ShipmentCaseFile";
@@ -168,9 +168,24 @@ function StoredShipmentView({
   currentRoleOwner: DocumentOwner;
   onUpdate: (patch: Partial<ShipmentRecord>) => void;
 }) {
+  const router = useRouter();
   const currentAccount = useCurrentAccount();
   const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
   const [panelRefreshNonce, setPanelRefreshNonce] = useState(0);
+
+  async function refreshAfterEndorsement() {
+    setPanelRefreshNonce((n) => n + 1);
+    try {
+      const res = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}`);
+      if (res.ok) {
+        const record = (await res.json()) as ShipmentRecord;
+        onUpdate(record);
+      }
+    } catch {
+      // custody chain already refetched passport state
+    }
+    router.refresh();
+  }
   const [workflowError, setWorkflowError] = useState<string | null>(null);
   const [newDocumentName, setNewDocumentName] = useState("");
   const [dragOver, setDragOver] = useState(false);
@@ -265,24 +280,6 @@ function StoredShipmentView({
         currentRoleOwner
       );
 
-      // Step 2: Run full AI validation (MemWal profile check, field comparisons)
-      // Do NOT update UI yet — wait until validation is also done
-      let validationIssues: Array<{ severity?: string; message?: string; field?: string }> = [];
-      try {
-        const valRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/validate`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ uploadedCount: files.length }),
-        });
-        if (valRes.ok) {
-          const valData = await valRes.json();
-          validationIssues = valData.issues ?? (payload as AggregateLike).cross_validation ?? [];
-        }
-      } catch {
-        // non-fatal
-      }
-
-      // Step 3: NOW update the entire UI at once
       const allRequiredUploaded = detectedDocs.filter((doc) => doc.required).every((doc) => doc.uploaded);
       onUpdate({
         documents: detectedDocs,
@@ -292,7 +289,19 @@ function StoredShipmentView({
         status: allRequiredUploaded ? "Documents Uploaded" : "In Progress"
       });
 
-      // Step 4: Write MemWal events and progress (fire-and-forget after UI)
+      setDocumentPhase("validating");
+      try {
+        await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/validate`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ uploadedCount: files.length }),
+        });
+      } catch {
+        // non-fatal — Document Agent may retry via GET/POST
+      }
+      setPanelRefreshNonce((k: number) => k + 1);
+
+      // MemWal upload event (fire-and-forget)
       const uploadCompany = currentRoleOwner === "Exporter"
         ? shipment.exporter.company
         : shipment.importer.company;
@@ -312,19 +321,6 @@ function StoredShipmentView({
         }),
       }).catch(() => {});
 
-      const blockingIssues = validationIssues.filter((issue) => issue.severity === "error");
-      recordProgressCheckpoint({
-        stage: blockingIssues.length > 0 ? "ai_check_failed" : "ai_check_passed",
-        actor: currentRoleOwner,
-        summary:
-          blockingIssues.length > 0
-            ? `AI found ${blockingIssues.length} blocking issue(s) after ${currentRoleOwner} uploaded ${files.length} document(s).`
-            : `AI checked ${files.length} uploaded document(s) together and found no blocking issues.`,
-        documents: detectedDocs.map((item) => ({ name: item.name, fileName: item.fileName, uploaded: item.uploaded })),
-        aiIssues: validationIssues,
-      }).catch(() => {});
-
-      setPanelRefreshNonce((k: number) => k + 1);
     } catch (err) {
       onUpdate({ extractionStatus: "failed" });
       setWorkflowError(err instanceof Error ? err.message : "Document extraction failed");
@@ -440,19 +436,77 @@ function StoredShipmentView({
     }
 
     try {
-      setDocumentPhase("validating");
-      const validationRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/validate`, { method: "POST" });
-      const validationPayload = await parseJsonResponse(validationRes);
-      if (!validationRes.ok) {
-        throw new Error(getErrorMessage(validationPayload, `Validation failed with HTTP ${validationRes.status}`));
+      const readinessRes = await fetch(
+        `/api/shipments/${encodeURIComponent(shipment.id)}/mint/readiness`
+      );
+      const readinessPayload = await parseJsonResponse(readinessRes);
+      if (!readinessRes.ok) {
+        throw new Error(getErrorMessage(readinessPayload, "Could not check mint readiness"));
       }
-      setPanelRefreshNonce((current: number) => current + 1);
-      const issues = Array.isArray((validationPayload as { issues?: unknown }).issues)
+
+      const readiness = readinessPayload as {
+        ok?: boolean;
+        blockers?: string[];
+        needsRevalidate?: boolean;
+      };
+
+      if (!readiness.ok && !readiness.needsRevalidate) {
+        const blockers = readiness.blockers ?? [];
+        setWorkflowError(
+          blockers.join(" ") ||
+            "Resolve validation issues in Document Agent before creating the passport."
+        );
+        return;
+      }
+
+      let validationPayload: unknown = null;
+
+      if (readiness.ok) {
+        const cachedRes = await fetch(
+          `/api/shipments/${encodeURIComponent(shipment.id)}/validate`
+        );
+        if (cachedRes.ok) {
+          validationPayload = await cachedRes.json();
+        }
+      } else {
+        setDocumentPhase("validating");
+        const validationRes = await fetch(
+          `/api/shipments/${encodeURIComponent(shipment.id)}/validate`,
+          { method: "POST" }
+        );
+        validationPayload = await parseJsonResponse(validationRes);
+        if (!validationRes.ok) {
+          throw new Error(
+            getErrorMessage(validationPayload, `Validation failed with HTTP ${validationRes.status}`)
+          );
+        }
+        setPanelRefreshNonce((current: number) => current + 1);
+
+        const recheckRes = await fetch(
+          `/api/shipments/${encodeURIComponent(shipment.id)}/mint/readiness`
+        );
+        const recheck = (await parseJsonResponse(recheckRes)) as {
+          ok?: boolean;
+          blockers?: string[];
+        };
+        if (!recheckRes.ok || !recheck.ok) {
+          setWorkflowError(
+            (recheck.blockers ?? []).join(" ") ||
+              "Validation did not pass. Review Document Agent before minting."
+          );
+          return;
+        }
+      }
+
+      const issues = Array.isArray((validationPayload as { issues?: unknown })?.issues)
         ? ((validationPayload as { issues: Array<{ severity?: string; message?: string }> }).issues)
         : [];
       const blockingIssues = issues.filter((issue) => issue.severity === "error");
       if (blockingIssues.length > 0) {
-        setWorkflowError(blockingIssues.map((issue) => issue.message).filter(Boolean).join(" ") || "Validation found blocking document mismatches.");
+        setWorkflowError(
+          blockingIssues.map((issue) => issue.message).filter(Boolean).join(" ") ||
+            "Validation found blocking document mismatches."
+        );
         return;
       }
 
@@ -488,13 +542,12 @@ function StoredShipmentView({
 
       <div className="mt-6 flex flex-col justify-between gap-4 md:flex-row md:items-end">
         <div className="min-w-0">
-          <p className="text-sm uppercase tracking-[0.25em] text-sui">Shipment Details</p>
+          <p className="text-2xl font-bold uppercase tracking-wide text-sui">Shipment Details</p>
           <h1 className="mt-3 text-4xl font-semibold text-pearl">{shipment.id}</h1>
           <div className="mt-3 flex flex-wrap gap-x-4 gap-y-1 text-xs font-semibold text-steel">
-            <span>Created by {capitalize(shipment.createdBy)}</span>
-            <span>Created {formatDate(shipment.createdAt)}</span>
-            <span>Updated {formatDate(shipment.updatedAt)}</span>
-            {shipment.inviteToken && <span>Invite active</span>}
+            <span>Created by {creatorCompanyName(shipment)}</span>
+            <span>Created: {formatDate(shipment.createdAt)}</span>
+            <span>Updated: {formatDate(shipment.updatedAt)}</span>
           </div>
         </div>
         <div className="shrink-0 md:pr-8">
@@ -506,7 +559,11 @@ function StoredShipmentView({
                 ) : (
                   <Fingerprint className="h-4 w-4" />
                 )}
-                Create Passport
+                {documentPhase === "minting"
+                  ? "Creating passport…"
+                  : documentPhase === "validating"
+                    ? "Validating…"
+                    : "Create Passport"}
               </Button>
             </div>
           )}
@@ -525,9 +582,6 @@ function StoredShipmentView({
             </div>
             <div className="min-w-0 flex-1">
               <h2 className="text-lg font-bold text-emerald-800">Passport Created</h2>
-              <p className="mt-1 text-sm text-steel">
-                This shipment has been finalized on the Sui blockchain. All documents, validation results, and MemWal memory are immutably recorded.
-              </p>
 
               <div className="mt-4 grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
                 {shipment.passportId && (
@@ -585,7 +639,10 @@ function StoredShipmentView({
       {/* Custody Chain — endorsement timeline (only after mint) */}
       {mintedExists && (
         <div className="mt-6">
-          <CustodyChain shipmentId={shipment.id} />
+          <CustodyChain
+            shipmentId={shipment.id}
+            onEndorsed={refreshAfterEndorsement}
+          />
         </div>
       )}
 
@@ -601,12 +658,7 @@ function StoredShipmentView({
       <div className="mt-6">
         <Panel className="min-w-0 overflow-hidden">
           <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-            <div>
-              <h2 className="text-xl font-semibold text-pearl">Documents</h2>
-              <p className="mt-1 text-sm text-steel">
-                Upload all shipment PDFs together so AI can sort and validate them in one run.
-              </p>
-            </div>
+            <h2 className="text-xl font-semibold text-pearl">Documents</h2>
           </div>
 
           {!documentsLocked && (
@@ -643,14 +695,18 @@ function StoredShipmentView({
                 onClick={() => documentPhase === "idle" && batchInputRef.current?.click()}
                 className={cn(
                   "rounded-2xl border-2 border-dashed p-8 text-center transition",
-                  documentPhase === "extracting" ? "cursor-default" : "cursor-pointer",
+                  documentPhase !== "idle" ? "cursor-default" : "cursor-pointer",
                   dragOver ? "border-[#4DA2FF] bg-blue-50" : "border-[#4DA2FF]/45 bg-white hover:bg-blue-50/40"
                 )}
               >
-                {documentPhase === "extracting" ? (
+                {documentPhase === "extracting" || documentPhase === "validating" ? (
                   <div className="flex flex-col items-center gap-3">
                     <Loader2 className="h-10 w-10 animate-spin text-[#4DA2FF]" />
-                    <h3 className="text-xl font-extrabold text-pearl">AI is analyzing documents...</h3>
+                    <h3 className="text-xl font-extrabold text-pearl">
+                      {documentPhase === "validating"
+                        ? "AI is validating documents..."
+                        : "AI is sorting documents..."}
+                    </h3>
                   </div>
                 ) : (
                   <>
@@ -1046,6 +1102,12 @@ function detectedDocumentFiles(result: AggregateLike, transportMode?: string) {
       fileName: doc.file_name,
     })),
   ];
+}
+
+function creatorCompanyName(shipment: ShipmentRecord): string {
+  const party = shipment.createdBy === "importer" ? shipment.importer : shipment.exporter;
+  const company = party.company?.trim();
+  return company || capitalize(shipment.createdBy);
 }
 
 function capitalize(value: string) {
