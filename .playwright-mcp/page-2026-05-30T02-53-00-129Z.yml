@@ -1,0 +1,102 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "SuiShip home" [ref=e7] [cursor=pointer]:
+          - /url: /
+          - img "SuiShip" [ref=e8]
+        - generic [ref=e9]:
+          - generic [ref=e10]:
+            - img [ref=e11]
+            - textbox [ref=e14]:
+              - /placeholder: Search
+          - button "Notifications" [ref=e16] [cursor=pointer]:
+            - img [ref=e17]
+          - button "Toggle theme" [ref=e20] [cursor=pointer]:
+            - img [ref=e21]
+          - button "Connect Wallet" [ref=e23] [cursor=pointer]
+      - navigation [ref=e24]:
+        - link "Dashboard" [ref=e25] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e26]
+          - text: Dashboard
+        - link "Shipments" [ref=e31] [cursor=pointer]:
+          - /url: /shipments
+          - img [ref=e32]
+          - text: Shipments
+        - link "Create" [ref=e36] [cursor=pointer]:
+          - /url: /create
+          - img [ref=e37]
+          - text: Create
+        - link "Memory" [ref=e40] [cursor=pointer]:
+          - /url: /memory
+          - img [ref=e41]
+          - text: Memory
+        - link "Risk Memory" [ref=e53] [cursor=pointer]:
+          - /url: /risk-memory
+          - img [ref=e54]
+          - text: Risk Memory
+        - link "Persistent Agent" [ref=e56] [cursor=pointer]:
+          - /url: /persistent-agent
+          - img [ref=e57]
+          - text: Persistent Agent
+    - main [ref=e59]:
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - generic [ref=e62]:
+            - heading "Dashboard" [level=1] [ref=e63]
+            - paragraph [ref=e64]: Shipment workspace for Acme Robotics LLC as Exporter.
+          - link "Create shipment" [ref=e65] [cursor=pointer]:
+            - /url: /create
+            - img [ref=e66]
+            - text: Create shipment
+        - generic [ref=e67]:
+          - generic [ref=e68]:
+            - generic [ref=e69]:
+              - paragraph [ref=e70]: Total Active Shipments
+              - paragraph [ref=e71]: "0"
+            - img [ref=e72]
+          - generic [ref=e77]:
+            - generic [ref=e78]:
+              - paragraph [ref=e79]: Documents Pending
+              - paragraph [ref=e80]: "0"
+            - img [ref=e81]
+          - generic [ref=e85]:
+            - generic [ref=e86]:
+              - paragraph [ref=e87]: AI Verified Shipments
+              - paragraph [ref=e88]: "0"
+            - img [ref=e89]
+          - generic [ref=e92]:
+            - generic [ref=e93]:
+              - paragraph [ref=e94]: Ready for Importer Review
+              - paragraph [ref=e95]: "0"
+            - img [ref=e96]
+          - generic [ref=e101]:
+            - generic [ref=e102]:
+              - paragraph [ref=e103]: Delayed / At Risk
+              - paragraph [ref=e104]: "0"
+            - img [ref=e105]
+          - generic [ref=e107]:
+            - generic [ref=e108]:
+              - paragraph [ref=e109]: Arriving This Week
+              - paragraph [ref=e110]: "0"
+            - img [ref=e111]
+        - generic [ref=e113]:
+          - generic [ref=e115]:
+            - generic [ref=e116]:
+              - generic [ref=e117]:
+                - paragraph [ref=e118]: Attention Required
+                - heading "Shipments with problems" [level=2] [ref=e119]
+              - link "View more" [ref=e120] [cursor=pointer]:
+                - /url: /shipments?filter=attention
+            - generic [ref=e122]: No shipments with problems. Create a shipment to start tracking.
+          - generic [ref=e123]:
+            - generic [ref=e124]:
+              - generic [ref=e125]:
+                - paragraph [ref=e126]: Recent Shipments
+                - heading "Latest created and updated passports" [level=2] [ref=e127]
+              - link "New shipment" [ref=e128] [cursor=pointer]:
+                - /url: /create
+            - generic [ref=e129]: No shipments yet. Create your first shipment to see live workspace data.
+  - button "Open Next.js Dev Tools" [ref=e135] [cursor=pointer]:
+    - img [ref=e136]

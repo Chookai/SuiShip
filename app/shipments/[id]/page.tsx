@@ -170,6 +170,7 @@ function StoredShipmentView({
 }) {
   const router = useRouter();
   const currentAccount = useCurrentAccount();
+  const { role: actorRole } = useRole();
   const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
   const [panelRefreshNonce, setPanelRefreshNonce] = useState(0);
 
@@ -848,7 +849,7 @@ function StoredShipmentView({
         </Panel>
       </div>
 
-      <ShipmentChatbot shipmentId={shipment.id} />
+      <ShipmentChatbot shipmentId={shipment.id} role={actorRole} />
     </div>
   );
 }

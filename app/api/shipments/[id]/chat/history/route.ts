@@ -5,13 +5,14 @@ import { clearChatHistory, loadChatHistory } from "@/lib/chat-tools/history";
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: shipmentId } = await params;
     const db = getDb();
-    const messages = loadChatHistory(shipmentId, 40, db);
+    const actorRole = request.nextUrl.searchParams.get("role") ?? undefined;
+    const messages = loadChatHistory(shipmentId, 40, db, actorRole);
 
     // Group tool_call/tool_result rows onto their parent assistant message
     // for a cleaner display payload. user/assistant rows are returned as-is.
@@ -76,13 +77,14 @@ export async function GET(
 }
 
 export async function DELETE(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: shipmentId } = await params;
     const db = getDb();
-    clearChatHistory(shipmentId, db);
+    const actorRole = request.nextUrl.searchParams.get("role") ?? undefined;
+    clearChatHistory(shipmentId, db, actorRole);
     return NextResponse.json({ cleared: true });
   } catch (err) {
     return NextResponse.json(

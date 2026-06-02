@@ -12,6 +12,9 @@ import {
 } from "@/lib/endorsement-flow";
 import { getShipmentById } from "@/lib/shipments-server";
 import { getDb } from "@/lib/db";
+import type { AccessState } from "@/lib/auth/chat-policy";
+import { redactFieldComparisons, redactMemwalText } from "@/lib/auth/redact";
+import { getAisPosition } from "@/lib/tracker-api/client";
 
 // ── Tool Definitions ─────────────────────────────────────────────────────────
 
@@ -127,13 +130,20 @@ export const CHAT_AGENT_TOOLS: Anthropic.Tool[] = [
       required: ["role", "action", "reasoning"],
     },
   },
+  {
+    name: "get_vessel_position",
+    description:
+      "Get the live vessel position from the AIS simulation for this shipment. Returns current lat/lng, heading, progress percentage, origin, destination, and status. Call this when the user asks about current location, where the vessel is, tracking, or position.",
+    input_schema: { type: "object", properties: {} },
+  },
 ];
 
 // ── Tool Executor Factory ─────────────────────────────────────────────────────
 
 export function buildChatToolExecutors(
   shipmentId: string,
-  db: Database.Database = getDb()
+  db: Database.Database = getDb(),
+  accessState?: AccessState
 ): Record<string, AgentToolExecutor> {
   return {
     get_shipment_status: async () => {
@@ -206,13 +216,17 @@ export function buildChatToolExecutors(
           ? JSON.parse(row.field_comparisons_json)
           : [];
 
-        const filtered =
+        const afterFieldFilter =
           input.fields && input.fields.length > 0
             ? (comparisons as Array<{ fieldName?: string; field?: string }>).filter((c) => {
                 const name = c.fieldName ?? c.field ?? "";
                 return input.fields!.some((f) => name.toLowerCase().includes(f.toLowerCase()));
               })
             : comparisons;
+
+        const filtered = accessState
+          ? redactFieldComparisons(afterFieldFilter, accessState.role)
+          : afterFieldFilter;
 
         return {
           available: true,
@@ -243,11 +257,13 @@ export function buildChatToolExecutors(
           namespace: input.namespace,
           query: input.query,
           count: results.length,
-          memories: results.map((r) => ({
-            blobId: r.blobId,
-            text: r.text.slice(0, 600),
-            distance: r.distance,
-          })),
+          memories: results.map((r) => {
+            const rawText = r.text.slice(0, 600);
+            const text = accessState
+              ? redactMemwalText(rawText, accessState.role, input.namespace, accessState.actorNamespaceKey)
+              : rawText;
+            return { blobId: r.blobId, text, distance: r.distance };
+          }),
         };
       } catch (err) {
         return { error: err instanceof Error ? err.message : String(err) };
@@ -262,6 +278,22 @@ export function buildChatToolExecutors(
         const clauses: string[] = ["id != ?"];
         const params: unknown[] = [shipmentId];
 
+        // Mandatory party-scope filter: requestor can only see shipments they're party to.
+        // Applied first so it can't be bypassed by omitting all optional filters.
+        if (accessState?.actorCompany) {
+          const company = accessState.actorCompany;
+          if (accessState.role === "exporter") {
+            clauses.push("exporter_json LIKE ?");
+            params.push(`%${company}%`);
+          } else if (accessState.role === "importer") {
+            clauses.push("importer_json LIKE ?");
+            params.push(`%${company}%`);
+          } else if (accessState.role === "freight_forwarder") {
+            clauses.push("freight_forwarder LIKE ?");
+            params.push(`%${company}%`);
+          }
+        }
+
         if (input.exporter) {
           clauses.push("exporter_json LIKE ?");
           params.push(`%${input.exporter}%`);
@@ -275,7 +307,10 @@ export function buildChatToolExecutors(
           params.push(`%${input.route}%`);
         }
 
-        if (clauses.length === 1) {
+        // If no user-supplied filter AND no scope filter was added, require at least one
+        const hasUserFilter = input.exporter || input.importer || input.route;
+        const hasScopeFilter = accessState?.actorCompany;
+        if (!hasUserFilter && !hasScopeFilter) {
           return { error: "Provide at least one search filter: exporter, importer, or route." };
         }
 
@@ -473,6 +508,31 @@ export function buildChatToolExecutors(
       } catch (err) {
         return { error: err instanceof Error ? err.message : String(err) };
       }
+    },
+
+    get_vessel_position: async () => {
+      const result = await getAisPosition(shipmentId);
+      if (!result.ok) {
+        return {
+          available: false,
+          message: result.error,
+          note: "Start an AIS simulation at http://localhost:8081/mock/ui to enable live tracking.",
+        };
+      }
+      return {
+        available: true,
+        shipmentId: result.shipmentId,
+        vesselName: result.vesselName,
+        origin: result.origin,
+        destination: result.destination,
+        currentPosition: { lat: result.lat, lng: result.lng },
+        headingDeg: result.headingDeg,
+        progressPercent: result.progressPercent,
+        status: result.status,
+        elapsedSeconds: result.elapsedSeconds,
+        durationSeconds: result.durationSeconds,
+        timestamp: result.timestamp,
+      };
     },
   };
 }

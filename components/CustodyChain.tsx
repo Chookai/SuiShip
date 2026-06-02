@@ -66,11 +66,12 @@ export function CustodyChain({
   const [error, setError] = useState<string | null>(null);
   const [successTx, setSuccessTx] = useState<string | null>(null);
 
-  const fetchPassport = useCallback(async () => {
+  const fetchPassport = useCallback(async (fromDb = false) => {
     try {
+      const passportUrl = `/api/shipments/${encodeURIComponent(shipmentId)}/passport${fromDb ? "?source=db" : ""}`;
       const [passportRes, slushRes] = await Promise.all([
-        fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/passport`),
-        fetch("/api/party-slush"),
+        fetch(passportUrl, { cache: "no-store" }),
+        fetch("/api/party-slush", { cache: "no-store" }),
       ]);
       if (passportRes.ok) {
         const data = await passportRes.json();
@@ -164,8 +165,12 @@ export function CustodyChain({
       if (!res.ok) throw new Error(data.error ?? "Endorsement failed");
 
       setSuccessTx(data.txDigest);
-      await fetchPassport();
+      // Use DB-only fetch immediately so the chain's finality delay doesn't
+      // block the UI from showing the newly-signed step.
+      await fetchPassport(true);
       await onEndorsed?.();
+      // Re-sync from chain after a short delay so on-chain state catches up.
+      setTimeout(() => void fetchPassport(), 4000);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Endorsement failed");
     } finally {

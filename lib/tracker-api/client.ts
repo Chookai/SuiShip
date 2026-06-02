@@ -15,6 +15,7 @@ const baseUrl = (): string =>
 const PORT_PRESETS = [
   "Singapore",
   "Los Angeles",
+  "Shanghai",
   "Tokyo",
   "Rotterdam",
   "Hamburg",
@@ -254,6 +255,65 @@ export async function registerShipmentForTracking(params: {
 // ---------------------------------------------------------------------------
 
 /** Returns true if the mock freight API is reachable and healthy. */
+export type AisPositionResult =
+  | {
+      ok: true;
+      shipmentId: string;
+      vesselName: string;
+      origin: string;
+      destination: string;
+      lat: number;
+      lng: number;
+      headingDeg: number;
+      progressPercent: number;
+      status: string;
+      elapsedSeconds: number;
+      durationSeconds: number;
+      timestamp: string;
+    }
+  | { ok: false; error: string };
+
+export async function getAisPosition(shipmentId: string): Promise<AisPositionResult> {
+  try {
+    const res = await fetch(
+      `${baseUrl()}/mock/ais/simulations/${encodeURIComponent(shipmentId)}`,
+      { cache: "no-store" }
+    );
+    if (res.status === 404) return { ok: false, error: "No active simulation found for this shipment." };
+    if (!res.ok) return { ok: false, error: `HTTP ${res.status}` };
+    const d = (await res.json()) as {
+      shipment_id: string;
+      vessel_name: string;
+      origin: { name: string };
+      destination: { name: string };
+      current_position: { lat: number; lng: number };
+      heading_deg: number;
+      progress_percent: number;
+      status: string;
+      elapsed_seconds: number;
+      duration_seconds: number;
+      timestamp: string;
+    };
+    return {
+      ok: true,
+      shipmentId: d.shipment_id,
+      vesselName: d.vessel_name,
+      origin: d.origin.name,
+      destination: d.destination.name,
+      lat: d.current_position.lat,
+      lng: d.current_position.lng,
+      headingDeg: d.heading_deg,
+      progressPercent: d.progress_percent,
+      status: d.status,
+      elapsedSeconds: d.elapsed_seconds,
+      durationSeconds: d.duration_seconds,
+      timestamp: d.timestamp,
+    };
+  } catch (err) {
+    return { ok: false, error: err instanceof Error ? err.message : String(err) };
+  }
+}
+
 export async function pingTracker(): Promise<boolean> {
   try {
     const res = await fetch(`${baseUrl()}/health`, { cache: "no-store" });

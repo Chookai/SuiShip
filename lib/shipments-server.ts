@@ -379,6 +379,8 @@ export function deleteShipment(id: string): void {
     db.prepare("DELETE FROM shipment_case_files WHERE shipment_id = ?").run(id);
     db.prepare("DELETE FROM agent_steps WHERE shipment_id = ?").run(id);
     db.prepare("DELETE FROM agent_runs WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM persistent_agent_monitored_shipments WHERE shipment_id = ?").run(id);
+    db.prepare("DELETE FROM tracking_failures WHERE shipment_id = ?").run(id);
     db.prepare("DELETE FROM mock_sui_passports WHERE shipment_id = ?").run(id);
     db.prepare("DELETE FROM shipment_files WHERE shipment_id = ?").run(id);
     db.prepare("DELETE FROM shipments WHERE id = ?").run(id);

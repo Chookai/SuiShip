@@ -7,6 +7,7 @@ import {
   ChevronRight,
   ExternalLink,
   Loader2,
+  Lock,
   MessageCircle,
   Send,
   ShieldCheck,
@@ -15,7 +16,10 @@ import {
   XCircle,
 } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { cn } from "@/lib/utils";
+import type { MockRole } from "@/components/role-context";
 
 const AGENT_MODE = process.env.NEXT_PUBLIC_CHAT_AGENT_MODE === "true";
 
@@ -32,7 +36,11 @@ interface ChatMessage {
   toolCalls?: ToolCall[];
   // client-only: tool events received from the agent route on the current turn
   pendingToolEvents?: Array<{ name: string; input: unknown; result: unknown }>;
+  // set when the server returned a locked response
+  locked?: { reason: string; unlocksWhen: string };
 }
+
+const ROLE_GATING_ENABLED = process.env.NEXT_PUBLIC_CHAT_ROLE_GATING === "true";
 
 // ── Tool call inline card ─────────────────────────────────────────────────────
 
@@ -210,6 +218,22 @@ function CaseSummaryCard({
   );
 }
 
+// ── Locked state banner ───────────────────────────────────────────────────────
+
+function LockedBanner({ reason, unlocksWhen }: { reason: string; unlocksWhen: string }) {
+  return (
+    <div className="flex justify-start">
+      <div className="flex max-w-[90%] items-start gap-2 rounded-2xl rounded-bl-md border border-amber-200 bg-amber-50 px-3.5 py-3 text-sm text-amber-800">
+        <Lock className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+        <div>
+          <p className="font-semibold">{reason}</p>
+          <p className="mt-0.5 text-xs text-amber-700">{unlocksWhen}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Message renderer ──────────────────────────────────────────────────────────
 
 function MessageBubble({
@@ -219,6 +243,10 @@ function MessageBubble({
   msg: ChatMessage;
   shipmentId: string;
 }) {
+  if (msg.locked) {
+    return <LockedBanner reason={msg.locked.reason} unlocksWhen={msg.locked.unlocksWhen} />;
+  }
+
   const toolCalls = msg.toolCalls ?? msg.pendingToolEvents?.map((e) => ({
     name: e.name,
     inputJson: JSON.stringify(e.input),
@@ -280,7 +308,29 @@ function MessageBubble({
                 : "rounded-bl-md border border-blue-100 bg-blue-50 text-pearl"
             )}
           >
-            {msg.content}
+            {msg.role === "assistant" ? (
+              <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                  h1: ({ children }) => <p className="font-bold text-base mt-2 mb-1 first:mt-0">{children}</p>,
+                  h2: ({ children }) => <p className="font-semibold text-xs mt-2 mb-0.5 first:mt-0 uppercase tracking-wide opacity-60">{children}</p>,
+                  h3: ({ children }) => <p className="font-semibold mt-1.5 first:mt-0">{children}</p>,
+                  p:  ({ children }) => <p className="mb-1 last:mb-0">{children}</p>,
+                  ul: ({ children }) => <ul className="list-disc pl-4 mb-1 space-y-0.5">{children}</ul>,
+                  ol: ({ children }) => <ol className="list-decimal pl-4 mb-1 space-y-0.5">{children}</ol>,
+                  li: ({ children }) => <li className="leading-snug">{children}</li>,
+                  strong: ({ children }) => <strong className="font-semibold">{children}</strong>,
+                  hr: () => <hr className="my-2 border-blue-200" />,
+                  table: ({ children }) => <table className="text-xs border-collapse my-1 w-full">{children}</table>,
+                  th: ({ children }) => <th className="border border-blue-200 px-2 py-0.5 font-semibold bg-blue-100 text-left">{children}</th>,
+                  td: ({ children }) => <td className="border border-blue-200 px-2 py-0.5">{children}</td>,
+                }}
+              >
+                {msg.content}
+              </ReactMarkdown>
+            ) : (
+              msg.content
+            )}
           </div>
         )}
       </div>
@@ -290,21 +340,24 @@ function MessageBubble({
 
 // ── Main chatbot component ────────────────────────────────────────────────────
 
-export function ShipmentChatbot({ shipmentId }: { shipmentId: string }) {
+export function ShipmentChatbot({ shipmentId, role }: { shipmentId: string; role?: MockRole }) {
   const [open, setOpen] = useState(false);
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTool, setActiveTool] = useState<string | null>(null);
-  const [historyLoaded, setHistoryLoaded] = useState(false);
+  const [historyLoadedFor, setHistoryLoadedFor] = useState<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // Load history on mount
+  // Reload history whenever role or shipment changes
+  const historyKey = `${shipmentId}::${role ?? ""}`;
   useEffect(() => {
-    if (historyLoaded) return;
-    setHistoryLoaded(true);
-    fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/chat/history`)
+    if (historyLoadedFor === historyKey) return;
+    setHistoryLoadedFor(historyKey);
+    setMessages([]);
+    const roleParam = ROLE_GATING_ENABLED && role ? `?role=${encodeURIComponent(role)}` : "";
+    fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/chat/history${roleParam}`)
       .then((r) => r.json())
       .then((data: { messages?: ChatMessage[] }) => {
         if (data.messages && data.messages.length > 0) {
@@ -312,7 +365,7 @@ export function ShipmentChatbot({ shipmentId }: { shipmentId: string }) {
         }
       })
       .catch(() => {/* history unavailable — start fresh */});
-  }, [shipmentId, historyLoaded]);
+  }, [shipmentId, historyKey, historyLoadedFor]);
 
   useEffect(() => {
     if (open && inputRef.current) inputRef.current.focus();
@@ -339,35 +392,52 @@ export function ShipmentChatbot({ shipmentId }: { shipmentId: string }) {
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text }),
+            body: JSON.stringify({ message: text, ...(ROLE_GATING_ENABLED && role ? { role } : {}) }),
           }
         );
         const data = await res.json() as {
           reply?: string;
           error?: string;
+          locked?: boolean;
+          reason?: string;
+          unlocksWhen?: string;
           toolEvents?: Array<{ name: string; input: unknown; result: unknown }>;
         };
-        const reply = data.reply ?? data.error ?? "Sorry, something went wrong.";
-        setMessages((prev) => [
-          ...prev,
-          {
-            role: "assistant",
-            content: reply,
-            pendingToolEvents: data.toolEvents ?? [],
-          },
-        ]);
+        if (data.locked) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: "", locked: { reason: data.reason!, unlocksWhen: data.unlocksWhen! } },
+          ]);
+        } else {
+          const reply = data.reply ?? data.error ?? "Sorry, something went wrong.";
+          setMessages((prev) => [
+            ...prev,
+            {
+              role: "assistant",
+              content: reply,
+              pendingToolEvents: data.toolEvents ?? [],
+            },
+          ]);
+        }
       } else {
         const res = await fetch(
           `/api/shipments/${encodeURIComponent(shipmentId)}/chat`,
           {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ message: text, history: messages.slice(-10) }),
+            body: JSON.stringify({ message: text, history: messages.slice(-10), ...(ROLE_GATING_ENABLED && role ? { role } : {}) }),
           }
         );
-        const data = await res.json() as { reply?: string; error?: string };
-        const reply = data.reply ?? data.error ?? "Sorry, something went wrong.";
-        setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+        const data = await res.json() as { reply?: string; error?: string; locked?: boolean; reason?: string; unlocksWhen?: string };
+        if (data.locked) {
+          setMessages((prev) => [
+            ...prev,
+            { role: "assistant", content: "", locked: { reason: data.reason!, unlocksWhen: data.unlocksWhen! } },
+          ]);
+        } else {
+          const reply = data.reply ?? data.error ?? "Sorry, something went wrong.";
+          setMessages((prev) => [...prev, { role: "assistant", content: reply }]);
+        }
       }
     } catch {
       setMessages((prev) => [
@@ -383,7 +453,8 @@ export function ShipmentChatbot({ shipmentId }: { shipmentId: string }) {
   async function clearHistory() {
     if (!AGENT_MODE) return;
     try {
-      await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/chat/history`, {
+      const roleParam = ROLE_GATING_ENABLED && role ? `?role=${encodeURIComponent(role)}` : "";
+      await fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/chat/history${roleParam}`, {
         method: "DELETE",
       });
       setMessages([]);

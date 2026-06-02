@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import { getDb } from "@/lib/db";
 import { insertChatMessage } from "@/lib/chat-tools/history";
 import { recallLatestCompanyProfile } from "@/lib/profile-memwal";
+import { normalizeRole, getChatAccessLevel } from "@/lib/auth/chat-policy";
+import type { DemoEndorsementRecord } from "@/lib/endorsement-flow";
+import { redactParty, redactShipmentInfo, redactFieldComparisons } from "@/lib/auth/redact";
+import { normalizeNamespaceKey } from "@/lib/agents/memory-agent";
+import { getAisPosition } from "@/lib/tracker-api/client";
 import Anthropic from "@anthropic-ai/sdk";
 
 export const runtime = "nodejs";
@@ -32,12 +37,14 @@ export async function POST(
     const body = (await request.json()) as {
       message: string;
       history?: Array<{ role: "user" | "assistant"; content: string }>;
+      role?: string;
     };
     const message = body.message?.trim();
     if (!message) {
       return NextResponse.json({ error: "message is required" }, { status: 400 });
     }
 
+    const rawActorRole = body.role ?? null;
     const db = getDb();
 
     const shipment = db
@@ -58,6 +65,44 @@ export async function POST(
     const shipmentDetails = JSON.parse(shipment.shipment_json);
     const ai = shipment.ai_json ? JSON.parse(shipment.ai_json) : null;
 
+    const chatRole = normalizeRole(rawActorRole);
+    let accessState = undefined as import("@/lib/auth/chat-policy").AccessState | undefined;
+
+    // ── Role-based access gating ──────────────────────────────────────────────
+    if (process.env.CHAT_ROLE_GATING === "true") {
+      const endorsements = db.prepare(
+        "SELECT role, action FROM passport_endorsements WHERE shipment_id = ? ORDER BY signed_at_ms ASC"
+      ).all(shipmentId) as DemoEndorsementRecord[];
+
+      const actorCompany =
+        chatRole === "exporter" ? (exporter.company as string | undefined)
+        : chatRole === "importer" ? (importer.company as string | undefined)
+        : undefined;
+      const actorTaxId =
+        chatRole === "exporter" ? (exporter.taxId as string | undefined)
+        : chatRole === "importer" ? (importer.taxId as string | undefined)
+        : undefined;
+      const actorNamespaceKey = actorCompany
+        ? normalizeNamespaceKey(actorTaxId, actorCompany)
+        : undefined;
+
+      const access = getChatAccessLevel(chatRole, endorsements, { company: actorCompany, namespaceKey: actorNamespaceKey });
+      if (access.level === "locked") {
+        insertChatMessage({
+          shipmentId,
+          role: "user",
+          content: message,
+          actorRole: rawActorRole,
+        });
+        return NextResponse.json({
+          locked: true,
+          reason: access.lockInfo!.reason,
+          unlocksWhen: access.lockInfo!.unlocksWhen,
+        });
+      }
+      accessState = access.accessState;
+    }
+
     const validation = db
       .prepare(
         `SELECT overall_verdict, verdict_reason, field_comparisons_json, baseline_status
@@ -67,9 +112,30 @@ export async function POST(
       )
       .get(shipmentId) as ValidationRunRow | undefined;
 
-    const fieldComparisons = validation?.field_comparisons_json
+    const rawFieldComparisons = validation?.field_comparisons_json
       ? JSON.parse(validation.field_comparisons_json)
       : [];
+
+    // ── Apply field-level redaction ───────────────────────────────────────────
+    const isRedactionEnabled =
+      process.env.CHAT_ROLE_GATING === "true" &&
+      process.env.CHAT_REDACTION_MODE !== "permissive" &&
+      process.env.CHAT_REDACTION_MODE !== "off" &&
+      !!chatRole &&
+      !!accessState;
+
+    const contextExporter = isRedactionEnabled
+      ? redactParty({ ...exporter }, "exporter", chatRole!)
+      : exporter;
+    const contextImporter = isRedactionEnabled
+      ? redactParty({ ...importer }, "importer", chatRole!)
+      : importer;
+    const contextShipmentDetails = isRedactionEnabled
+      ? redactShipmentInfo({ ...shipmentDetails }, chatRole!)
+      : shipmentDetails;
+    const fieldComparisons = isRedactionEnabled
+      ? redactFieldComparisons(rawFieldComparisons, chatRole!)
+      : rawFieldComparisons;
 
     let memwalContext = "";
     try {
@@ -85,15 +151,37 @@ export async function POST(
       // MemWal not configured or unavailable
     }
 
+    const allEndorsements = db.prepare(
+      "SELECT role, action, signed_at_ms FROM passport_endorsements WHERE shipment_id = ? ORDER BY signed_at_ms ASC"
+    ).all(shipmentId) as Array<{ role: string; action: string; signed_at_ms: number }>;
+
+    const endorsementContext = allEndorsements.length > 0
+      ? `CUSTODY CHAIN (completed endorsements):\n${allEndorsements.map((e, i) =>
+          `  ${i + 1}. ${e.role} → ${e.action} (at ${new Date(e.signed_at_ms).toISOString()})`
+        ).join("\n")}`
+      : "CUSTODY CHAIN: No endorsements signed yet.";
+
+    const aisPosition = await getAisPosition(shipmentId);
+    const aisContext = aisPosition.ok
+      ? `LIVE VESSEL POSITION (AIS):
+- Vessel: ${aisPosition.vesselName}
+- Origin → Destination: ${aisPosition.origin} → ${aisPosition.destination}
+- Current Position: lat ${aisPosition.lat.toFixed(4)}, lng ${aisPosition.lng.toFixed(4)}
+- Heading: ${aisPosition.headingDeg}°
+- Progress: ${aisPosition.progressPercent}%
+- Status: ${aisPosition.status}
+- As of: ${aisPosition.timestamp}`
+      : "LIVE VESSEL POSITION: No active AIS simulation running for this shipment.";
+
     const context = `
 SHIPMENT DATA:
 - Status: ${shipment.status}
 - Extraction: ${shipment.extraction_status ?? "pending"}
 
-EXPORTER: ${JSON.stringify(exporter, null, 2)}
-IMPORTER: ${JSON.stringify(importer, null, 2)}
+EXPORTER: ${JSON.stringify(contextExporter, null, 2)}
+IMPORTER: ${JSON.stringify(contextImporter, null, 2)}
 CARGO: ${JSON.stringify(cargo, null, 2)}
-SHIPMENT DETAILS: ${JSON.stringify(shipmentDetails, null, 2)}
+SHIPMENT DETAILS: ${JSON.stringify(contextShipmentDetails, null, 2)}
 
 ${ai ? `AI VERIFICATION RESULT:\n- Risk Level: ${ai.riskLevel}\n- Summary: ${ai.summary ?? "N/A"}` : "AI verification not yet run."}
 
@@ -101,12 +189,16 @@ ${validation ? `VALIDATION:\n- Verdict: ${validation.overall_verdict}\n- Reason:
 
 ${fieldComparisons.length > 0 ? `FIELD COMPARISONS (entered vs extracted vs MemWal remembered):\n${JSON.stringify(fieldComparisons, null, 2)}` : ""}
 ${memwalContext}
+
+${endorsementContext}
+
+${aisContext}
 `.trim();
 
     if (process.env.MOCK_DOC_AI === "true") {
       const mockReply = `[Mock] Based on the shipment data for ${exporter.company} → ${importer.company}, here's a mock answer to: "${message}"`;
-      insertChatMessage({ shipmentId, role: "user", content: message });
-      insertChatMessage({ shipmentId, role: "assistant", content: mockReply });
+      insertChatMessage({ shipmentId, role: "user", content: message, actorRole: rawActorRole });
+      insertChatMessage({ shipmentId, role: "assistant", content: mockReply, actorRole: rawActorRole });
       return NextResponse.json({ reply: mockReply });
     }
 
@@ -117,6 +209,18 @@ ${memwalContext}
       content: m.content,
     }));
     chatHistory.push({ role: "user", content: message });
+
+    const redactionParagraph = isRedactionEnabled ? `
+
+REDACTION POLICY:
+Fields you do not have access to are replaced with a marker object:
+  { "redacted": true, "reason": "<reason>", "visibleTo": ["<roles>"] }
+
+Rules — strictly follow all of these:
+1. NEVER infer or calculate the value of a redacted field from other visible fields.
+2. NEVER refuse to acknowledge that a field exists — acknowledge it and explain the access boundary.
+3. When asked about a redacted field, state the role constraint: "The [field] is not visible to the [role] role. [Visible parties] have access to this information."
+4. Do NOT repeat the raw marker object to the user; translate it into natural language.` : "";
 
     const response = await client.messages.create({
       model: "claude-haiku-4-5",
@@ -130,7 +234,7 @@ Your job:
 - If the user asks about changes (e.g. "did they change their bank?"), compare the MemWal remembered values with the current entered/extracted values.
 - If a field has severity "critical" or "warning" in the comparisons, mention it.
 - Be helpful, specific, and cite the actual data values when relevant.
-- Keep answers concise (2-4 sentences unless the user asks for detail).
+- Keep answers concise (2-4 sentences unless the user asks for detail).${redactionParagraph}
 
 SHIPMENT CONTEXT:
 ${context}`,
@@ -142,8 +246,8 @@ ${context}`,
       .map((b) => (b as Anthropic.TextBlock).text)
       .join("");
 
-    insertChatMessage({ shipmentId, role: "user", content: message });
-    insertChatMessage({ shipmentId, role: "assistant", content: reply });
+    insertChatMessage({ shipmentId, role: "user", content: message, actorRole: rawActorRole });
+    insertChatMessage({ shipmentId, role: "assistant", content: reply, actorRole: rawActorRole });
 
     return NextResponse.json({ reply });
   } catch (err) {

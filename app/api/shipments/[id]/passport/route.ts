@@ -6,11 +6,12 @@ import { getSuiPassportClient } from "@/lib/sui-passport";
 export const runtime = "nodejs";
 
 export async function GET(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: shipmentId } = await params;
+    const skipChain = request.nextUrl.searchParams.get("source") === "db";
     const db = getDb();
 
     const row = db.prepare(
@@ -45,7 +46,9 @@ export async function GET(
     }>;
     const txDigestByKey = buildTxDigestMap(endorsements);
 
-    // Optionally enrich from on-chain if endorsement log ID is known
+    // Optionally enrich from on-chain if endorsement log ID is known.
+    // Skipped when ?source=db is set (e.g. immediately after an endorsement,
+    // before the chain has finalized — SQLite mirror is always up-to-date).
     let onChainEndorsements: typeof endorsements | null = null;
     let importerAddress: string | null = null;
     let exporterAddress: string | null = null;
@@ -59,7 +62,7 @@ export async function GET(
     } catch {
       // Optional enrichment only
     }
-    if (row.endorsement_log_object_id) {
+    if (!skipChain && row.endorsement_log_object_id) {
       try {
         const client = getSuiPassportClient();
         const log = await client.getEndorsementLog(row.endorsement_log_object_id);

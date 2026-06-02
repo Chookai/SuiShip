@@ -117,7 +117,7 @@ export default function ProfilePage() {
           <div className="flex flex-col items-end gap-1">
             {saved && <span className="text-xs font-bold text-emerald-600">Saved & synced to MemWal</span>}
             {syncError && <span className="max-w-xs text-right text-xs font-bold text-red-600">{syncError}</span>}
-            <Button onClick={saveProfile} disabled={!hasChanges || syncing}>
+            <Button onClick={saveProfile} disabled={(!hasChanges && profileVersion > 0) || syncing}>
               {syncing ? "Saving…" : "Save"}
             </Button>
           </div>

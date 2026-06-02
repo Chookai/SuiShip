@@ -1,0 +1,509 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - navigation [ref=e4]:
+        - link "Dashboard" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - generic [ref=e6]:
+            - img [ref=e8]
+            - generic [ref=e13]: Dashboard
+        - link "Shipments" [ref=e14] [cursor=pointer]:
+          - /url: /shipments
+          - generic [ref=e15]:
+            - img [ref=e17]
+            - generic [ref=e21]: Shipments
+        - link "Create" [ref=e22] [cursor=pointer]:
+          - /url: /create
+          - generic [ref=e23]:
+            - img [ref=e25]
+            - generic [ref=e28]: Create
+        - link "Memory" [ref=e29] [cursor=pointer]:
+          - /url: /memory
+          - generic [ref=e30]:
+            - img [ref=e32]
+            - generic [ref=e44]: Memory
+        - link "Risk Memory" [ref=e45] [cursor=pointer]:
+          - /url: /risk-memory
+          - generic [ref=e46]:
+            - img [ref=e48]
+            - generic [ref=e50]: Risk Memory
+        - link "Persistent Agent" [ref=e51] [cursor=pointer]:
+          - /url: /persistent-agent
+          - generic [ref=e52]:
+            - img [ref=e54]
+            - generic [ref=e56]: Persistent Agent
+      - generic [ref=e58]:
+        - link "Acme Robotics LLC" [ref=e59] [cursor=pointer]:
+          - /url: /profile
+          - paragraph [ref=e61]: Acme Robotics LLC
+        - button "Switch company" [ref=e62] [cursor=pointer]:
+          - img [ref=e63]
+    - generic [ref=e66]:
+      - banner [ref=e67]:
+        - generic [ref=e68]:
+          - link "SuiShip home" [ref=e70] [cursor=pointer]:
+            - /url: /
+            - img "SuiShip" [ref=e71]
+          - generic [ref=e72]:
+            - button "Notifications" [ref=e74] [cursor=pointer]:
+              - img [ref=e75]
+            - button "Toggle theme" [ref=e78] [cursor=pointer]:
+              - img [ref=e79]
+      - main [ref=e81]:
+        - generic [ref=e94]:
+          - link "Back to shipments" [ref=e95] [cursor=pointer]:
+            - /url: /shipments
+            - img [ref=e96]
+            - text: Back to shipments
+          - generic [ref=e99]:
+            - paragraph [ref=e100]: Shipment Details
+            - heading "SS-EXP-073715" [level=1] [ref=e101]
+            - generic [ref=e102]:
+              - generic [ref=e103]: Created by Acme Robotics LLC
+              - generic [ref=e104]: "Created: 6/1/2026, 9:54:43 PM"
+              - generic [ref=e105]: "Updated: 6/2/2026, 8:59:10 PM"
+          - generic [ref=e107]:
+            - img [ref=e109]
+            - generic [ref=e112]:
+              - heading "Passport Created" [level=2] [ref=e113]
+              - generic [ref=e114]:
+                - generic [ref=e115]:
+                  - paragraph [ref=e116]: Sui Passport NFT
+                  - link "0x5f4ea8bc…9ee13877" [ref=e117] [cursor=pointer]:
+                    - /url: https://suiscan.xyz/testnet/object/0x5f4ea8bca9aad4c96938f2a254387a90aa029cce621a05b8ec7756659ee13877
+                    - text: 0x5f4ea8bc…9ee13877
+                    - img [ref=e118]
+                - generic [ref=e122]:
+                  - paragraph [ref=e123]: Sui Transaction
+                  - link "ABj3H3b3YJ…s9X7bUfX" [ref=e124] [cursor=pointer]:
+                    - /url: https://suiscan.xyz/testnet/tx/ABj3H3b3YJbbVF8AYuYrL1ELQBc1wNb2Gu4ks9X7bUfX
+                    - text: ABj3H3b3YJ…s9X7bUfX
+                    - img [ref=e125]
+                - generic [ref=e129]:
+                  - paragraph [ref=e130]: Walrus Evidence
+                  - link "JV4ZR6cq9z…CipNeOSo" [ref=e131] [cursor=pointer]:
+                    - /url: https://walruscan.com/testnet/blob/JV4ZR6cq9zFgG2mCChMk6uInU3uStdH_vmaCipNeOSo
+                    - text: JV4ZR6cq9z…CipNeOSo
+                    - img [ref=e132]
+              - paragraph [ref=e136]: Minted at 6/2/2026, 8:50:08 PM
+          - generic [ref=e474]:
+            - heading "Custody Chain" [level=2] [ref=e476]
+            - generic [ref=e477]:
+              - generic [ref=e479]:
+                - img [ref=e481]
+                - paragraph [ref=e486]: Picked Up
+              - generic [ref=e489]:
+                - img [ref=e491]
+                - paragraph [ref=e494]: Handed Off
+              - generic [ref=e497]:
+                - img [ref=e499]
+                - paragraph [ref=e502]: Customs Reviewed
+              - generic [ref=e505]:
+                - img [ref=e507]
+                - paragraph [ref=e510]: Customs Cleared
+              - generic [ref=e513]:
+                - img [ref=e515]
+                - paragraph [ref=e519]: Received
+            - button "Endorse" [disabled] [ref=e520]
+          - generic [ref=e138]:
+            - generic [ref=e139]:
+              - heading "Recent Activities" [level=2] [ref=e140]
+              - generic [ref=e142]:
+                - generic [ref=e143]:
+                  - paragraph [ref=e144]:
+                    - generic [ref=e145]: "#4"
+                    - text: Picked up by Freight Forwarder
+                  - generic [ref=e146]: 6/2/2026, 8:54:00 PM
+                - 'link "tx: 3GFP2D…oW34" [ref=e148] [cursor=pointer]':
+                  - /url: https://suiscan.xyz/testnet/tx/3GFP2D7y1wtxdb11xTBdT9QEgM2JFfXYp3gQKSjKoW34
+                  - text: "tx: 3GFP2D…oW34"
+                  - img [ref=e149]
+              - button "View all (4)" [ref=e153] [cursor=pointer]
+            - generic [ref=e154]:
+              - heading "Overview" [level=2] [ref=e155]
+              - generic [ref=e156]:
+                - generic [ref=e157]:
+                  - generic [ref=e158]:
+                    - paragraph [ref=e159]: Exporter
+                    - heading "Acme Robotics LLC" [level=3] [ref=e160]
+                    - paragraph [ref=e161]: United States · Los Angeles, CA
+                  - generic [ref=e162]:
+                    - paragraph [ref=e163]: "Tax ID: US-123456789"
+                    - paragraph [ref=e164]: "Address: 123 Harbor Way, Los Angeles, CA 90012, United States"
+                    - paragraph [ref=e165]: "Contact: Sarah Chen"
+                    - generic [ref=e166]:
+                      - img [ref=e167]
+                      - generic [ref=e170]: sarah.chen@acmerobotics.com
+                    - generic [ref=e171]:
+                      - img [ref=e172]
+                      - generic [ref=e174]: +1-310-555-0200
+                - generic [ref=e175]:
+                  - generic [ref=e176]:
+                    - paragraph [ref=e177]: Importer
+                    - heading "Shanghai Smart Imports Co Ltd" [level=3] [ref=e178]
+                    - paragraph [ref=e179]: China · Shanghai, China
+                  - generic [ref=e180]:
+                    - paragraph [ref=e181]: "Tax ID: CN-987654321"
+                    - paragraph [ref=e182]: "Address: 88 Pudong Avenue, Shanghai, China"
+                    - paragraph [ref=e183]: "Contact: Wei Zhang"
+                    - generic [ref=e184]:
+                      - img [ref=e185]
+                      - generic [ref=e188]: wei.zhang@shanghaismartimports.cn
+                    - generic [ref=e189]:
+                      - img [ref=e190]
+                      - generic [ref=e192]: +86-21-555-0100
+              - generic [ref=e193]:
+                - generic [ref=e194]:
+                  - generic [ref=e195]:
+                    - generic [ref=e196]:
+                      - paragraph [ref=e197]: Origin
+                      - paragraph [ref=e198]: United States
+                      - paragraph [ref=e199]: Los Angeles, CA
+                    - generic [ref=e200]:
+                      - paragraph [ref=e201]: Destination
+                      - paragraph [ref=e202]: China
+                      - paragraph [ref=e203]: Shanghai, China
+                  - paragraph [ref=e206]: 1 day
+                - generic [ref=e207]:
+                  - generic [ref=e208]:
+                    - img [ref=e209]
+                    - heading "Route & logistics" [level=3] [ref=e213]
+                  - generic [ref=e214]:
+                    - generic [ref=e215]:
+                      - paragraph [ref=e216]: Transport mode
+                      - paragraph [ref=e217]: Sea
+                    - generic [ref=e218]:
+                      - paragraph [ref=e219]: Carrier
+                      - paragraph [ref=e220]: Pacific Star Lines
+                    - generic [ref=e221]:
+                      - paragraph [ref=e222]: ETD
+                      - paragraph [ref=e223]: May 21, 2026
+                    - generic [ref=e224]:
+                      - paragraph [ref=e225]: ETA
+                      - paragraph [ref=e226]: May 22, 2026
+                    - generic [ref=e227]:
+                      - paragraph [ref=e228]: Bill of Lading ref
+                      - paragraph [ref=e229]: BL-MEM-001
+                    - generic [ref=e230]:
+                      - paragraph [ref=e231]: B/L type
+                      - paragraph [ref=e232]: House
+                    - generic [ref=e233]:
+                      - paragraph [ref=e234]: Freight forwarder
+                      - paragraph [ref=e235]: —
+                    - generic [ref=e236]:
+                      - paragraph [ref=e237]: Customs broker
+                      - paragraph [ref=e238]: —
+              - generic [ref=e239]:
+                - generic [ref=e240]:
+                  - img [ref=e241]
+                  - heading "Commercial terms" [level=3] [ref=e244]
+                - generic [ref=e245]:
+                  - generic [ref=e246]:
+                    - paragraph [ref=e247]: Incoterm
+                    - paragraph [ref=e248]: FOB
+                  - generic [ref=e249]:
+                    - paragraph [ref=e250]: Declared value
+                    - paragraph [ref=e251]: USD 50000
+                  - generic [ref=e252]:
+                    - paragraph [ref=e253]: Payment terms
+                    - paragraph [ref=e254]: BANK REF ABC-8842
+              - generic [ref=e255]:
+                - generic [ref=e256]:
+                  - img [ref=e257]
+                  - heading "Cargo" [level=3] [ref=e261]
+                - generic [ref=e262]:
+                  - generic [ref=e263]:
+                    - paragraph [ref=e264]: Product
+                    - paragraph [ref=e265]: Industrial tablet computers
+                  - generic [ref=e266]:
+                    - paragraph [ref=e267]: Quantity
+                    - paragraph [ref=e268]: "100"
+                  - generic [ref=e269]:
+                    - paragraph [ref=e270]: HS code
+                    - paragraph [ref=e271]: "8471.30"
+                  - generic [ref=e272]:
+                    - paragraph [ref=e273]: Country of origin
+                    - paragraph [ref=e274]: United States
+                  - generic [ref=e275]:
+                    - paragraph [ref=e276]: Gross weight
+                    - paragraph [ref=e277]: 1200 kg
+                  - generic [ref=e278]:
+                    - paragraph [ref=e279]: Net weight
+                    - paragraph [ref=e280]: 1000 kg
+                  - generic [ref=e281]:
+                    - paragraph [ref=e282]: Handling units
+                    - paragraph [ref=e283]: 100 Cartons
+                  - generic [ref=e284]:
+                    - paragraph [ref=e285]: SKU / part no.
+                    - paragraph [ref=e286]: TAB-8471
+                  - generic [ref=e287]:
+                    - paragraph [ref=e288]: Dangerous goods
+                    - paragraph [ref=e289]: "No"
+                  - generic [ref=e290]:
+                    - paragraph [ref=e291]: Temperature controlled
+                    - paragraph [ref=e292]: "No"
+            - generic [ref=e293]:
+              - generic [ref=e294]:
+                - button "Document Agent" [ref=e295] [cursor=pointer]:
+                  - img [ref=e296]
+                  - text: Document Agent
+                - button "Risk Agent" [ref=e299] [cursor=pointer]:
+                  - img [ref=e300]
+                  - text: Risk Agent
+              - generic [ref=e303]:
+                - generic [ref=e304]:
+                  - heading "Exporter" [level=3] [ref=e305]
+                  - table [ref=e307]:
+                    - rowgroup [ref=e308]:
+                      - row "Field Entered Extracted Remembered Severity" [ref=e309]:
+                        - columnheader "Field" [ref=e310]
+                        - columnheader "Entered" [ref=e311]
+                        - columnheader "Extracted" [ref=e312]
+                        - columnheader "Remembered" [ref=e313]
+                        - columnheader "Severity" [ref=e314]
+                    - rowgroup [ref=e315]:
+                      - row "Legal name Acme Robotics LLC Acme Robotics LLC Acme Robotics LLC info" [ref=e316]:
+                        - cell "Legal name" [ref=e317]
+                        - cell "Acme Robotics LLC" [ref=e318]
+                        - cell "Acme Robotics LLC" [ref=e319]
+                        - cell "Acme Robotics LLC" [ref=e320]
+                        - cell "info" [ref=e321]
+                      - row "Tax ID US-123456789 US-123456789 US-123456789 info" [ref=e322]:
+                        - cell "Tax ID" [ref=e323]
+                        - cell "US-123456789" [ref=e324]
+                        - cell "US-123456789" [ref=e325]
+                        - cell "US-123456789" [ref=e326]
+                        - cell "info" [ref=e327]
+                      - row "Bank beneficiary Acme Robotics LLC Acme Robotics LLC Acme Robotics LLC info" [ref=e328]:
+                        - cell "Bank beneficiary" [ref=e329]
+                        - cell "Acme Robotics LLC" [ref=e330]
+                        - cell "Acme Robotics LLC" [ref=e331]
+                        - cell "Acme Robotics LLC" [ref=e332]
+                        - cell "info" [ref=e333]
+                      - row "Bank account ****8842 — ****8842 info" [ref=e334]:
+                        - cell "Bank account" [ref=e335]
+                        - cell "****8842" [ref=e336]
+                        - cell "—" [ref=e337]
+                        - cell "****8842" [ref=e338]
+                        - cell "info" [ref=e339]
+                      - row "Registered address 123 Harbor Way, Los Angeles, 123 Harbor Way, Los Angeles, 123 Harbor Way, Los Angeles, info" [ref=e340]:
+                        - cell "Registered address" [ref=e341]
+                        - cell "123 Harbor Way, Los Angeles," [ref=e342]
+                        - cell "123 Harbor Way, Los Angeles," [ref=e343]
+                        - cell "123 Harbor Way, Los Angeles," [ref=e344]
+                        - cell "info" [ref=e345]
+                - generic [ref=e346]:
+                  - heading "Importer" [level=3] [ref=e347]
+                  - table [ref=e349]:
+                    - rowgroup [ref=e350]:
+                      - row "Field Entered Extracted Remembered Severity" [ref=e351]:
+                        - columnheader "Field" [ref=e352]
+                        - columnheader "Entered" [ref=e353]
+                        - columnheader "Extracted" [ref=e354]
+                        - columnheader "Remembered" [ref=e355]
+                        - columnheader "Severity" [ref=e356]
+                    - rowgroup [ref=e357]:
+                      - row "Legal name Shanghai Smart Imports Co Lt Shanghai Smart Imports Co Lt Shanghai Smart Imports Co Lt info" [ref=e358]:
+                        - cell "Legal name" [ref=e359]
+                        - cell "Shanghai Smart Imports Co Lt" [ref=e360]
+                        - cell "Shanghai Smart Imports Co Lt" [ref=e361]
+                        - cell "Shanghai Smart Imports Co Lt" [ref=e362]
+                        - cell "info" [ref=e363]
+                      - row "Tax ID CN-987654321 CN-987654321 CN-987654321 info" [ref=e364]:
+                        - cell "Tax ID" [ref=e365]
+                        - cell "CN-987654321" [ref=e366]
+                        - cell "CN-987654321" [ref=e367]
+                        - cell "CN-987654321" [ref=e368]
+                        - cell "info" [ref=e369]
+                      - row "Bank beneficiary — Shanghai Smart Imports Co Lt — info" [ref=e370]:
+                        - cell "Bank beneficiary" [ref=e371]
+                        - cell "—" [ref=e372]
+                        - cell "Shanghai Smart Imports Co Lt" [ref=e373]
+                        - cell "—" [ref=e374]
+                        - cell "info" [ref=e375]
+                      - row "Bank account — — — info" [ref=e376]:
+                        - cell "Bank account" [ref=e377]
+                        - cell "—" [ref=e378]
+                        - cell "—" [ref=e379]
+                        - cell "—" [ref=e380]
+                        - cell "info" [ref=e381]
+                      - row "Registered address 88 Pudong Avenue, Shanghai, 88 Pudong Avenue, Shanghai, 88 Pudong Avenue, Shanghai, info" [ref=e382]:
+                        - cell "Registered address" [ref=e383]
+                        - cell "88 Pudong Avenue, Shanghai," [ref=e384]
+                        - cell "88 Pudong Avenue, Shanghai," [ref=e385]
+                        - cell "88 Pudong Avenue, Shanghai," [ref=e386]
+                        - cell "info" [ref=e387]
+                - generic [ref=e388]:
+                  - heading "Documents & Cargo" [level=3] [ref=e389]
+                  - table [ref=e391]:
+                    - rowgroup [ref=e392]:
+                      - row "Field Entered Extracted Remembered Severity" [ref=e393]:
+                        - columnheader "Field" [ref=e394]
+                        - columnheader "Entered" [ref=e395]
+                        - columnheader "Extracted" [ref=e396]
+                        - columnheader "Remembered" [ref=e397]
+                        - columnheader "Severity" [ref=e398]
+                    - rowgroup [ref=e399]:
+                      - row "Country of origin United States United States — info" [ref=e400]:
+                        - cell "Country of origin" [ref=e401]
+                        - cell "United States" [ref=e402]
+                        - cell "United States" [ref=e403]
+                        - cell "—" [ref=e404]
+                        - cell "info" [ref=e405]
+                      - row "Invoice number — — — —" [ref=e406]:
+                        - cell "Invoice number" [ref=e407]
+                        - cell "—" [ref=e408]
+                        - cell "—" [ref=e409]
+                        - cell "—" [ref=e410]
+                        - cell "—" [ref=e411]
+                      - row "BOL number — — — —" [ref=e412]:
+                        - cell "BOL number" [ref=e413]
+                        - cell "—" [ref=e414]
+                        - cell "—" [ref=e415]
+                        - cell "—" [ref=e416]
+                        - cell "—" [ref=e417]
+          - generic [ref=e419]:
+            - heading "Documents" [level=2] [ref=e421]
+            - table [ref=e423]:
+              - rowgroup [ref=e424]:
+                - row "Document Status" [ref=e425]:
+                  - columnheader "Document" [ref=e426]
+                  - columnheader "Status" [ref=e427]
+              - rowgroup [ref=e428]:
+                - 'row "Commercial Invoice File: commercial_invoice.pdf Cached Haiku result claude-haiku-4-5 · 2807 tokens Uploaded to Walrus" [ref=e429]':
+                  - 'cell "Commercial Invoice File: commercial_invoice.pdf Cached Haiku result claude-haiku-4-5 · 2807 tokens" [ref=e430]':
+                    - paragraph [ref=e431]: Commercial Invoice
+                    - paragraph [ref=e432]: "File: commercial_invoice.pdf"
+                    - paragraph [ref=e433]: Cached Haiku result claude-haiku-4-5 · 2807 tokens
+                  - cell "Uploaded to Walrus" [ref=e434]:
+                    - generic [ref=e435]:
+                      - img [ref=e436]
+                      - text: Uploaded to Walrus
+                - 'row "Packing List File: packing_list.pdf Cached Haiku result claude-haiku-4-5 · 2485 tokens Uploaded to Walrus" [ref=e439]':
+                  - 'cell "Packing List File: packing_list.pdf Cached Haiku result claude-haiku-4-5 · 2485 tokens" [ref=e440]':
+                    - paragraph [ref=e441]: Packing List
+                    - paragraph [ref=e442]: "File: packing_list.pdf"
+                    - paragraph [ref=e443]: Cached Haiku result claude-haiku-4-5 · 2485 tokens
+                  - cell "Uploaded to Walrus" [ref=e444]:
+                    - generic [ref=e445]:
+                      - img [ref=e446]
+                      - text: Uploaded to Walrus
+                - 'row "Bill of Lading File: bill_of_lading.pdf Cached Haiku result claude-haiku-4-5 · 2696 tokens Uploaded to Walrus" [ref=e449]':
+                  - 'cell "Bill of Lading File: bill_of_lading.pdf Cached Haiku result claude-haiku-4-5 · 2696 tokens" [ref=e450]':
+                    - paragraph [ref=e451]: Bill of Lading
+                    - paragraph [ref=e452]: "File: bill_of_lading.pdf"
+                    - paragraph [ref=e453]: Cached Haiku result claude-haiku-4-5 · 2696 tokens
+                  - cell "Uploaded to Walrus" [ref=e454]:
+                    - generic [ref=e455]:
+                      - img [ref=e456]
+                      - text: Uploaded to Walrus
+                - 'row "Certificate of Origin File: certificate_of_origin.pdf Cached Haiku result claude-haiku-4-5 · 2403 tokens Uploaded to Walrus" [ref=e459]':
+                  - 'cell "Certificate of Origin File: certificate_of_origin.pdf Cached Haiku result claude-haiku-4-5 · 2403 tokens" [ref=e460]':
+                    - paragraph [ref=e461]: Certificate of Origin
+                    - paragraph [ref=e462]: "File: certificate_of_origin.pdf"
+                    - paragraph [ref=e463]: Cached Haiku result claude-haiku-4-5 · 2403 tokens
+                  - cell "Uploaded to Walrus" [ref=e464]:
+                    - generic [ref=e465]:
+                      - img [ref=e466]
+                      - text: Uploaded to Walrus
+          - generic [ref=e521]:
+            - generic [ref=e522]:
+              - generic [ref=e523]:
+                - img [ref=e524]
+                - generic [ref=e527]: Ask SuiShip
+              - button [ref=e529] [cursor=pointer]:
+                - img [ref=e530]
+            - generic [ref=e533]:
+              - generic [ref=e536]:
+                - paragraph [ref=e563]: Validation Summary
+                - paragraph [ref=e564]:
+                  - strong [ref=e565]: "Risk Level:"
+                  - text: Low
+                  - strong [ref=e566]: "Overall Verdict:"
+                  - text: Aligned
+                - paragraph [ref=e567]:
+                  - text: The shipment passed validation with
+                  - strong [ref=e568]: 2 findings
+                  - text: ", all of which are informational or minor warnings:"
+                - list [ref=e569]:
+                  - listitem [ref=e570]:
+                    - paragraph [ref=e571]:
+                      - strong [ref=e572]: "Origin Mismatch (Warning):"
+                      - text: The entered origin is "United States" but the bill of lading extracts "Los Angeles, CA"—both are technically correct but at different specificity levels. Recommend reviewing route details for consistency.
+                  - listitem [ref=e573]:
+                    - paragraph [ref=e574]:
+                      - strong [ref=e575]: "Destination Mismatch (Warning):"
+                      - text: Similarly, "China" was entered while documents extract "Shanghai, China." Again, both are accurate but at different granularity.
+                - paragraph [ref=e576]:
+                  - strong [ref=e577]: "Key Strength:"
+                  - text: All four document types (commercial invoice, packing list, bill of lading, certificate of origin) are present with
+                  - strong [ref=e578]: consistent invoice numbers, party names, addresses, HS codes, quantities, weights, and destination ports
+                  - text: across documents. Party identities (exporter and importer) match MemWal memory perfectly—no anomalies detected.
+                - paragraph [ref=e579]: The cargo and shipment details are solid; no critical or severe issues found.
+              - generic [ref=e556]: Summarize the validation
+              - generic [ref=e582]: tell me about shipment SS-EXP-073715
+              - generic [ref=e585]:
+                - paragraph [ref=e586]: Shipment SS-EXP-073715 – Summary
+                - paragraph [ref=e587]:
+                  - strong [ref=e588]: "Status:"
+                  - text: Passport Minted |
+                  - strong [ref=e589]: "Risk Level:"
+                  - text: Low
+                - table [ref=e590]:
+                  - rowgroup [ref=e591]:
+                    - row "Detail Value" [ref=e592]:
+                      - columnheader "Detail" [ref=e593]
+                      - columnheader "Value" [ref=e594]
+                  - rowgroup [ref=e595]:
+                    - row "Exporter Acme Robotics LLC (Los Angeles, CA)" [ref=e596]:
+                      - cell "Exporter" [ref=e597]:
+                        - strong [ref=e598]: Exporter
+                      - cell "Acme Robotics LLC (Los Angeles, CA)" [ref=e599]
+                    - row "Importer Shanghai Smart Imports Co Ltd (Shanghai, China)" [ref=e600]:
+                      - cell "Importer" [ref=e601]:
+                        - strong [ref=e602]: Importer
+                      - cell "Shanghai Smart Imports Co Ltd (Shanghai, China)" [ref=e603]
+                    - row "Cargo 100 Industrial tablet computers (TAB-8471)" [ref=e604]:
+                      - cell "Cargo" [ref=e605]:
+                        - strong [ref=e606]: Cargo
+                      - cell "100 Industrial tablet computers (TAB-8471)" [ref=e607]
+                    - row "Weight 1,200 kg gross / 1,000 kg net" [ref=e608]:
+                      - cell "Weight" [ref=e609]:
+                        - strong [ref=e610]: Weight
+                      - cell "1,200 kg gross / 1,000 kg net" [ref=e611]
+                    - row "Value $50,000 USD (FOB)" [ref=e612]:
+                      - cell "Value" [ref=e613]:
+                        - strong [ref=e614]: Value
+                      - cell "$50,000 USD (FOB)" [ref=e615]
+                    - row "Route Los Angeles → Shanghai" [ref=e616]:
+                      - cell "Route" [ref=e617]:
+                        - strong [ref=e618]: Route
+                      - cell "Los Angeles → Shanghai" [ref=e619]
+                    - row "Carrier Pacific Star Lines (Sea)" [ref=e620]:
+                      - cell "Carrier" [ref=e621]:
+                        - strong [ref=e622]: Carrier
+                      - cell "Pacific Star Lines (Sea)" [ref=e623]
+                    - row "ETD/ETA 2026-05-21 / 2026-05-22" [ref=e624]:
+                      - cell "ETD/ETA" [ref=e625]:
+                        - strong [ref=e626]: ETD/ETA
+                      - cell "2026-05-21 / 2026-05-22" [ref=e627]
+                    - row "Booking Ref BL-MEM-001" [ref=e628]:
+                      - cell "Booking Ref" [ref=e629]:
+                        - strong [ref=e630]: Booking Ref
+                      - cell "BL-MEM-001" [ref=e631]
+                - paragraph [ref=e632]:
+                  - strong [ref=e633]: "Validation Result:"
+                  - text: ✅
+                  - strong [ref=e634]: Aligned
+                  - text: All four documents (invoice, packing list, bill of lading, certificate of origin) present and consistent. Party identities match MemWal records with no anomalies.
+                - paragraph [ref=e635]:
+                  - strong [ref=e636]: "Minor Findings:"
+                - list [ref=e637]:
+                  - listitem [ref=e638]: Origin/destination entered at country level but extracted at port level (informational, no action required)
+            - generic [ref=e557]:
+              - textbox "Ask about this shipment…" [ref=e558]
+              - button [disabled] [ref=e559]:
+                - img [ref=e560]
+  - button "Open Next.js Dev Tools" [ref=e90] [cursor=pointer]:
+    - img [ref=e91]
+  - alert [ref=e472]

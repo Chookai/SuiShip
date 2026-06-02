@@ -3,6 +3,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
 import { isMemWalConfigured, memwalRecall, memwalRememberAndWait, type MemWalRecallItem } from "../memwal/client";
 import { getShipmentById } from "../shipments-server";
+import { getAisPosition } from "../tracker-api/client";
 import type { ShipmentRecord } from "../shipments-store";
 export {
   RISK_EVENTS_NAMESPACE,
@@ -480,6 +481,42 @@ export async function runRiskScanForShipment(
     findings = correlation.accepted;
     rejectedCandidates = correlation.rejected;
     findings = stageUnconfirmedLiveRisksForMemory(findings);
+
+    // Write accepted live (SerpAPI) findings to MemWal observations namespace
+    if (isMemWalConfigured()) {
+      const toWrite = findings.filter(
+        (f) => f.sources.some((s) => s.kind === "serpapi") && (f.correlation?.confidence ?? 0) >= 0.5
+      );
+      await Promise.allSettled(
+        toWrite.map((f) => memwalRememberAndWait(serializeRiskObservation(shipment, f, now), RISK_OBSERVATIONS_NAMESPACE, 60_000))
+      );
+
+      // Synthetic AIS-delay observation when simulation is paused on issue
+      const ais = await getAisPosition(shipmentId);
+      if (ais.ok && ais.status === "paused_issue") {
+        const delayFinding: RiskFinding = {
+          id: `ais-delay-${createHash("sha256").update(`${shipmentId}:${ais.timestamp}`).digest("hex").slice(0, 16)}`,
+          severity: "warning",
+          category: "carrier_schedule",
+          title: `AIS issue detected — vessel paused at ${ais.progressPercent}% on ${ais.origin} → ${ais.destination}`,
+          summary: `Live AIS simulation shows vessel ${ais.vesselName} paused at ${ais.progressPercent}% progress (lat ${ais.lat.toFixed(2)}, lng ${ais.lng.toFixed(2)}) indicating an in-transit delay or operational hold.`,
+          affectedShipmentFacts: affectedFacts(shipment),
+          recommendedActions: [
+            "Contact carrier for status update",
+            "Check for port congestion or route disruption",
+            "Notify consignee of potential delay",
+            "Review ETA and demurrage exposure",
+          ],
+          memoryWriteStatus: "pending",
+          sources: [{ kind: "serpapi", title: "AIS simulation", snippet: `Vessel paused at ${ais.progressPercent}% — status: ${ais.status}` }],
+          correlation: { related: true, confidence: 0.9, matchedFactors: ["route", "carrier", "AIS status"], missingFactors: [], reasoning: "Direct AIS simulation signal." },
+        };
+        await memwalRememberAndWait(serializeRiskObservation(shipment, delayFinding, now), RISK_OBSERVATIONS_NAMESPACE, 60_000).catch(() => {/* best-effort */});
+        if (!findings.some((f) => f.id.startsWith("ais-delay-"))) {
+          findings = [...findings, { ...delayFinding, memoryWriteStatus: "written" }];
+        }
+      }
+    }
 
     const result: RiskScanResult = {
       id: scanId,

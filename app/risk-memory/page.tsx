@@ -166,7 +166,7 @@ export default function RiskMemoryPage() {
             </div>
           </Panel>
         ) : total > 0 ? (
-          <div className="grid gap-5 xl:grid-cols-2">
+          <div className="grid gap-5">
             {Object.entries(grouped).map(([namespace, memories]) => (
               <Panel key={namespace} className="min-w-0 overflow-hidden">
                 <div className="flex items-center justify-between gap-3">
@@ -178,7 +178,7 @@ export default function RiskMemoryPage() {
                     {memories.length}
                   </span>
                 </div>
-                <div className="mt-5 grid gap-3">
+                <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">
                   {memories.map((memory) => (
                     <RiskMemoryCard key={`${memory.namespace}-${memory.blobId}`} memory={memory} />
                   ))}

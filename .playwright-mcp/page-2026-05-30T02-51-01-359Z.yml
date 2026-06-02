@@ -1,0 +1,82 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e3]:
+    - banner [ref=e4]:
+      - generic [ref=e5]:
+        - link "SuiShip home" [ref=e7] [cursor=pointer]:
+          - /url: /
+          - img "SuiShip" [ref=e8]
+        - generic [ref=e9]:
+          - generic [ref=e10]:
+            - img [ref=e11]
+            - textbox [ref=e14]:
+              - /placeholder: Search
+          - button "Notifications" [ref=e16] [cursor=pointer]:
+            - img [ref=e17]
+          - button "Toggle theme" [ref=e20] [cursor=pointer]:
+            - img [ref=e21]
+          - button "Connect Wallet" [ref=e23] [cursor=pointer]
+      - navigation [ref=e24]:
+        - link "Dashboard" [ref=e25] [cursor=pointer]:
+          - /url: /dashboard
+          - img [ref=e26]
+          - text: Dashboard
+        - link "Shipments" [ref=e31] [cursor=pointer]:
+          - /url: /shipments
+          - img [ref=e32]
+          - text: Shipments
+        - link "Create" [ref=e36] [cursor=pointer]:
+          - /url: /create
+          - img [ref=e37]
+          - text: Create
+        - link "Memory" [ref=e40] [cursor=pointer]:
+          - /url: /memory
+          - img [ref=e41]
+          - text: Memory
+        - link "Risk Memory" [ref=e53] [cursor=pointer]:
+          - /url: /risk-memory
+          - img [ref=e54]
+          - text: Risk Memory
+        - link "Persistent Agent" [ref=e56] [cursor=pointer]:
+          - /url: /persistent-agent
+          - img [ref=e57]
+          - text: Persistent Agent
+    - main [ref=e59]:
+      - generic [ref=e60]:
+        - generic [ref=e61]:
+          - generic [ref=e62]:
+            - heading "Shipments" [level=1] [ref=e63]
+            - paragraph [ref=e64]: Every shipment you have created or been invited into. Track document upload progress, status, and route at a glance.
+          - link "Create shipment" [ref=e65] [cursor=pointer]:
+            - /url: /create
+            - img [ref=e66]
+            - text: Create shipment
+        - generic [ref=e69]:
+          - generic [ref=e70]:
+            - generic [ref=e71]:
+              - img [ref=e72]
+              - textbox [ref=e75]:
+                - /placeholder: Search shipment, exporter, importer, route, or status
+            - generic [ref=e76]:
+              - img [ref=e77]
+              - button "Newest" [ref=e80] [cursor=pointer]
+              - button "Exporter" [ref=e81] [cursor=pointer]
+              - button "Importer" [ref=e82] [cursor=pointer]
+              - button "ETA" [ref=e83] [cursor=pointer]
+              - button "Status" [ref=e84] [cursor=pointer]
+          - generic [ref=e86]:
+            - text: Status
+            - combobox "Status" [ref=e87]:
+              - option "All" [selected]
+        - generic [ref=e88]:
+          - generic [ref=e89]:
+            - generic [ref=e90]:
+              - paragraph [ref=e91]: Shipment list
+              - heading "0 shipments" [level=2] [ref=e92]
+            - img [ref=e93]
+          - generic [ref=e94]:
+            - img [ref=e96]
+            - generic [ref=e100]:
+              - heading "Loading shipments..." [level=3] [ref=e101]
+              - paragraph [ref=e102]: Reading your local shipment store.
+  - button "Open Next.js Dev Tools" [ref=e108] [cursor=pointer]:
+    - img [ref=e109]

@@ -68,14 +68,15 @@ export function insertChatMessage(
     toolResultJson?: string | null;
     isError?: boolean;
     agentRunId?: string | null;
+    actorRole?: string | null;
   },
   db: Database.Database = getDb()
 ): ChatMessage {
   const id = randomUUID();
   db.prepare(`
     INSERT INTO shipment_chats
-      (id, shipment_id, role, content, tool_name, tool_input_json, tool_result_json, is_error, agent_run_id)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      (id, shipment_id, role, content, tool_name, tool_input_json, tool_result_json, is_error, agent_run_id, actor_role)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `).run(
     id,
     input.shipmentId,
@@ -85,7 +86,8 @@ export function insertChatMessage(
     input.toolInputJson ?? null,
     input.toolResultJson ?? null,
     input.isError ? 1 : 0,
-    input.agentRunId ?? null
+    input.agentRunId ?? null,
+    input.actorRole ?? null
   );
   return rowToMessage(
     db.prepare("SELECT * FROM shipment_chats WHERE id = ?").get(id) as ChatRow
@@ -95,8 +97,18 @@ export function insertChatMessage(
 export function loadChatHistory(
   shipmentId: string,
   limit = 20,
-  db: Database.Database = getDb()
+  db: Database.Database = getDb(),
+  actorRole?: string | null
 ): ChatMessage[] {
+  if (actorRole) {
+    const rows = db.prepare(`
+      SELECT * FROM shipment_chats
+      WHERE shipment_id = ? AND actor_role = ?
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).all(shipmentId, actorRole, limit) as ChatRow[];
+    return rows.map(rowToMessage);
+  }
   const rows = db.prepare(`
     SELECT * FROM shipment_chats
     WHERE shipment_id = ?
@@ -108,7 +120,12 @@ export function loadChatHistory(
 
 export function clearChatHistory(
   shipmentId: string,
-  db: Database.Database = getDb()
+  db: Database.Database = getDb(),
+  actorRole?: string | null
 ): void {
+  if (actorRole) {
+    db.prepare("DELETE FROM shipment_chats WHERE shipment_id = ? AND actor_role = ?").run(shipmentId, actorRole);
+    return;
+  }
   db.prepare("DELETE FROM shipment_chats WHERE shipment_id = ?").run(shipmentId);
 }
