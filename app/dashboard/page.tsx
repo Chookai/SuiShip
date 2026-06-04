@@ -67,9 +67,6 @@ export default function DashboardPage() {
       <div className="flex flex-col justify-between gap-5 md:flex-row md:items-end">
         <div>
           <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Dashboard</h1>
-          <p className="mt-3 max-w-2xl text-steel">
-            Shipment workspace for {profile.company} as {role}.
-          </p>
         </div>
         <LinkButton href="/create">
           <Plus className="h-4 w-4" />

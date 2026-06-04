@@ -2,7 +2,6 @@
 
 import {
   AlertTriangle,
-  BrainCircuit,
   CheckCircle2,
   ExternalLink,
   Loader2,
@@ -12,6 +11,7 @@ import {
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "@/components/ui";
 import type { RiskFinding, RiskScanResult } from "@/lib/agents/risk-types";
+import { enrichRiskFinding } from "@/lib/risk-eta-impact";
 import type { ShipmentRecord } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
 
@@ -85,22 +85,12 @@ export function RiskAgentPanel({
 
   return (
     <div className="space-y-4">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div className="min-w-0">
-          <div className="flex items-center gap-3">
-            <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-[#0B1F33] text-white">
-              <BrainCircuit className="h-5 w-5" />
-            </span>
-            <div>
-              <h3 className="text-xl font-black text-pearl">Risk Agent</h3>
-              <p className="mt-1 text-sm font-semibold text-steel">
-                {scan
-                  ? `Last scan ${new Date(scan.generatedAt).toLocaleString()}`
-                  : "No risk scan has been recorded yet."}
-              </p>
-            </div>
-          </div>
-        </div>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p className="text-sm font-semibold text-steel">
+          {scan
+            ? `Last scan ${new Date(scan.generatedAt).toLocaleString()}`
+            : "No risk scan has been recorded yet."}
+        </p>
         <Button onClick={runScan} disabled={running}>
           {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           Refresh Risk Scan
@@ -111,16 +101,6 @@ export function RiskAgentPanel({
         <div className="flex items-start gap-2 rounded-xl border border-red-100 bg-red-50 p-3 text-sm font-semibold text-red-600">
           <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
           <span>{error}</span>
-        </div>
-      ) : null}
-
-      {scan?.sourceMessages?.length ? (
-        <div className="grid gap-2">
-          {scan.sourceMessages.map((message) => (
-            <div key={message} className="rounded-xl border border-amber-100 bg-amber-50 px-3 py-2 text-sm font-semibold text-amber-800">
-              {message}
-            </div>
-          ))}
         </div>
       ) : null}
 
@@ -167,91 +147,151 @@ export function RiskAgentPanel({
 }
 
 function RiskFindingCard({ finding }: { finding: RiskFinding }) {
-  const tone = findingTone(finding.severity);
-  const affectedFacts = uniqueDisplayValues(finding.affectedShipmentFacts);
+  const enriched = enrichRiskFinding(finding);
+  const tone = findingTone(enriched.severity);
+  const hasAi = Boolean(enriched.correlation);
+  const memorySources = enriched.sources.filter((source) => source.kind === "memwal");
+  const webSources = enriched.sources.filter((source) => source.kind === "serpapi");
+  const hasMemory = memorySources.length > 0;
+  const [detailView, setDetailView] = useState<"ai" | "memory">(() =>
+    hasAi ? "ai" : "memory",
+  );
+
+  useEffect(() => {
+    if (detailView === "ai" && !hasAi && hasMemory) setDetailView("memory");
+    if (detailView === "memory" && !hasMemory && hasAi) setDetailView("ai");
+  }, [detailView, hasAi, hasMemory]);
+
+  const showDetailToggle = hasAi || hasMemory;
+
   return (
     <div className={cn("rounded-xl border p-4", tone.border, tone.bg)}>
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-center gap-2">
             <span className={cn("rounded-full px-2.5 py-1 text-xs font-black uppercase", tone.badge)}>
-              {finding.severity}
+              {enriched.severity}
             </span>
             <span className="rounded-full bg-white/70 px-2.5 py-1 text-xs font-black uppercase text-steel">
-              {finding.category.replace(/_/g, " ")}
+              {enriched.category.replace(/_/g, " ")}
             </span>
-            <MemoryStatus finding={finding} />
+            <MemoryStatus finding={enriched} />
           </div>
-          <h4 className="mt-3 text-lg font-black text-pearl">{finding.title}</h4>
-          <p className="mt-2 text-sm font-semibold leading-6 text-steel">{finding.summary}</p>
+          <h4 className="mt-3 text-lg font-black text-pearl">{enriched.title}</h4>
+          <p className="mt-2 text-sm font-semibold leading-6 text-steel">{enriched.summary}</p>
         </div>
         <ShieldAlert className={cn("h-5 w-5 shrink-0", tone.icon)} />
       </div>
 
-      <div className="mt-4 grid gap-3 lg:grid-cols-2">
-        <div className="rounded-lg bg-white/70 p-3">
-          <p className="text-xs font-black uppercase text-steel">Affected shipment facts</p>
-          <div className="mt-2 flex flex-wrap gap-2">
-            {affectedFacts.map((fact, index) => (
-              <span key={`${fact}-${index}`} className="rounded-full bg-blue-50 px-2 py-1 text-xs font-bold text-pearl">
-                {fact}
-              </span>
-            ))}
-          </div>
-        </div>
-        <div className="rounded-lg bg-white/70 p-3">
-          <p className="text-xs font-black uppercase text-steel">Recommended actions</p>
-          <ul className="mt-2 space-y-1 text-sm font-semibold text-pearl">
-            {finding.recommendedActions.map((action) => (
-              <li key={action}>- {action}</li>
-            ))}
-          </ul>
-        </div>
+      <div className="mt-4 rounded-lg bg-white/70 p-3">
+        <p className="text-xs font-black uppercase text-steel">Recommended actions</p>
+        <ul className="mt-2 space-y-1 text-sm font-semibold text-pearl">
+          {enriched.recommendedActions.map((action) => (
+            <li key={action}>- {action}</li>
+          ))}
+        </ul>
       </div>
 
-      {finding.correlation ? (
-        <div className="mt-4 rounded-lg border border-blue-100 bg-white/80 p-3">
-          <div className="flex flex-wrap items-center justify-between gap-2">
-            <p className="text-xs font-black uppercase text-steel">Sonnet correlation evidence</p>
-            <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-sui">
-              {Math.round(finding.correlation.confidence * 100)}% confidence
-            </span>
+      {showDetailToggle ? (
+        <div className="mt-4 overflow-hidden rounded-xl border border-blue-100 bg-white">
+          <div className="flex items-center gap-1 border-b border-blue-100 px-2 pt-2 pb-0">
+            <button
+              type="button"
+              disabled={!hasAi}
+              onClick={() => setDetailView("ai")}
+              className={cn(
+                "whitespace-nowrap rounded-t-lg px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-40",
+                detailView === "ai"
+                  ? "border-b-2 border-sui bg-blue-50 text-sui"
+                  : "text-steel hover:bg-blue-50/50 hover:text-pearl",
+              )}
+            >
+              AI
+            </button>
+            <button
+              type="button"
+              disabled={!hasMemory}
+              onClick={() => setDetailView("memory")}
+              className={cn(
+                "whitespace-nowrap rounded-t-lg px-4 py-3 text-sm font-bold transition disabled:cursor-not-allowed disabled:opacity-40",
+                detailView === "memory"
+                  ? "border-b-2 border-sui bg-blue-50 text-sui"
+                  : "text-steel hover:bg-blue-50/50 hover:text-pearl",
+              )}
+            >
+              Memory
+            </button>
           </div>
-          <p className="mt-2 text-sm font-semibold leading-6 text-pearl">{finding.correlation.reasoning}</p>
-          <div className="mt-3 grid gap-3 md:grid-cols-2">
-            <FactorList title="Matched factors" values={finding.correlation.matchedFactors} tone="matched" />
-            <FactorList title="Weak or missing factors" values={finding.correlation.missingFactors} tone="missing" />
-          </div>
-          {finding.correlationModel ? (
-            <p className="mt-3 text-[11px] font-bold uppercase text-steel">
-              {finding.correlationModel}
-              {finding.correlatedAt ? ` / ${new Date(finding.correlatedAt).toLocaleString()}` : ""}
-            </p>
-          ) : null}
-        </div>
-      ) : null}
 
-      <div className="mt-4 grid gap-2">
-        {finding.sources.map((source, index) => (
-          <div key={`${source.kind}-${source.url ?? source.blobId ?? index}`} className="rounded-lg border border-blue-100 bg-white px-3 py-2">
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-black text-pearl">{source.title}</p>
-              <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black uppercase text-sui">
-                {source.kind}
-              </span>
-            </div>
-            {source.snippet ? <p className="mt-1 text-xs font-semibold leading-5 text-steel">{source.snippet}</p> : null}
-            <div className="mt-2 flex flex-wrap gap-2 text-xs font-bold text-steel">
-              {source.publishedAt ? <span>{source.publishedAt}</span> : null}
-              {source.blobId ? <span className="break-all">MemWal {source.blobId}</span> : null}
-              {source.url ? (
-                <a href={source.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sui hover:text-pearl">
-                  Open source <ExternalLink className="h-3 w-3" />
-                </a>
+          <div className="p-4">
+            {detailView === "ai" && hasAi && enriched.correlation ? (
+            <div>
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <p className="text-xs font-black uppercase text-steel">AI correlation</p>
+                <span className="rounded-full bg-blue-50 px-2.5 py-1 text-xs font-black text-sui">
+                  {Math.round(enriched.correlation.confidence * 100)}% confidence
+                </span>
+              </div>
+              <p className="mt-2 text-sm font-semibold leading-6 text-pearl">{enriched.correlation.reasoning}</p>
+              <div className="mt-3 grid gap-3 md:grid-cols-2">
+                <FactorList title="Matched factors" values={enriched.correlation.matchedFactors} tone="matched" />
+                <FactorList title="Weak or missing factors" values={enriched.correlation.missingFactors} tone="missing" />
+              </div>
+              {enriched.correlationModel ? (
+                <p className="mt-3 text-[11px] font-bold uppercase text-steel">
+                  {enriched.correlationModel}
+                  {enriched.correlatedAt ? ` / ${new Date(enriched.correlatedAt).toLocaleString()}` : ""}
+                </p>
+              ) : null}
+              {webSources.length > 0 ? (
+                <div className="mt-3 grid gap-2 border-t border-blue-50 pt-3">
+                  {webSources.map((source, index) => (
+                    <RiskSourceRow key={`serpapi-${source.url ?? index}`} source={source} />
+                  ))}
+                </div>
               ) : null}
             </div>
+            ) : null}
+
+            {detailView === "memory" && hasMemory ? (
+              <div className="grid gap-2">
+                {memorySources.map((source, index) => (
+                  <RiskSourceRow key={`memwal-${source.blobId ?? index}`} source={source} />
+                ))}
+              </div>
+            ) : null}
+
+            {detailView === "ai" && !hasAi ? (
+              <p className="text-sm font-semibold text-steel">No AI correlation available for this finding.</p>
+            ) : null}
+            {detailView === "memory" && !hasMemory ? (
+              <p className="text-sm font-semibold text-steel">No stored memory source for this finding.</p>
+            ) : null}
           </div>
-        ))}
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
+function RiskSourceRow({ source }: { source: RiskFinding["sources"][number] }) {
+  return (
+    <div className="rounded-lg border border-blue-100 bg-white px-3 py-2">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        <p className="text-sm font-black text-pearl">{source.title}</p>
+        <span className="rounded-full bg-blue-50 px-2 py-1 text-[10px] font-black uppercase text-sui">
+          {source.kind === "memwal" ? "MemWal" : "Web"}
+        </span>
+      </div>
+      {source.snippet ? <p className="mt-1 text-xs font-semibold leading-5 text-steel">{source.snippet}</p> : null}
+      <div className="mt-2 flex flex-wrap gap-2 text-xs font-bold text-steel">
+        {source.publishedAt ? <span>{source.publishedAt}</span> : null}
+        {source.blobId ? <span className="break-all">MemWal {source.blobId}</span> : null}
+        {source.url ? (
+          <a href={source.url} target="_blank" rel="noopener noreferrer" className="inline-flex items-center gap-1 text-sui hover:text-pearl">
+            Open source <ExternalLink className="h-3 w-3" />
+          </a>
+        ) : null}
       </div>
     </div>
   );
@@ -304,16 +344,39 @@ function MemoryStatus({ finding }: { finding: RiskFinding }) {
   return <span className={cn("rounded-full px-2.5 py-1 text-xs font-black uppercase", tone)}>{label}</span>;
 }
 
-function Metric({ label, value, tone }: { label: string; value: number; tone: "critical" | "warning" | "info" }) {
-  const styles = {
-    critical: "border-red-100 bg-red-50 text-red-600",
-    warning: "border-amber-100 bg-amber-50 text-amber-700",
-    info: "border-blue-100 bg-blue-50 text-sui",
+function Metric({
+  label,
+  value,
+  tone,
+  detail,
+}: {
+  label: string;
+  value: number;
+  tone: "critical" | "warning" | "info";
+  detail?: string;
+}) {
+  const boxStyles = {
+    critical: "border-red-200 bg-red-50",
+    warning: "border-amber-100 bg-amber-50",
+    info: "border-blue-100 bg-blue-50",
+  };
+  const labelStyles = {
+    critical: "text-red-600",
+    warning: "text-amber-700",
+    info: "text-sui",
+  };
+  const valueStyles = {
+    critical: "text-red-600",
+    warning: "text-amber-700",
+    info: "text-sui",
   };
   return (
-    <div className={cn("rounded-xl border p-3", styles[tone])}>
-      <p className="text-xs font-black uppercase">{label}</p>
-      <p className="mt-1 text-2xl font-black">{value}</p>
+    <div className={cn("rounded-xl border p-3", boxStyles[tone])}>
+      <p className={cn("text-xs font-black uppercase", labelStyles[tone])}>{label}</p>
+      <p className={cn("mt-1 text-2xl font-black", valueStyles[tone])}>{value}</p>
+      {detail ? (
+        <p className="mt-2 text-xs font-bold leading-snug text-pearl">{detail}</p>
+      ) : null}
     </div>
   );
 }
@@ -324,16 +387,6 @@ function summarizeCounts(findings: RiskFinding[]) {
     warning: findings.filter((finding) => finding.severity === "warning").length,
     info: findings.filter((finding) => finding.severity === "info").length,
   };
-}
-
-function uniqueDisplayValues(values: string[]) {
-  const seen = new Set<string>();
-  return values.filter((value) => {
-    const key = value.trim().toLowerCase();
-    if (!key || seen.has(key)) return false;
-    seen.add(key);
-    return true;
-  });
 }
 
 function findingTone(severity: RiskFinding["severity"]) {

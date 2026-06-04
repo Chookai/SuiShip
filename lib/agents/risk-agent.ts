@@ -5,6 +5,7 @@ import { isMemWalConfigured, memwalRecall, memwalRememberAndWait, type MemWalRec
 import { getShipmentById } from "../shipments-server";
 import { getAisPosition } from "../tracker-api/client";
 import type { ShipmentRecord } from "../shipments-store";
+import { enrichRiskFinding } from "../risk-eta-impact";
 export {
   RISK_EVENTS_NAMESPACE,
   RISK_OBSERVATIONS_NAMESPACE,
@@ -494,12 +495,13 @@ export async function runRiskScanForShipment(
       // Synthetic AIS-delay observation when simulation is paused on issue
       const ais = await getAisPosition(shipmentId);
       if (ais.ok && ais.status === "paused_issue") {
-        const delayFinding: RiskFinding = {
+        const delayFinding: RiskFinding = enrichRiskFinding({
           id: `ais-delay-${createHash("sha256").update(`${shipmentId}:${ais.timestamp}`).digest("hex").slice(0, 16)}`,
           severity: "warning",
           category: "carrier_schedule",
           title: `AIS issue detected — vessel paused at ${ais.progressPercent}% on ${ais.origin} → ${ais.destination}`,
           summary: `Live AIS simulation shows vessel ${ais.vesselName} paused at ${ais.progressPercent}% progress (lat ${ais.lat.toFixed(2)}, lng ${ais.lng.toFixed(2)}) indicating an in-transit delay or operational hold.`,
+          etaImpact: "In-transit hold may delay arrival versus the planned ETA.",
           affectedShipmentFacts: affectedFacts(shipment),
           recommendedActions: [
             "Contact carrier for status update",
@@ -510,7 +512,7 @@ export async function runRiskScanForShipment(
           memoryWriteStatus: "pending",
           sources: [{ kind: "serpapi", title: "AIS simulation", snippet: `Vessel paused at ${ais.progressPercent}% — status: ${ais.status}` }],
           correlation: { related: true, confidence: 0.9, matchedFactors: ["route", "carrier", "AIS status"], missingFactors: [], reasoning: "Direct AIS simulation signal." },
-        };
+        });
         await memwalRememberAndWait(serializeRiskObservation(shipment, delayFinding, now), RISK_OBSERVATIONS_NAMESPACE, 60_000).catch(() => {/* best-effort */});
         if (!findings.some((f) => f.id.startsWith("ais-delay-"))) {
           findings = [...findings, { ...delayFinding, memoryWriteStatus: "written" }];
@@ -668,22 +670,24 @@ export function normalizeRiskMemoryResults(
     const summary = extractField(memory.text, "summary") ?? memory.text.split("\n").find(Boolean) ?? "Historical logistics risk memory.";
     const category = coerceCategory(extractField(memory.text, "category") ?? title);
     const findingText = [title, summary, memory.text].join("\n");
-    return {
+    const base = {
       id: `memwal-${memory.blobId}`,
       severity: category === "memory_pattern" ? "info" : classifySeverity(category, findingText),
       category: category === "memory_pattern" ? "memory_pattern" : category,
       title,
       summary,
+      etaImpact: extractField(memory.text, "typical_impact") ?? undefined,
       affectedShipmentFacts: affectedFacts(shipment),
       recommendedActions: parseActions(extractField(memory.text, "recommended_actions")) ?? defaultActions(category),
-      memoryWriteStatus: "not_applicable",
+      memoryWriteStatus: "not_applicable" as const,
       sources: [{
-        kind: "memwal",
+        kind: "memwal" as const,
         title,
         blobId: memory.blobId,
         snippet: memory.text.slice(0, 400),
       }],
     } satisfies RiskFinding;
+    return enrichRiskFinding(base);
   });
 }
 
@@ -752,7 +756,7 @@ function normalizeSerpApiResult(shipment: ShipmentRecord, result: SerpApiResultL
   if (!isRiskFindingRelevantToShipment(shipment, text)) return null;
   const source = sourceTitle(result.source);
   const summary = snippet || `${title} may affect the shipment route.`;
-  return {
+  return enrichRiskFinding({
     id: `serp-${createHash("sha256").update(`${asString(result.link) ?? asString(result.url) ?? ""}|${title}`).digest("hex").slice(0, 16)}`,
     severity: classifySeverity(category, text),
     category,
@@ -768,7 +772,7 @@ function normalizeSerpApiResult(shipment: ShipmentRecord, result: SerpApiResultL
       publishedAt: asString(result.publishedAt) ?? asString(result.date) ?? undefined,
       snippet: source ? `${source}: ${summary}` : summary,
     }],
-  };
+  });
 }
 
 export function hasDirectShipmentMatch(shipment: ShipmentRecord, finding: RiskFinding): boolean {
@@ -958,7 +962,7 @@ function rowToRiskScan(row: RiskScanRow): RiskScanResult {
     id: row.id,
     shipmentId: row.shipment_id,
     status: row.status,
-    findings: JSON.parse(row.findings_json) as RiskFinding[],
+    findings: (JSON.parse(row.findings_json) as RiskFinding[]).map(enrichRiskFinding),
     generatedAt: row.created_at,
     memwalConfigured: Boolean(row.memwal_configured),
     serpApiConfigured: Boolean(row.serpapi_configured),

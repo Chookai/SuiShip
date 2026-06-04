@@ -2,6 +2,7 @@
 
 import {
   AlertTriangle,
+  Clock,
   ExternalLink,
   FileText,
   Loader2,
@@ -11,8 +12,10 @@ import {
   ShieldAlert,
   Ship,
 } from "lucide-react";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { RiskAgentPanel } from "@/components/RiskAgentPanel";
+import type { RiskScanResult } from "@/lib/agents/risk-types";
+import { summarizeShipmentEtaRisk } from "@/lib/risk-eta-impact";
 import type { ShipmentRecord } from "@/lib/shipments-store";
 import { cn } from "@/lib/utils";
 import { maskAccount, type FieldComparison } from "@/lib/agents/field-comparisons";
@@ -217,8 +220,8 @@ function ActivityCard({
         <p className="text-base font-semibold text-pearl">
           <span className="text-2xl font-bold text-sui">#{num}</span>{" "}
           {entry.uploadedCount} document{entry.uploadedCount !== 1 ? "s" : ""} uploaded and AI validation:{" "}
-          <span className={matched ? "text-emerald-600" : "text-amber-600"}>
-            {matched ? "Passed" : "Failed"}
+          <span className={matched ? "text-emerald-600" : "text-red-600"}>
+            {matched ? "PASSED" : "FAILED"}
           </span>
           {!matched && (errorCount > 0 || warnCount > 0) && (
             <span className="text-sm font-normal text-steel ml-1">
@@ -375,28 +378,36 @@ function EvidenceDiffSection({ fieldComparisons }: { fieldComparisons: FieldComp
                 {section.fields.map((field) => {
                   const comparison = comparisonMap.get(field) ?? null;
                   const sev = comparison?.severity;
-                  const rowClass = sev === "critical"
-                    ? "border-l-4 border-l-red-400 bg-red-50"
-                    : sev === "warning"
-                      ? "border-l-4 border-l-amber-400 bg-amber-50/50"
-                      : "border-l-4 border-l-transparent";
+                  const rowBg =
+                    sev === "critical"
+                      ? "bg-red-50"
+                      : sev === "warning"
+                        ? "bg-amber-50/50"
+                        : "";
+                  const leadingBar =
+                    sev === "critical"
+                      ? "border-l-4 border-l-red-400"
+                      : sev === "warning"
+                        ? "border-l-4 border-l-amber-400"
+                        : "border-l-4 border-l-transparent";
+                  const cellPad = "px-3 py-2";
                   return (
-                    <tr key={field} className={cn("border-b border-blue-50 last:border-0", rowClass)}>
-                      <td className="px-3 py-2 font-semibold text-pearl">
+                    <tr key={field} className={cn("border-b border-blue-50 last:border-0", rowBg)}>
+                      <td className={cn(cellPad, leadingBar, "font-semibold text-pearl")}>
                         {EVIDENCE_FIELD_LABELS[field] ?? field}
                       </td>
-                      <td className="px-3 py-2 font-mono text-steel" title={String(comparison?.enteredValue ?? "")}>
+                      <td className={cn(cellPad, "font-mono text-steel")} title={String(comparison?.enteredValue ?? "")}>
                         {formatEvidenceValue(field, comparison?.enteredValue)}
                       </td>
-                      <td className="px-3 py-2 font-mono text-steel" title={String(comparison?.extractedValue ?? "")}>
+                      <td className={cn(cellPad, "font-mono text-steel")} title={String(comparison?.extractedValue ?? "")}>
                         {formatEvidenceValue(field, comparison?.extractedValue)}
                       </td>
-                      <td className="px-3 py-2 font-mono" title={String(comparison?.rememberedValue ?? "")}>
+                      <td className={cn(cellPad, "font-mono")} title={String(comparison?.rememberedValue ?? "")}>
                         <span className={comparison?.rememberedValue != null ? "font-bold text-emerald-700" : "text-steel"}>
                           {formatEvidenceValue(field, comparison?.rememberedValue)}
                         </span>
                       </td>
-                      <td className="px-3 py-2">
+                      <td className={cellPad}>
                         {sev ? <SeverityBadge severity={sev} /> : <span className="text-steel">—</span>}
                       </td>
                     </tr>
@@ -531,8 +542,43 @@ function OverviewSubheading({ icon: Icon, title }: { icon: React.ElementType; ti
   );
 }
 
-function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
+function useRiskScan(shipmentId: string, refreshKey = 0) {
+  const [scan, setScan] = useState<RiskScanResult | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    fetch(`/api/shipments/${encodeURIComponent(shipmentId)}/risk-scan`)
+      .then(async (res) => {
+        if (res.status === 404) return null;
+        if (!res.ok) return null;
+        return res.json() as Promise<RiskScanResult>;
+      })
+      .then((data) => {
+        if (!cancelled) setScan(data);
+      })
+      .catch(() => {
+        if (!cancelled) setScan(null);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [shipmentId, refreshKey]);
+
+  return scan;
+}
+
+function OverviewSection({
+  shipment,
+  riskScan,
+}: {
+  shipment: ShipmentRecord;
+  riskScan: RiskScanResult | null;
+}) {
   const s = shipment.shipment;
+  const etaRisk = useMemo(
+    () => summarizeShipmentEtaRisk(riskScan?.findings ?? [], shipment.shipment.eta),
+    [riskScan?.findings, shipment.shipment.eta],
+  );
   const c = shipment.cargo;
   const transportLabel =
     s.transportMode?.trim().toLowerCase() === "air" ? "Air Waybill (AWB)" : "Bill of Lading";
@@ -670,6 +716,30 @@ function OverviewSection({ shipment }: { shipment: ShipmentRecord }) {
             {routeDuration && (
               <p className="mt-2 text-center text-xs font-bold text-steel">{routeDuration}</p>
             )}
+            {eta && (
+              <p className="mt-2 text-center text-xs font-semibold text-steel">
+                Planned ETA: <span className="font-bold text-pearl">{eta}</span>
+              </p>
+            )}
+            {etaRisk.atRisk && (etaRisk.delayLabel || etaRisk.revisedEtaLabel) ? (
+              <div className="mt-3 rounded-lg border border-red-200 bg-red-50/90 px-3 py-2">
+                <div className="flex items-start gap-2">
+                  <Clock className="mt-0.5 h-4 w-4 shrink-0 text-pearl" />
+                  <div>
+                    <p className="text-xs font-bold uppercase text-pearl">ETA at risk</p>
+                    {etaRisk.delayLabel ? (
+                      <p className="mt-1 text-sm font-extrabold text-pearl">{etaRisk.delayLabel}</p>
+                    ) : null}
+                    {etaRisk.revisedEtaLabel ? (
+                      <p className="mt-1 text-sm font-semibold text-pearl">
+                        Est. arrival {etaRisk.revisedEtaLabel}
+                        {eta ? ` (planned ${eta})` : ""}
+                      </p>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
+            ) : null}
           </div>
         </div>
 
@@ -761,6 +831,7 @@ export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps
   const [activeTab, setActiveTab] = useState<AgentTab>("document");
   const fieldComparisons: FieldComparison[] = validation?.fieldComparisons ?? [];
   const activityRefreshNonce = (refreshKey ?? 0) + activityRefreshKey;
+  const riskScan = useRiskScan(shipment.id, activityRefreshNonce);
 
   return (
     <div className="space-y-4">
@@ -769,7 +840,7 @@ export function ShipmentCaseFile({ shipment, refreshKey }: ShipmentCaseFileProps
       <RecentActivities shipmentId={shipment.id} shipment={shipment} refreshKey={activityRefreshNonce} />
 
       {/* Overview */}
-      <OverviewSection shipment={shipment} />
+      <OverviewSection shipment={shipment} riskScan={riskScan} />
 
       {/* Agent Hub — tabbed */}
       <div className="rounded-2xl border border-blue-100 bg-white shadow-sm">
