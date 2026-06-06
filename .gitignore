@@ -21,3 +21,8 @@ suiship.db-shm
 # Internal working docs — not for public consumption
 PROD_AUDIT.md
 idea.md
+
+# Playwright E2E test artifacts (videos, traces, screenshots, HAR, run summaries)
+tests/e2e/artifacts/
+playwright-report/
+test-results/

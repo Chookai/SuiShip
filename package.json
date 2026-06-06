@@ -16,7 +16,10 @@
     "slush:setup": "tsx scripts/setup-party-slush-accounts.ts",
     "slush:fund": "tsx scripts/fund-party-slush-accounts.ts",
     "verify:seal-demo": "tsx scripts/verify-seal-demo.ts",
-    "ais:stub": "node tools/mock-ais/server.mjs"
+    "ais:stub": "node tools/mock-ais/server.mjs",
+    "test:e2e": "playwright test --headed",
+    "test:e2e:debug": "playwright test --headed --debug",
+    "test:e2e:ci": "playwright test --headless"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
@@ -43,6 +46,7 @@
     "zod": "^3.24.0"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/better-sqlite3": "^7.6.13",
     "@types/node": "^22.10.2",
     "@types/react": "^19.0.2",
