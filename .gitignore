@@ -11,6 +11,13 @@ move/build/
 data/*.db
 data/*.db-wal
 data/*.db-shm
+suiship.db
+suiship.db-wal
+suiship.db-shm
 .superpowers
 .env
 .idea.md
+
+# Internal working docs — not for public consumption
+PROD_AUDIT.md
+idea.md
