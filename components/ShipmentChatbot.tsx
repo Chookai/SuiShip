@@ -345,7 +345,6 @@ export function ShipmentChatbot({ shipmentId, role }: { shipmentId: string; role
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [input, setInput] = useState("");
   const [loading, setLoading] = useState(false);
-  const [activeTool, setActiveTool] = useState<string | null>(null);
   const [historyLoadedFor, setHistoryLoadedFor] = useState<string | undefined>(undefined);
   const scrollRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
@@ -383,7 +382,6 @@ export function ShipmentChatbot({ shipmentId, role }: { shipmentId: string; role
     setMessages((prev) => [...prev, userMsg]);
     setInput("");
     setLoading(true);
-    setActiveTool(null);
 
     try {
       if (AGENT_MODE) {
@@ -446,7 +444,6 @@ export function ShipmentChatbot({ shipmentId, role }: { shipmentId: string; role
       ]);
     } finally {
       setLoading(false);
-      setActiveTool(null);
     }
   }
 

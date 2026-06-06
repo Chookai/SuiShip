@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
+import pino from "pino";
 import { getDb } from "@/lib/db";
 import { registerShipmentForTracking } from "./client";
 import { ensureMonitoredShipment } from "@/lib/persistent-agent";
+
+const logger = pino({ name: "tracker-retry" });
 
 const MAX_ATTEMPTS = 5;
 const BATCH_SIZE = 10;
@@ -35,8 +38,8 @@ export async function retryFailedRegistrations(): Promise<void> {
       ORDER BY updated_at ASC
       LIMIT ?
     `).all(MAX_ATTEMPTS, BATCH_SIZE) as FailureRow[];
-  } catch {
-    // Table may not exist yet if migration hasn't run — skip silently
+  } catch (e) {
+    logger.warn({ err: e }, "tracking_failures table missing — run migration 017");
     return;
   }
 
@@ -45,10 +48,24 @@ export async function retryFailedRegistrations(): Promise<void> {
   const aisBase = process.env.AIS_BASE_URL ?? "http://localhost:8081";
 
   for (const failure of failures) {
+    let origin = "Singapore";
+    let destination = "Los Angeles";
+    try {
+      const row = db.prepare("SELECT shipment_json FROM shipments WHERE id = ?")
+        .get(failure.shipment_id) as { shipment_json: string } | undefined;
+      if (row?.shipment_json) {
+        const parsed = JSON.parse(row.shipment_json) as Record<string, unknown>;
+        if (typeof parsed.origin === "string" && parsed.origin) origin = parsed.origin;
+        if (typeof parsed.destination === "string" && parsed.destination) destination = parsed.destination;
+      }
+    } catch {
+      // malformed JSON or missing row — fall back to defaults
+    }
+
     const { freight, ais } = await registerShipmentForTracking({
       shipmentId: failure.shipment_id,
-      origin: "Singapore",
-      destination: "Los Angeles",
+      origin,
+      destination,
     });
 
     if (freight.ok) {
@@ -79,9 +96,9 @@ export async function retryFailedRegistrations(): Promise<void> {
         WHERE id = ?
       `).run(failure.id);
 
-      console.log(
-        `[tracker-retry] Resolved failure ${failure.id} for shipment ${failure.shipment_id}` +
-          ` → tracking ${freight.trackingNumber}, AIS ${ais.ok ? "started" : "failed"}`
+      logger.info(
+        { failureId: failure.id, shipmentId: failure.shipment_id, trackingNumber: freight.trackingNumber, aisOk: ais.ok },
+        "tracker retry resolved"
       );
     } else {
       db.prepare(`
@@ -92,8 +109,9 @@ export async function retryFailedRegistrations(): Promise<void> {
         WHERE id = ?
       `).run(freight.error, failure.id);
 
-      console.warn(
-        `[tracker-retry] Retry ${failure.attempt_count + 1}/${MAX_ATTEMPTS} failed for ${failure.shipment_id}: ${freight.error}`
+      logger.warn(
+        { shipmentId: failure.shipment_id, attempt: failure.attempt_count + 1, max: MAX_ATTEMPTS, error: freight.error },
+        "tracker retry failed"
       );
     }
   }

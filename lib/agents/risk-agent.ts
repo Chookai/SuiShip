@@ -20,7 +20,7 @@ import {
   type RiskScanResult,
 } from "./risk-types";
 
-export const RISK_CORRELATION_MODEL = "claude-sonnet-4-20250514";
+export const RISK_CORRELATION_MODEL = "claude-sonnet-4-6";
 const RISK_CORRELATION_CONFIDENCE_THRESHOLD = 0.7;
 const RISK_CORRELATION_CANDIDATE_LIMIT = 10;
 

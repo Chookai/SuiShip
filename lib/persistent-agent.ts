@@ -505,7 +505,7 @@ function fallbackIssueAnalysis(event: PersistentAgentEvent): IssueDraft {
 }
 
 async function aiIssueAnalysis(event: PersistentAgentEvent): Promise<IssueDraft> {
-  const model = "claude-haiku-4-5";
+  const model = "claude-haiku-4-5-20251001";
   try {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
     const response = await client.messages.create({
