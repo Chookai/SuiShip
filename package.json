@@ -15,7 +15,8 @@
     "memwal:fresh": "tsx scripts/create-memwal-account-and-seed.ts --no-seed",
     "slush:setup": "tsx scripts/setup-party-slush-accounts.ts",
     "slush:fund": "tsx scripts/fund-party-slush-accounts.ts",
-    "verify:seal-demo": "tsx scripts/verify-seal-demo.ts"
+    "verify:seal-demo": "tsx scripts/verify-seal-demo.ts",
+    "ais:stub": "node tools/mock-ais/server.mjs"
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.39.0",
