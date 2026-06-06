@@ -35,6 +35,8 @@ export type RiskFinding = {
   category: RiskFindingCategory;
   title: string;
   summary: string;
+  /** How this risk may affect planned ETA / delivery timing. */
+  etaImpact?: string;
   affectedShipmentFacts: string[];
   recommendedActions: string[];
   memoryWriteStatus: "not_applicable" | "pending" | "written" | "failed" | "deferred_until_delay_confirmed";

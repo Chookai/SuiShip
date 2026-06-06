@@ -30,21 +30,29 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { invitations, unreadCount, markAllRead, markRead } = useInvitations(role, shipments);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
   const notifRef = useRef<HTMLDivElement | null>(null);
+  const accountRef = useRef<HTMLDivElement | null>(null);
   const { resolvedTheme, setTheme } = useTheme();
 
   useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
     function onDocClick(event: MouseEvent) {
-      if (!notifRef.current) return;
-      if (notifRef.current.contains(event.target as Node)) return;
+      const target = event.target as Node;
+      if (notifRef.current?.contains(target)) return;
+      if (accountRef.current?.contains(target)) return;
       setNotifOpen(false);
+      setRoleMenuOpen(false);
     }
-    if (notifOpen) {
+    if (notifOpen || roleMenuOpen) {
       document.addEventListener("mousedown", onDocClick);
       return () => document.removeEventListener("mousedown", onDocClick);
     }
     return;
-  }, [notifOpen]);
+  }, [notifOpen, roleMenuOpen]);
 
   return (
     <div className="min-h-screen">
@@ -73,51 +81,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
             );
           })}
         </nav>
-        <div className="relative mt-auto px-4 pb-8">
-          {roleMenuOpen && (
-            <div className="absolute bottom-24 left-4 right-4 z-20 rounded-2xl border border-white/70 bg-white/88 p-2 shadow-panel backdrop-blur-xl dark:border-slate-700/70 dark:bg-midnight/95">
-              {roles.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => {
-                    setRole(item);
-                    setRoleMenuOpen(false);
-                  }}
-                  className={cn(
-                    "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-bold text-steel transition hover:bg-[#EAF4FF] hover:text-sui",
-                    role === item && "bg-[#EAF4FF] text-sui"
-                  )}
-                >
-                  <span className="blue-gradient h-8 w-8 shrink-0 rounded-full" />
-                  <span className="min-w-0">
-                    <span className="block truncate">{profiles[item].company}</span>
-                  </span>
-                </button>
-              ))}
-            </div>
-          )}
-          <div className="flex h-14 items-center gap-1 rounded-2xl px-1">
-            <Link
-              href="/profile"
-              className="flex min-w-0 flex-1 items-center gap-2 rounded-2xl text-left transition hover:bg-white/35"
-              onClick={() => setRoleMenuOpen(false)}
-              title={profile.company}
-            >
-              <div className="blue-gradient h-9 w-9 shrink-0 rounded-full" />
-              <p className="min-w-0 truncate text-[13px] font-bold text-pearl">{profile.company}</p>
-            </Link>
-            <button
-              type="button"
-              onClick={() => setRoleMenuOpen((open) => !open)}
-              className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sui transition hover:bg-white/50"
-              aria-label="Switch company"
-              aria-expanded={roleMenuOpen}
-            >
-              <ChevronsUpDown className="h-4 w-4" />
-            </button>
-          </div>
-        </div>
       </aside>
 
       <div className="min-w-0 lg:pl-[240px]">
@@ -137,6 +100,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <button
                   type="button"
                   onClick={() => {
+                    setRoleMenuOpen(false);
                     setNotifOpen((open) => {
                       const next = !open;
                       if (next) markAllRead();
@@ -220,8 +184,60 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 className="flex h-10 w-10 items-center justify-center rounded-full text-steel transition-colors hover:bg-midnight hover:text-sui"
                 aria-label="Toggle theme"
               >
-                {resolvedTheme === "dark" ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
+                {mounted && resolvedTheme === "dark" ? (
+                  <Sun className="h-5 w-5" />
+                ) : (
+                  <Moon className="h-5 w-5" />
+                )}
               </button>
+              <div ref={accountRef} className="relative">
+                {roleMenuOpen && (
+                  <div className="absolute right-0 top-12 z-30 w-[280px] rounded-2xl border border-blue-100 bg-white p-2 shadow-panel dark:border-slate-700 dark:bg-midnight">
+                    {roles.map((item) => (
+                      <button
+                        key={item}
+                        type="button"
+                        onClick={() => {
+                          setRole(item);
+                          setRoleMenuOpen(false);
+                        }}
+                        className={cn(
+                          "flex w-full items-center gap-3 rounded-xl px-3 py-2 text-left text-sm font-bold text-steel transition hover:bg-[#EAF4FF] hover:text-sui dark:hover:bg-sui/10",
+                          role === item && "bg-[#EAF4FF] text-sui dark:bg-sui/15"
+                        )}
+                      >
+                        <span className="blue-gradient h-8 w-8 shrink-0 rounded-full" />
+                        <span className="min-w-0 truncate">{profiles[item].company}</span>
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="flex items-center gap-1 rounded-2xl pl-1">
+                  <Link
+                    href="/profile"
+                    className="flex min-w-0 max-w-[200px] items-center gap-2 rounded-2xl py-1 pr-1 text-left transition hover:bg-blue-50 dark:hover:bg-sui/10"
+                    onClick={() => setRoleMenuOpen(false)}
+                    title={profile.company}
+                  >
+                    <div className="blue-gradient h-9 w-9 shrink-0 rounded-full" />
+                    <p className="hidden min-w-0 truncate text-[13px] font-bold text-pearl sm:block">
+                      {profile.company}
+                    </p>
+                  </Link>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setNotifOpen(false);
+                      setRoleMenuOpen((open) => !open);
+                    }}
+                    className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl text-sui transition hover:bg-blue-50 dark:hover:bg-sui/10"
+                    aria-label="Switch company"
+                    aria-expanded={roleMenuOpen}
+                  >
+                    <ChevronsUpDown className="h-4 w-4" />
+                  </button>
+                </div>
+              </div>
             </div>
           </div>
           <nav className="flex gap-1 overflow-x-auto border-t border-blue-100 px-4 py-2 dark:border-slate-700 lg:hidden">

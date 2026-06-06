@@ -22,6 +22,32 @@ function getServerAddress(): string {
   return parseEd25519Keypair(key).toSuiAddress();
 }
 
+function isMissingObjectError(error: unknown): boolean {
+  const text = String(error).toLowerCase();
+  return text.includes("does not exist") || text.includes("object not found");
+}
+
+async function retryWithBackoff<T>(
+  fn: () => Promise<T>,
+  {
+    retries = 3,
+    initialDelayMs = 300,
+  }: { retries?: number; initialDelayMs?: number } = {},
+): Promise<T> {
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      if (attempt >= retries || !isMissingObjectError(error)) throw error;
+      const waitMs = initialDelayMs * (attempt + 1);
+      await new Promise((resolve) => setTimeout(resolve, waitMs));
+    }
+  }
+  throw lastError;
+}
+
 export const runtime = "nodejs";
 
 export async function POST(
@@ -138,24 +164,28 @@ export async function POST(
       if (!capObjectId) {
         return NextResponse.json({ error: "capObjectId required for freight_forwarder role" }, { status: 400 });
       }
-      ({ txDigest } = await client.endorseAsFreightForwarder({
-        logObjectId,
-        capObjectId,
-        action,
-        noteHash,
-        signerKeypair,
-      }));
+      ({ txDigest } = await retryWithBackoff(() =>
+        client.endorseAsFreightForwarder({
+          logObjectId,
+          capObjectId,
+          action,
+          noteHash,
+          signerKeypair,
+        }),
+      ));
     } else if (role === "customs") {
       if (!capObjectId) {
         return NextResponse.json({ error: "capObjectId required for customs role" }, { status: 400 });
       }
-      ({ txDigest } = await client.endorseAsCustoms({
-        logObjectId,
-        capObjectId,
-        action,
-        noteHash,
-        signerKeypair,
-      }));
+      ({ txDigest } = await retryWithBackoff(() =>
+        client.endorseAsCustoms({
+          logObjectId,
+          capObjectId,
+          action,
+          noteHash,
+          signerKeypair,
+        }),
+      ));
     } else {
       ({ txDigest } = await client.endorseShipment({ logObjectId, role, action, noteHash, signerKeypair }));
     }

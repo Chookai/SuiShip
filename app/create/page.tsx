@@ -941,21 +941,6 @@ export default function CreateShipmentPage() {
   );
 }
 
-function extractionSourceLabel(doc: DocumentRequirement) {
-  const model = doc.extractionModel ? ` ${doc.extractionModel}` : "";
-  const latency = typeof doc.extractionLatencyMs === "number" && doc.extractionLatencyMs > 0
-    ? ` · ${(doc.extractionLatencyMs / 1000).toFixed(1)}s`
-    : "";
-  const tokens = typeof doc.extractionInputTokens === "number" && typeof doc.extractionOutputTokens === "number"
-    ? ` · ${doc.extractionInputTokens + doc.extractionOutputTokens} tokens`
-    : "";
-
-  if (doc.extractionSource === "live_haiku") return `Live Haiku${model}${latency}${tokens}`;
-  if (doc.extractionSource === "cached_haiku") return `Cached Haiku result${model}${tokens}`;
-  if (doc.extractionSource === "mock") return "Demo Mode extraction";
-  return "Extraction source unavailable";
-}
-
 function PartyCard({
   title,
   party,
@@ -1223,11 +1208,6 @@ function DocumentUploadStep({
                     <p className="text-sm font-extrabold text-pearl leading-tight">{displayDocumentName(doc.name, transportMode)}</p>
                     {doc.fileName && (
                       <p className="mt-0.5 truncate text-xs text-steel" title={doc.fileName}>{doc.fileName}</p>
-                    )}
-                    {doc.extractionSource && (
-                      <p className="mt-1 text-xs font-bold text-[#4DA2FF]">
-                        {extractionSourceLabel(doc)}
-                      </p>
                     )}
                     {!doc.fileName && isExtracting && (
                       <p className="mt-0.5 flex items-center gap-1 text-xs text-[#4DA2FF]">
