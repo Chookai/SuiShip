@@ -7,7 +7,7 @@ import path from "node:path";
 
 const RPC_URL = "https://fullnode.testnet.sui.io:443";
 const FAUCET_URL = "https://faucet.testnet.sui.io/v1/gas";
-const MIN_MIST = 100_000_000n; // 0.1 SUI
+const MIN_MIST = BigInt(100_000_000); // 0.1 SUI
 
 type SlushAccount = { role: string; company: string; address: string };
 

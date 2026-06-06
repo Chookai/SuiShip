@@ -1,4 +1,8 @@
+import { config } from "dotenv";
 import { defineConfig } from "@playwright/test";
+
+// Load .env.local so E2E tests have access to secrets
+config({ path: ".env.local" });
 
 export default defineConfig({
   testDir: "./tests/e2e",
@@ -20,7 +24,7 @@ export default defineConfig({
     baseURL: "http://localhost:3000",
     viewport: { width: 1440, height: 900 },
   },
-  outputDir: "tests/e2e/artifacts",
+  outputDir: "tests/e2e/artifacts/results",
   webServer: {
     command: "npm run start",
     port: 3000,
