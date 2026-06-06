@@ -85,7 +85,18 @@ export function runMigrations(db: Database.Database): void {
     if (applied.has(version)) continue;
 
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), "utf-8");
-    db.exec(sql);
+    // Execute each semicolon-delimited statement individually so we can
+    // handle ALTER TABLE ADD COLUMN idempotently (SQLite has no IF NOT EXISTS).
+    for (const stmt of sql.split(";").map((s) => s.trim()).filter(Boolean)) {
+      const addColMatch = stmt.match(/^ALTER\s+TABLE\s+(\S+)\s+ADD\s+COLUMN\s+(\S+)/i);
+      if (addColMatch) {
+        const [, table, column] = addColMatch;
+        const cols = (db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>)
+          .map((c) => c.name);
+        if (cols.includes(column)) continue;
+      }
+      db.exec(stmt);
+    }
     db.prepare("INSERT INTO schema_migrations (version) VALUES (?)").run(version);
   }
 
