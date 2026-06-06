@@ -1,67 +1,198 @@
 # SuiShip
 
-SuiShip is a premium hackathon prototype for AI-ready, on-chain shipment document passports on Sui.
+**AI-powered shipment document passports on the Sui blockchain.**
 
-The app demonstrates the end-to-end flow:
+SuiShip turns a pile of shipping documents (bill of lading, commercial invoice, packing list, certificate of origin) into a verifiable on-chain passport. Claude AI agents extract fields, cross-validate documents, detect trade-finance risk, and produce a tamper-evident record anchored on Sui. Built as a hackathon prototype for the Sui ecosystem.
 
-1. Create a shipment.
-2. Add document references.
-3. Run mocked AI extraction and verification.
-4. Mint a Sui `ShipmentPassport` object.
-5. View object IDs, hashes, Walrus-style URIs, QR links, and customs status.
-6. Search a customs viewer.
+---
 
-## Setup
+## What works out of the box (mock mode)
+
+No external keys needed beyond `ANTHROPIC_API_KEY`:
+
+| Feature | Description |
+|---|---|
+| Create shipment | Full form with route, parties, cargo, trade term |
+| AI document extraction | Claude Haiku extracts fields from uploaded PDFs |
+| AI validation | Cross-validates all documents, produces verdict + explanation |
+| Risk agent | Claude Sonnet correlates risk signals from documents and trade history |
+| On-chain passport (mock) | SQLite-backed mock Sui client with realistic latency simulation |
+| Walrus storage (mock) | `walrus://demo-*` placeholder URIs; full manifest in SQLite |
+| Shipment chatbot | Tool-calling chat agent with role-gated access per party |
+| Provenance panel | Custody chain of endorsements per party role |
+| QR code | Shareable shipment passport link |
+| Customs viewer | `/customs` — search by tracking ID |
+| Party slush signing | Server-side endorsement signing for demo roles |
+
+---
+
+## Quickstart
 
 ```bash
+git clone <repo-url>
+cd suiShip
 npm install
-npm run dev
+cp .env.example .env.local
 ```
 
-Open `http://localhost:3000`.
+Edit `.env.local` — at minimum, set:
+
+```bash
+ANTHROPIC_API_KEY=sk-ant-...   # Required — get from console.anthropic.com
+```
+
+Then:
+
+```bash
+npm run dev
+# Open http://localhost:3000
+```
+
+Walk the demo: **Dashboard → Create Shipment → Upload Docs → Run AI Pipeline → View Passport → Chat**.
+
+---
+
+## What requires external services
+
+| Feature | Service | Required? | Setup |
+|---|---|---|---|
+| AI extraction & validation | Anthropic API | **Yes** | `ANTHROPIC_API_KEY` in `.env.local` |
+| On-chain passport minting | Sui testnet | Optional | Set `SUI_CLIENT=real` + `SUI_NETWORK=testnet` + `SUI_PRIVATE_KEY` |
+| AIS vessel monitoring | AIS stub server | Optional | `npm run ais:stub` in a second terminal |
+| MemWal document memory | MemWal | Optional | Sign up at memwal.com, set `ENABLE_MEMWAL=true` + keys |
+| News-based risk intelligence | SerpAPI | Optional | Free tier at serpapi.com, set `SERPAPI_API_KEY` |
+| Real Walrus storage | Walrus devnet | Optional | Set `WALRUS_EPOCHS` and configure Walrus client |
+
+---
+
+## Running the AIS stub (for persistent-agent monitoring)
+
+The persistent-agent feature polls a vessel position server. A minimal stub is included:
+
+```bash
+# In a second terminal:
+npm run ais:stub
+# Starts at http://localhost:8081
+
+# Then in .env.local:
+AIS_BASE_URL=http://localhost:8081
+```
+
+The stub is a zero-dependency Node.js server (`tools/mock-ais/server.mjs`) that serves realistic vessel position data interpolated between port coordinates. Status page: `http://localhost:8081/mock/ui`.
+
+---
+
+## On-chain mode (Sui testnet)
+
+The Move package is already deployed to Sui testnet:
+`0xb64a35301e1703cee52e4712286c5438e8598b2e02290c4c3cc911db78cf33e9`
+
+To use it:
+
+1. Install the [Sui CLI](https://docs.sui.io/guides/developer/getting-started/sui-install)
+2. Configure a testnet wallet: `sui client new-address ed25519` and fund via the [Sui faucet](https://faucet.sui.io)
+3. Set in `.env.local`:
+   ```bash
+   SUI_CLIENT=real
+   SUI_NETWORK=testnet
+   SUI_PRIVATE_KEY=suiprivkey...
+   NEXT_PUBLIC_SUISHIP_PACKAGE_ID=0xb64a35301e1703cee52e4712286c5438e8598b2e02290c4c3cc911db78cf33e9
+   ```
+
+To redeploy the contract yourself:
+```bash
+cd move
+sui client publish --gas-budget 100000000
+# Paste the new package ID into NEXT_PUBLIC_SUISHIP_PACKAGE_ID
+```
+
+---
+
+## Architecture
+
+```mermaid
+graph TD
+    Browser["Browser (Next.js)"]
+    API["Next.js API Routes"]
+    SQLite["SQLite (better-sqlite3)"]
+    Anthropic["Anthropic Claude API<br/>(Haiku + Sonnet)"]
+    Sui["Sui Testnet<br/>(mock or real)"]
+    Walrus["Walrus / MemWal<br/>(mock or real)"]
+    AIS["AIS Stub Server<br/>tools/mock-ais/"]
+
+    Browser --> API
+    API --> SQLite
+    API --> Anthropic
+    API --> Sui
+    API --> Walrus
+    API --> AIS
+    AIS --> API
+```
+
+**Agent stack:**
+- **Extraction agent** (`src/agent/`) — Claude Haiku, async doc pipeline
+- **Validation agent** (`lib/agents/validation-agent.ts`) — cross-document field comparison
+- **Risk agent** (`lib/agents/risk-agent.ts`) — trade finance risk correlation
+- **Chatbot agent** (`lib/agents/agent-loop.ts`) — tool-calling chat with role gating
+- **Persistent agent** (`lib/persistent-agent.ts`) — polls AIS server, emits shipment events
+- **Memory agent** (`lib/agents/memory-agent.ts`) — reads/writes MemWal for company context
+
+---
+
+## Demo script (happy path)
+
+1. **`/create`** — Fill in shipment details (Exporter: Acme Robotics, Importer: Shanghai Smart Imports, route: LA → Shanghai, cargo: industrial tablets)
+2. **Upload documents** — Use the provided demo PDFs or generate with `npm run demo:docs`
+3. **Run AI pipeline** — Click "Extract Fields" then "Validate Documents"
+4. **Mint passport** — Click "Mint Shipment Passport" (mock mode writes to SQLite; real mode writes to Sui)
+5. **View passport** — See the on-chain object ID, document hashes, Walrus URIs, QR code
+6. **Chatbot** — Switch roles (Exporter / Freight Forwarder / Importer) and ask questions about the shipment
+7. **Risk report** — `/risk-memory` shows correlated trade-finance risk signals
+8. **(Optional) AIS monitoring** — Start `npm run ais:stub`, trigger a "Freight Forwarder: picked up" endorsement, and watch the persistent agent poll vessel position
+
+---
+
+## Known limitations
+
+- **AIS monitoring** requires a separately running server (`npm run ais:stub`)
+- **Real Sui transactions** require testnet SUI for gas
+- **MemWal and Walrus** are optional; the app works fully without them in mock mode
+- **SEAL integration** (`SEAL_ENABLED=true`) is experimental
+- **No production auth** — the demo uses a mock role system; do not deploy as-is
+- **Party slush keys** in `data/party-slush-accounts.json` are testnet-only public addresses; generate fresh keys per environment with `npm run slush:setup`
+
+---
 
 ## Useful commands
 
 ```bash
-npm run typecheck
-npm run lint
-npm run build
+npm run dev              # Start development server
+npm run build            # Production build
+npm run typecheck        # TypeScript check
+npm run lint             # ESLint
+npm run test             # Run tests (Vitest)
+npm run ais:stub         # Start the AIS stub server (second terminal)
+npm run demo:docs        # Generate demo PDF documents
+npm run slush:setup      # Generate party wallet keys (Exporter / Importer / FF)
+npm run memwal:setup     # Set up a MemWal account and seed documents
 ```
 
-## Publish the Move package
+---
 
-Install the Sui CLI, configure a testnet wallet, then publish:
+## Tech stack
 
-```bash
-cd move
-sui client publish --gas-budget 100000000
-```
+| Layer | Technology |
+|---|---|
+| Framework | Next.js 16, React 19, TypeScript |
+| AI | [Anthropic Claude](https://anthropic.com) — Haiku 4.5 (extraction/validation) + Sonnet 4.6 (risk, chat) |
+| Blockchain | [Sui](https://sui.io) — Move smart contracts, `@mysten/sui` SDK |
+| Storage | [Walrus](https://walrus.site) (blob), [MemWal](https://memwal.com) (structured memory) |
+| Database | SQLite via `better-sqlite3` |
+| Logging | `pino` |
+| Styling | Tailwind CSS |
 
-Copy the published package ID and run the web app with:
+---
 
-```bash
-NEXT_PUBLIC_SUISHIP_PACKAGE_ID=0xYOUR_PACKAGE_ID npm run dev
-```
+## License
 
-## What is real
-
-- Next.js, TypeScript, Tailwind UI.
-- Sui wallet connection through `@mysten/dapp-kit`.
-- Sui TypeScript SDK transaction builders for creating a passport and updating customs status.
-- Sui Move package at `move/sources/shipment_passport.move`.
-- On-chain object fields for shipment ID, parties, route, carrier, status, AI score, risk, document hashes, storage URIs, timestamps, and owner.
-- QR rendering for shipment passport links.
-
-## What is mocked
-
-- AI extraction and verification are simulated with deterministic demo fields.
-- Walrus storage is represented as `walrus://demo-*` placeholder URIs.
-- Demo shipments use shortened object IDs until you publish the package and mint real objects.
-
-## Pages
-
-- `/` landing page.
-- `/dashboard` shipment passport dashboard.
-- `/create` create and mint flow.
-- `/shipments/SS-MY-US-0001` shipment passport detail.
-- `/customs` customs viewer.
+[MIT](LICENSE) — SuiShip Contributors 2026
