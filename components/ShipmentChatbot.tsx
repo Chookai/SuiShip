@@ -551,7 +551,7 @@ export function ShipmentChatbot({ shipmentId, role }: { shipmentId: string; role
               <div className="flex justify-start">
                 <div className="flex items-center gap-2 rounded-2xl rounded-bl-md border border-blue-100 bg-blue-50 px-3.5 py-2.5 text-sm text-steel">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  {activeTool ? `Calling: ${activeTool}…` : "Thinking…"}
+                  {"Thinking…"}
                 </div>
               </div>
             )}

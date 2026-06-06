@@ -119,7 +119,7 @@ export default function ShipmentDetailPage() {
   }
 
   if (stored) {
-    const currentRoleOwner: DocumentOwner = role;
+    const currentRoleOwner: DocumentOwner = role === "Importer" ? "Importer" : "Exporter";
     return (
       <StoredShipmentView
         shipment={stored}
@@ -130,7 +130,7 @@ export default function ShipmentDetailPage() {
   }
 
   if (serverShipment) {
-    const currentRoleOwner: DocumentOwner = role;
+    const currentRoleOwner: DocumentOwner = role === "Importer" ? "Importer" : "Exporter";
     return (
       <StoredShipmentView
         shipment={serverShipment}
