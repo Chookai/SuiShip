@@ -1,7 +1,10 @@
 import { randomUUID } from "node:crypto";
 import Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
+import pino from "pino";
 import { getDb } from "./db";
+
+const logger = pino({ name: "persistent-agent" });
 
 export type MonitoredShipmentConfig = {
   simulationId: string;
@@ -365,7 +368,7 @@ export async function checkAllPersistentAgentShipments(
   // Retry any tracker registrations that failed during FF picked_up endorsements
   void import("./tracker-api/retry").then(({ retryFailedRegistrations }) =>
     retryFailedRegistrations().catch((err) =>
-      console.warn("[persistent-agent] retryFailedRegistrations error:", err)
+      logger.warn({ err }, "retryFailedRegistrations error")
     )
   );
 
@@ -538,7 +541,8 @@ async function aiIssueAnalysis(event: PersistentAgentEvent): Promise<IssueDraft>
       model,
       rawResponse: parsed,
     };
-  } catch {
+  } catch (err) {
+    logger.error({ err }, "AI issue analysis failed, using fallback");
     return fallbackIssueAnalysis(event);
   }
 }

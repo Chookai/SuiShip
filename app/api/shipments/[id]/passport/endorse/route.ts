@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { randomUUID } from "node:crypto";
+import pino from "pino";
 import { getDb } from "@/lib/db";
+
+const logger = pino({ name: "endorse" });
 import { validateDemoEndorsementAttempt } from "@/lib/endorsement-flow";
 import {
   getPartySlushKeypairForEndorsementRole,
@@ -219,19 +222,20 @@ export async function POST(
           }
 
           trackingOutcome = { id: freight.trackingNumber, status: "active", registeredAt: timestamp };
-          console.log(
-            `[endorse] FF picked_up → tracker ${freight.trackingNumber}, AIS ${ais.ok ? "started" : "skipped ("+ais.error+")"}`
+          logger.info(
+            { shipmentId, trackingNumber: freight.trackingNumber, aisOk: ais.ok },
+            "FF picked_up → tracker registered"
           );
         } else {
           logTrackerFailure({ shipmentId, role, action, error: freight.error });
           trackingOutcome = { status: "registration_failed", willRetry: true };
-          console.warn(`[endorse] Tracker registration failed for ${shipmentId}: ${freight.error}`);
+          logger.warn({ shipmentId, error: freight.error }, "tracker registration failed");
         }
       } catch (err) {
         // Endorsement already succeeded on-chain — don't surface this error
         logTrackerFailure({ shipmentId, role, action, error: String(err) });
         trackingOutcome = { status: "registration_failed", willRetry: true };
-        console.error("[endorse] Tracker registration threw:", err);
+        logger.error({ shipmentId, err }, "tracker registration threw");
       }
     }
 

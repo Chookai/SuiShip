@@ -307,8 +307,8 @@ export function ShipmentsProvider({ children }: { children: React.ReactNode }) {
           } catch {}
           return next;
         });
-        void deleteFromServer(id).catch((error) => {
-          console.error(error);
+        void deleteFromServer(id).catch(() => {
+          // best-effort delete — server-side cleanup will handle orphans
         });
       },
       getShipment: (id) => shipments.find((shipment) => shipment.id === id),

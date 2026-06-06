@@ -1,5 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
+import pino from "pino";
 import { getDb } from "@/lib/db";
+
+const logger = pino({ name: "chat" });
 import { insertChatMessage } from "@/lib/chat-tools/history";
 import { recallLatestCompanyProfile } from "@/lib/profile-memwal";
 import { normalizeRole, getChatAccessLevel } from "@/lib/auth/chat-policy";
@@ -251,7 +254,7 @@ ${context}`,
 
     return NextResponse.json({ reply });
   } catch (err) {
-    console.error("[chat] error:", err);
+    logger.error({ err }, "chat handler error");
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }

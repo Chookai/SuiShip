@@ -1,8 +1,7 @@
-// Modeled on app/api/shipments/[id]/chat/route.ts (context assembly)
-// and lib/agents/validation-agent.ts (agent loop invocation).
 // Feature-flagged: requires CHAT_AGENT_MODE=true env var.
 import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
+import pino from "pino";
 import { getDb } from "@/lib/db";
 import { runAgentLoop } from "@/lib/agents/agent-loop";
 import { recordAgentStep } from "@/lib/agent-runs";
@@ -18,6 +17,8 @@ import {
   loadChatHistory,
 } from "@/lib/chat-tools/history";
 import type { ToolEvent } from "@/lib/agents/agent-loop";
+
+const logger = pino({ name: "chat-agent" });
 
 export const runtime = "nodejs";
 
@@ -324,7 +325,7 @@ Rules — strictly follow all of these:
       agentRunId,
     });
   } catch (err) {
-    console.error("[chat/agent] error:", err);
+    logger.error({ err }, "chat/agent handler error");
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }
 }
