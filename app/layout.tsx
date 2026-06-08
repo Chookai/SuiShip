@@ -3,7 +3,7 @@ import "./globals.css";
 import { ThemeProvider } from "next-themes";
 import { Providers } from "@/components/providers";
 import { RoleProvider } from "@/components/role-context";
-import { Shell } from "@/components/shell";
+import { AppShellGate } from "@/components/app-shell-gate";
 import { ShipmentsProvider } from "@/lib/shipments-store";
 
 export const metadata: Metadata = {
@@ -19,7 +19,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <Providers>
             <RoleProvider>
               <ShipmentsProvider>
-                <Shell>{children}</Shell>
+                <AppShellGate>{children}</AppShellGate>
               </ShipmentsProvider>
             </RoleProvider>
           </Providers>

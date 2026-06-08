@@ -1,7 +1,6 @@
 "use client";
 
-import { Activity, Bell, BrainCircuit, ChevronsUpDown, FilePlus2, LayoutDashboard, Moon, ShieldAlert, Ship, Sparkles, Sun } from "lucide-react";
-import { useTheme } from "next-themes";
+import { Activity, Bell, ChevronsUpDown, FilePlus2, LayoutDashboard, Ship, Sparkles } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
@@ -18,8 +17,6 @@ const nav = [
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/shipments", label: "Shipments", icon: Ship },
   { href: "/create", label: "Create", icon: FilePlus2 },
-  { href: "/memory", label: "Memory", icon: BrainCircuit },
-  { href: "/risk-memory", label: "Risk Memory", icon: ShieldAlert },
   { href: "/persistent-agent", label: "Persistent Agent", icon: Activity },
 ];
 
@@ -30,14 +27,8 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const { invitations, unreadCount, markAllRead, markRead } = useInvitations(role, shipments);
   const [roleMenuOpen, setRoleMenuOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
   const notifRef = useRef<HTMLDivElement | null>(null);
   const accountRef = useRef<HTMLDivElement | null>(null);
-  const { resolvedTheme, setTheme } = useTheme();
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     function onDocClick(event: MouseEvent) {
@@ -179,17 +170,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   </div>
                 )}
               </div>
-              <button
-                onClick={() => setTheme(resolvedTheme === "dark" ? "light" : "dark")}
-                className="flex h-10 w-10 items-center justify-center rounded-full text-steel transition-colors hover:bg-midnight hover:text-sui"
-                aria-label="Toggle theme"
-              >
-                {mounted && resolvedTheme === "dark" ? (
-                  <Sun className="h-5 w-5" />
-                ) : (
-                  <Moon className="h-5 w-5" />
-                )}
-              </button>
               <div ref={accountRef} className="relative">
                 {roleMenuOpen && (
                   <div className="absolute right-0 top-12 z-30 w-[280px] rounded-2xl border border-blue-100 bg-white p-2 shadow-panel dark:border-slate-700 dark:bg-midnight">
