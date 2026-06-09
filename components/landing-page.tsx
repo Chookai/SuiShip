@@ -543,7 +543,7 @@ function LandingNav({ onWatchDemo }: { onWatchDemo: () => void }) {
             href="/create"
             className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold blue-gradient text-white shadow-glow transition hover:brightness-105"
           >
-            Start Building
+            Launch App
             <ArrowRight className="h-4 w-4" />
           </Link>
         </div>
@@ -637,7 +637,7 @@ export function LandingPage() {
                   href="/create"
                   className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-6 py-2 text-sm font-bold blue-gradient text-white shadow-glow transition hover:brightness-110"
                 >
-                  Start Building
+                  Launch App
                   <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
                 </Link>
                 <button
@@ -1121,36 +1121,48 @@ export function LandingPage() {
                   </div>
                 </div>
 
-                <div className="rounded-2xl border border-white/8 bg-[#070b16] p-5 font-mono text-xs shadow-inner">
-                  <div className="mb-4 flex items-center gap-2 border-b border-white/8 pb-3">
-                    <span className="h-2.5 w-2.5 rounded-full bg-red-500/70" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/70" />
-                    <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/70" />
-                    <span className="ml-2 text-[10px] uppercase tracking-wider text-steel/50">SuiShip API</span>
-                  </div>
-                  <div className="grid gap-5">
-                    {builderEndpoints.map((ep) => (
-                      <div key={ep.path}>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <span className="rounded bg-sui/20 px-1.5 py-0.5 text-[10px] font-bold text-sui">
-                            {ep.method}
-                          </span>
-                          <span className="text-pearl">{ep.path}</span>
-                          <span className="text-steel/50"># {ep.comment}</span>
-                        </div>
-                        <div className="mt-2 rounded border border-white/8 bg-white/[0.03] px-3 py-2 text-steel/80">
-                          <span className="text-steel/40">→ </span>
-                          {ep.response.split("\n").map((line, i) => (
-                            <span key={i}>
-                              {line}
-                              {i < ep.response.split("\n").length - 1 && <br />}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <div className="rounded-2xl border border-white/15 bg-[#070b16] p-6 font-mono text-base shadow-inner">
+  <div className="mb-5 flex items-center gap-2 border-b border-white/15 pb-4">
+    <span className="h-3 w-3 rounded-full bg-red-500" />
+    <span className="h-3 w-3 rounded-full bg-yellow-500" />
+    <span className="h-3 w-3 rounded-full bg-emerald-500" />
+
+    <span className="ml-2 text-sm font-bold uppercase tracking-wider text-white">
+      SuiShip API
+    </span>
+  </div>
+
+  <div className="grid gap-6">
+    {builderEndpoints.map((ep) => (
+      <div key={ep.path}>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="rounded bg-sui/25 px-2 py-1 text-sm font-bold text-white">
+            {ep.method}
+          </span>
+
+          <span className="text-base font-semibold text-white">
+            {ep.path}
+          </span>
+
+          <span className="text-base text-white/80">
+            # {ep.comment}
+          </span>
+        </div>
+
+        <div className="mt-3 rounded border border-white/15 bg-white/[0.06] px-4 py-3 text-base leading-7 text-white">
+          <span className="text-white/70">→ </span>
+
+          {ep.response.split("\n").map((line, i) => (
+            <span key={i}>
+              {line}
+              {i < ep.response.split("\n").length - 1 && <br />}
+            </span>
+          ))}
+        </div>
+      </div>
+    ))}
+  </div>
+</div>
               </div>
             </Panel>
           </FadeIn>
@@ -1186,7 +1198,7 @@ export function LandingPage() {
                     href="/create"
                     className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl bg-white px-7 py-2 text-sm font-extrabold text-sui transition hover:brightness-105"
                   >
-                    Start Building
+                    Launch App
                     <ArrowRight className="h-4 w-4" />
                   </Link>
                   <button

@@ -5,6 +5,7 @@ tsconfig.tsbuildinfo
 dist/
 out/
 move/build/
+move/Published.toml.bak
 .DS_Store
 
 # SQLite database and WAL files — use SEED_DEMO_SHIPMENTS=true to populate a fresh DB
@@ -21,8 +22,21 @@ suiship.db-shm
 # Internal working docs — not for public consumption
 PROD_AUDIT.md
 idea.md
+plan.md
+DEMO_VIDEO_PLAN.md
 
 # Playwright E2E test artifacts (videos, traces, screenshots, HAR, run summaries)
 tests/e2e/artifacts/
 playwright-report/
 test-results/
+
+# Playwright MCP session artifacts (logs, snapshots, screenshots from Claude Code sessions)
+.playwright-mcp/
+
+# Development screenshots
+screenshots/
+
+# AI tool working directories
+.claude/
+.agents/
+.codex/
