@@ -7,18 +7,15 @@ import {
   Bot,
   Boxes,
   BrainCircuit,
-  Database,
   ExternalLink,
   FileCheck2,
   Fingerprint,
-  GitBranch,
+  ArrowDown,
   Globe2,
   Infinity as InfinityIcon,
-  Layers,
   Link2,
   LockKeyhole,
   MessageSquare,
-  Network,
   Package,
   Play,
   QrCode,
@@ -36,9 +33,13 @@ import { motion, useScroll, useTransform, type Variants } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import sealLogo from "@/asset/seal_logo.svg";
+import suiLogo from "@/asset/sui_logo.svg";
 import suishipLogo from "@/asset/suiship_logo.png";
 import suishipName from "@/asset/suiship_name.png";
+import walrusLogo from "@/asset/walrus_logo.svg";
 import { Panel } from "@/components/ui";
+import { cn } from "@/lib/utils";
 
 // ─── Animation variants ────────────────────────────────────────────────────
 
@@ -51,6 +52,138 @@ const staggerContainer: Variants = {
   hidden: {},
   visible: { transition: { staggerChildren: 0.07 } },
 };
+
+function LandingSection({
+  id,
+  tone = "light",
+  className,
+  innerClassName,
+  background,
+  children,
+}: {
+  id?: string;
+  tone?: "dark" | "mid" | "light" | "sky" | "ice" | "navy";
+  className?: string;
+  innerClassName?: string;
+  background?: React.ReactNode;
+  children: React.ReactNode;
+}) {
+  const toneClass = {
+    dark: "landing-section-dark",
+    mid: "landing-section-mid",
+    light: "landing-section-light",
+    sky: "landing-section-sky",
+    ice: "landing-section-ice",
+    navy: "landing-section-navy",
+  }[tone];
+
+  return (
+    <section id={id} className={cn(toneClass, "relative overflow-hidden", className)}>
+      {background}
+      <div className={cn("relative z-10 mx-auto max-w-7xl px-5 py-16 lg:px-10", innerClassName)}>{children}</div>
+    </section>
+  );
+}
+
+function HeroSectionGlow() {
+  return <div className="landing-hero-glow" aria-hidden="true" />;
+}
+
+function PipelineFlow() {
+  return (
+    <div className="pipeline-board overflow-hidden rounded-[2rem] border border-[#1a2744] bg-[#0b1220] p-5 md:p-8 lg:p-10">
+      <div className="flex flex-col lg:flex-row lg:items-stretch">
+        {workflow.map((item, index) => {
+          const Icon = item.icon;
+          return (
+            <div key={item.step} className="flex flex-1 flex-col lg:flex-row lg:items-stretch">
+              <div className="pipeline-node flex flex-1 flex-col rounded-[1.25rem] bg-[#f7f4ee] p-6 md:p-7 lg:min-h-[220px]">
+                <div className="flex items-start justify-between gap-4">
+                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm md:h-16 md:w-16">
+                    <Icon className="h-7 w-7 text-sui md:h-8 md:w-8" strokeWidth={1.75} />
+                  </div>
+                  <span className="font-mono text-3xl font-extrabold leading-none text-[#0b1220]/10 md:text-4xl">
+                    {item.step}
+                  </span>
+                </div>
+                <h3 className="mt-6 text-xl font-extrabold tracking-tight text-[#0b1220] md:text-2xl">
+                  {item.title}
+                </h3>
+                <p className="mt-3 text-sm leading-6 text-[#5a6d8f] md:text-[15px] md:leading-7">{item.detail}</p>
+              </div>
+
+              {index < workflow.length - 1 ? (
+                <>
+                  <div className="pipeline-connector flex items-center justify-center py-3 lg:hidden" aria-hidden="true">
+                    <ArrowDown className="h-5 w-5 text-sui/70" strokeWidth={2} />
+                  </div>
+                  <div className="pipeline-connector hidden w-10 shrink-0 items-center justify-center xl:w-14 lg:flex" aria-hidden="true">
+                    <div className="flex w-full items-center gap-1">
+                      <div className="h-px flex-1 bg-sui/35" />
+                      <ArrowRight className="h-4 w-4 shrink-0 text-sui" strokeWidth={2.5} />
+                    </div>
+                  </div>
+                </>
+              ) : null}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ThinkingRemember() {
+  return (
+    <span className="hero-remember">
+      <span className="hero-remember-word">remember</span>
+      <span className="hero-thinking-dots" aria-hidden="true">
+        <span>.</span>
+        <span>.</span>
+        <span>.</span>
+      </span>
+    </span>
+  );
+}
+
+function SharperHighlight() {
+  return (
+    <span className="hero-sharper">
+      <span className="hero-sharper-word">sharper</span>
+      <span className="hero-sharper-tick" aria-hidden="true">
+        ↑
+      </span>
+    </span>
+  );
+}
+
+const poweredByLogos = [
+  { src: walrusLogo, alt: "Walrus", label: "Walrus" },
+  { src: sealLogo, alt: "SEAL", label: "SEAL" },
+  { src: suiLogo, alt: "Sui", label: "Sui" },
+] as const;
+
+function PoweredByBar() {
+  return (
+    <motion.div
+      variants={fadeUp}
+      className="mt-14 flex flex-col items-center gap-5 border-t border-black/5 pt-10"
+    >
+      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-steel">Powered by</p>
+      <div className="flex flex-wrap items-center justify-center gap-10 md:gap-14">
+        {poweredByLogos.map((logo) => (
+          <div key={logo.label} className="flex items-center justify-center">
+            <Image
+              src={logo.src}
+              alt={logo.alt}
+              className="h-8 w-auto object-contain opacity-80 transition hover:opacity-100 md:h-9"
+            />
+          </div>
+        ))}
+      </div>
+    </motion.div>
+  );
+}
 
 function FadeIn({
   children,
@@ -118,44 +251,67 @@ const navLinks = [
   { label: "Builders", href: "#builders" },
 ];
 
+const landingNavLinkClass = "landing-nav-link rounded-xl px-3 py-2 text-sm font-semibold";
+
 const trackAlignment = [
   {
-    icon: BrainCircuit,
     title: "Long-term memory",
-    sub: "MemWal · persistent semantic recall",
     body: "Every agent reads and writes structured company context. Memory survives across shipments, sessions, and parties — anchored on Walrus, addressable by the agent loop.",
+    cardClass: "bg-[#0d1628] text-white",
+    dotClass: "bg-[#4da2ff]",
   },
   {
-    icon: Database,
     title: "Persistent data layer",
-    sub: "Walrus · erasure-coded blob storage",
     body: "Trade PDFs, validation reports, agent traces, and risk analyses live on Walrus. Sui anchors the references so every artifact stays verifiable and queryable.",
+    cardClass: "bg-[#4da2ff] text-white",
+    dotClass: "bg-white",
   },
   {
-    icon: Network,
     title: "Multi-agent coordination",
-    sub: "6 specialized agents · tool-calling",
     body: "Extraction, validation, risk, chat, persistent monitoring, and memory agents pass artifacts and findings between each other through a shared Walrus-backed context.",
+    cardClass: "border border-blue-100 bg-white text-pearl",
+    dotClass: "bg-[#4da2ff]",
   },
   {
-    icon: Layers,
     title: "Artifact-driven workflow",
-    sub: "PDFs → fingerprints → passports",
     body: "Each pipeline stage produces a durable artifact — extracted JSON, validation verdict, risk report, on-chain passport — that downstream agents reuse instead of regenerating.",
+    cardClass: "bg-[#dceeff] text-pearl",
+    dotClass: "bg-[#1e90ff]",
   },
   {
-    icon: Workflow,
     title: "Long-running execution",
-    sub: "Event-driven · AIS polling",
     body: "The persistent agent monitors vessels after endorsements and emits shipment events when ETAs drift. Agents stay live long after the user closes the tab.",
+    cardClass: "bg-[#b8dcff] text-pearl",
+    dotClass: "bg-[#4da2ff]",
   },
   {
-    icon: Terminal,
     title: "Developer tooling",
-    sub: "REST API · memory inspector",
     body: "Every agent stage is a standalone endpoint. Memory writes are inspectable. Builders can plug SuiShip's memory layer into their own agent frameworks.",
+    cardClass: "bg-[#eaf4ff] text-pearl",
+    dotClass: "bg-[#87c8ff]",
   },
 ];
+
+const problemStats = [
+  {
+    stat: "$42B+",
+    label: "Trade finance fraud annually",
+    detail:
+      "Bills of lading forged in minutes. The same document pledged to multiple banks. No agent remembers what's real.",
+  },
+  {
+    stat: "5–7 days",
+    label: "Average customs clearance delay",
+    detail:
+      "Paperwork scattered across email threads. Errors found on arrival. Each tool starts from zero.",
+  },
+  {
+    stat: "12+ parties",
+    label: "Touch a single shipment",
+    detail:
+      "Exporters, importers, freight forwarders, banks, customs — each working from a different copy.",
+  },
+] as const;
 
 const coreFeatures = [
   {
@@ -225,23 +381,27 @@ const workflow = [
     step: "01",
     title: "Create",
     detail: "Trade parties, route, cargo, PDF set.",
+    icon: Ship,
   },
   {
     step: "02",
     title: "Extract & validate",
     detail: "Haiku extraction → validation agent → MemWal recall → verdict.",
+    icon: ScanSearch,
   },
   {
     step: "03",
     title: "Mint",
     detail: "Sui passport with hashes, blob refs, risk score, verification score.",
+    icon: LockKeyhole,
   },
   {
     step: "04",
     title: "Collaborate & monitor",
     detail: "Chat agent, endorsements, QR link, persistent vessel monitoring.",
+    icon: Radar,
   },
-];
+] as const;
 
 const techStack = [
   {
@@ -334,6 +494,23 @@ const heroTraceLines: Array<{
   { agent: "passport", call: "mint(verdict=BLOCKED)", result: "→ 0x9a3f…c021", tone: "ok" },
 ];
 
+const heroToneStyles = {
+  info: { agent: "text-[#7cb8ff]", result: "text-[#94a3b8]" },
+  warn: { agent: "text-[#fbbf24]", result: "text-[#fcd34d]" },
+  critical: { agent: "text-[#f87171]", result: "text-[#fca5a5]" },
+  ok: { agent: "text-[#34d399]", result: "text-[#6ee7b7]" },
+} as const;
+
+function MacTrafficLights() {
+  return (
+    <div className="mac-traffic-lights" aria-hidden="true">
+      <span className="mac-dot mac-dot-red" />
+      <span className="mac-dot mac-dot-yellow" />
+      <span className="mac-dot mac-dot-green" />
+    </div>
+  );
+}
+
 function HeroTerminal() {
   const [visible, setVisible] = useState(0);
 
@@ -347,103 +524,52 @@ function HeroTerminal() {
   }, [visible]);
 
   return (
-    <div className="relative overflow-hidden rounded-[1.6rem] border border-white/10 bg-[#070b16]/95 shadow-2xl backdrop-blur">
-      {/* glow */}
-      <div className="absolute -inset-px rounded-[1.6rem] bg-gradient-to-br from-sui/20 via-transparent to-amber-500/15 opacity-50" />
-      <div className="relative">
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-white/8 px-4 py-3">
-          <div className="flex items-center gap-2">
-            <span className="h-2.5 w-2.5 rounded-full bg-red-500/70" />
-            <span className="h-2.5 w-2.5 rounded-full bg-yellow-500/70" />
-            <span className="h-2.5 w-2.5 rounded-full bg-emerald-500/70" />
-            <span className="ml-3 font-mono text-[10px] uppercase tracking-widest text-steel/60">
-              suiship · agent trace · live
-            </span>
-          </div>
-          <span className="flex items-center gap-1.5 font-mono text-[10px] text-emerald-400">
-            <span className="relative flex h-1.5 w-1.5">
-              <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-emerald-400 opacity-75" />
-              <span className="relative inline-flex h-1.5 w-1.5 rounded-full bg-emerald-400" />
-            </span>
-            MEMWAL ONLINE
-          </span>
+    <div className="hero-terminal w-full text-left">
+      <div className="hero-terminal-titlebar">
+        <MacTrafficLights />
+      </div>
+
+      <div className="hero-terminal-body flex h-[336px] flex-col px-4 py-3.5 font-mono text-[12px] leading-[1.55] sm:px-5 sm:text-[13px]">
+        <div className="shrink-0 space-y-1">
+          <p className="text-[#f2f2f2]">
+            <span className="text-[#32d74b]">suiship@agents</span>
+            <span className="text-[#8b949e]">:</span>
+            <span className="text-[#58a6ff]">~</span>
+            <span className="text-[#f2f2f2]"> $ suiship agents run --shipment SHP-9921</span>
+          </p>
+          <p className="text-[#8b949e]">6 agents · walrus://0x4a…f7</p>
         </div>
 
-        {/* Trace */}
-        <div className="min-h-[340px] space-y-1.5 p-4 font-mono text-[11.5px] leading-relaxed">
-          <div className="text-steel/50">
-            <span className="text-sui">$</span> suiship agents run --shipment SHP-9921 --memory enabled
-          </div>
-          <div className="text-steel/40">› orchestrator: 6 agents online · context = walrus://0x4a…f7</div>
-
-          {heroTraceLines.slice(0, visible).map((line, i) => (
-            <motion.div
-              key={i}
-              initial={{ opacity: 0, x: -8 }}
-              animate={{ opacity: 1, x: 0 }}
-              transition={{ duration: 0.25 }}
-              className="grid grid-cols-[88px_1fr] gap-2"
-            >
-              <span
-                className={`rounded px-1.5 text-[10px] font-bold uppercase ${
-                  line.tone === "critical"
-                    ? "bg-red-500/15 text-red-400"
-                    : line.tone === "warn"
-                      ? "bg-amber-500/15 text-amber-400"
-                      : line.tone === "ok"
-                        ? "bg-emerald-500/15 text-emerald-400"
-                        : "bg-sui/15 text-sui"
-                }`}
+        <div className="mt-3 flex-1 space-y-1.5">
+          {heroTraceLines.map((line, i) => {
+            const tone = heroToneStyles[line.tone];
+            const isVisible = i < visible;
+            return (
+              <div
+                key={`${line.agent}-${line.call}`}
+                className={cn(
+                  "grid grid-cols-[6.75rem_minmax(0,1fr)_auto] items-baseline gap-x-3 transition-opacity duration-200 sm:whitespace-nowrap",
+                  isVisible ? "opacity-100" : "opacity-0"
+                )}
               >
-                {line.agent}
-              </span>
-              <span>
-                <span className="text-pearl">{line.call}</span>{" "}
-                <span
-                  className={
-                    line.tone === "critical"
-                      ? "text-red-400"
-                      : line.tone === "warn"
-                        ? "text-amber-400"
-                        : line.tone === "ok"
-                          ? "text-emerald-400"
-                          : "text-steel/70"
-                  }
-                >
-                  {line.result}
-                </span>
-              </span>
-            </motion.div>
-          ))}
-
-          {visible >= heroTraceLines.length && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              className="mt-3 rounded-lg border border-red-500/30 bg-red-500/8 p-2.5 text-[11px]"
-            >
-              <span className="font-bold text-red-400">FRAUD BLOCKED</span>
-              <span className="text-steel/80">
-                {" "}
-                · duplicate BOL + bank diversion · caught via MemWal recall · passport minted with verdict=BLOCKED
-              </span>
-            </motion.div>
-          )}
+                <span className={`font-semibold uppercase ${tone.agent}`}>{line.agent}</span>
+                <span className="text-[#f2f2f2]">{line.call}</span>
+                <span className={tone.result}>{line.result}</span>
+              </div>
+            );
+          })}
         </div>
 
-        {/* Footer chips */}
-        <div className="flex flex-wrap items-center gap-1.5 border-t border-white/8 px-4 py-3 font-mono text-[10px]">
-          <span className="rounded border border-sui/20 bg-sui/10 px-1.5 py-0.5 text-sui">sui://passport</span>
-          <span className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-emerald-400">
-            walrus://blob
-          </span>
-          <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-amber-400">
-            memwal://space
-          </span>
-          <span className="rounded border border-purple-500/20 bg-purple-500/10 px-1.5 py-0.5 text-purple-400">
-            seal://policy
-          </span>
+        <div
+          className={cn(
+            "mt-3 shrink-0 border-l-2 border-[#ff7b72] bg-[#ff7b72]/10 px-3 py-2 transition-opacity duration-200",
+            visible >= heroTraceLines.length ? "opacity-100" : "opacity-0"
+          )}
+        >
+          <p className="text-[12px] leading-5 sm:text-[13px] sm:whitespace-nowrap">
+            <span className="font-bold text-[#ff7b72]">FRAUD BLOCKED</span>
+            <span className="text-[#c9d1d9]"> — duplicate BOL · MemWal recall · verdict=BLOCKED</span>
+          </p>
         </div>
       </div>
     </div>
@@ -509,9 +635,9 @@ function LandingNav({ onWatchDemo }: { onWatchDemo: () => void }) {
 
   return (
     <motion.header
-      className="sticky top-0 z-50 px-5 py-4 backdrop-blur-xl lg:px-10"
+      className="landing-nav-header sticky top-0 z-50 px-5 py-4 backdrop-blur-xl lg:px-10"
       style={{
-        backgroundColor: `rgba(8, 13, 26, ${bgOpacity})`,
+        backgroundColor: `rgba(248, 251, 255, ${bgOpacity})`,
         borderBottom: `1px solid rgba(77, 162, 255, ${borderOpacity})`,
       }}
     >
@@ -522,11 +648,7 @@ function LandingNav({ onWatchDemo }: { onWatchDemo: () => void }) {
         </Link>
         <nav className="hidden items-center gap-1 lg:flex">
           {navLinks.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="rounded-xl px-3 py-2 text-sm font-semibold text-steel transition hover:bg-white/8 hover:text-pearl"
-            >
+            <a key={link.href} href={link.href} className={landingNavLinkClass}>
               {link.label}
             </a>
           ))}
@@ -534,7 +656,7 @@ function LandingNav({ onWatchDemo }: { onWatchDemo: () => void }) {
         <div className="flex items-center gap-2">
           <button
             onClick={onWatchDemo}
-            className="hidden items-center gap-1.5 rounded-xl px-3 py-2 text-sm font-semibold text-steel transition hover:bg-white/8 hover:text-pearl sm:flex"
+            className={`${landingNavLinkClass} hidden items-center gap-1.5 sm:flex`}
           >
             <Play className="h-3.5 w-3.5" />
             Demo
@@ -558,230 +680,132 @@ export function LandingPage() {
   const [demoOpen, setDemoOpen] = useState(false);
 
   return (
-    <div className="min-h-screen">
-      <TechBackground />
+    <div className="min-h-screen bg-[#f8fbff]">
       <DemoModal open={demoOpen} onClose={() => setDemoOpen(false)} />
       <LandingNav onWatchDemo={() => setDemoOpen(true)} />
 
       <main>
         {/* ── Hero ── */}
-        <section className="relative mx-auto max-w-7xl px-5 py-14 lg:px-10 lg:py-20">
-          {/* Top status strip */}
-          <FadeIn>
-            <div className="mb-10 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-white/8 bg-white/[0.03] px-4 py-2.5 backdrop-blur">
-              <div className="flex flex-wrap items-center gap-x-5 gap-y-1 font-mono text-[11px] text-steel/70">
-                <span className="flex items-center gap-1.5">
-                  <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-emerald-400" />
-                  6 agents online
-                </span>
-                <span>memwal: live</span>
-                <span>walrus: testnet</span>
-                <span>sui: testnet</span>
-              </div>
-              <span className="font-mono text-[11px] text-sui/80">
-                SUI Overflow · Walrus Track
-              </span>
-            </div>
-          </FadeIn>
+        <LandingSection tone="ice" innerClassName="pb-10 pt-14 lg:pb-14 lg:pt-24" background={<HeroSectionGlow />}>
+          <motion.div
+            variants={staggerContainer}
+            initial="hidden"
+            animate="visible"
+            className="mx-auto flex w-full max-w-6xl flex-col items-center text-center"
+          >
+            <motion.h1
+              variants={fadeUp}
+              className="text-5xl font-bold leading-[1.05] tracking-tight text-pearl md:text-7xl xl:text-8xl"
+            >
+              Agents that <ThinkingRemember />
+              <br />
+              get <SharperHighlight /> over time.
+            </motion.h1>
 
-          <div className="grid items-center gap-12 lg:grid-cols-[1.05fr_0.95fr]">
-            <motion.div variants={staggerContainer} initial="hidden" animate="visible">
-              <motion.div
-                variants={fadeUp}
-                className="mb-6 inline-flex items-center gap-2 rounded-full border border-sui/25 bg-sui/8 px-3 py-1 font-mono text-[11px] font-semibold uppercase tracking-wider text-sui backdrop-blur"
-              >
-                <BrainCircuit className="h-3.5 w-3.5" />
-                Persistent multi-agent system · built on Walrus
-              </motion.div>
+            <motion.p
+              variants={fadeUp}
+              className="mt-5 max-w-2xl text-base leading-8 text-steel md:text-lg"
+            >
+              Walrus-backed memory lets every agent recall past errors, mismatches, and fraud — so the next
+              shipment is validated smarter than the last.
+            </motion.p>
 
-              <motion.h1
-                variants={fadeUp}
-                className="text-5xl font-extrabold leading-[1.02] tracking-tight text-pearl md:text-6xl xl:text-7xl"
-              >
-                Agents that{" "}
-                <span className="relative inline-block">
-                  <span className="bg-gradient-to-br from-sui via-cyan-300 to-emerald-300 bg-clip-text text-transparent">
-                    remember
-                  </span>
-                  <svg
-                    className="absolute -bottom-2 left-0 w-full"
-                    height="8"
-                    viewBox="0 0 200 8"
-                    fill="none"
-                  >
-                    <path d="M2 6 Q 100 -2 198 6" stroke="url(#g1)" strokeWidth="2" strokeLinecap="round" />
-                    <defs>
-                      <linearGradient id="g1" x1="0" x2="1">
-                        <stop offset="0" stopColor="#4DA2FF" />
-                        <stop offset="1" stopColor="#5FD3BC" />
-                      </linearGradient>
-                    </defs>
-                  </svg>
-                </span>
-                <br />
-                catch the fraud the<br className="hidden md:block" />
-                first agent missed.
-              </motion.h1>
-
-              <motion.p
-                variants={fadeUp}
-                className="mt-7 max-w-2xl text-lg leading-8 text-steel"
-              >
-                SuiShip is a six-agent system with persistent memory on Walrus. Extraction, validation, risk,
-                chat, monitoring, and memory agents share a durable context — so the duplicate bill of lading
-                you uploaded last quarter still gets caught today.
-              </motion.p>
-
-              <motion.div variants={fadeUp} className="mt-9 flex flex-col gap-3 sm:flex-row">
-                <Link
-                  href="/create"
-                  className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl px-6 py-2 text-sm font-bold blue-gradient text-white shadow-glow transition hover:brightness-110"
-                >
-                  Launch App
-                  <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
-                </Link>
-                <button
-                  onClick={() => setDemoOpen(true)}
-                  className="inline-flex min-h-12 items-center justify-center gap-2 rounded-2xl border border-white/15 bg-white/5 px-6 py-2 text-sm font-semibold text-pearl backdrop-blur transition hover:bg-white/10"
-                >
-                  <Play className="h-4 w-4 text-sui" />
-                  Watch 5-min demo
-                </button>
-              </motion.div>
-
-              {/* Inline metrics */}
-              <motion.div
-                variants={fadeUp}
-                className="mt-10 grid max-w-xl grid-cols-3 gap-6 border-t border-white/8 pt-6"
-              >
-                {[
-                  { v: "6", l: "Coordinated agents" },
-                  { v: "∞", l: "Cross-shipment recall" },
-                  { v: "4", l: "Sui-native primitives" },
-                ].map((m) => (
-                  <div key={m.l}>
-                    <p className="bg-gradient-to-br from-pearl to-sui bg-clip-text text-3xl font-extrabold text-transparent">
-                      {m.v}
-                    </p>
-                    <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-steel/60">{m.l}</p>
-                  </div>
-                ))}
-              </motion.div>
+            <motion.div variants={fadeUp} className="mt-6 w-full">
+              <HeroTerminal />
             </motion.div>
 
-            <FadeIn delay={0.2}>
-              <HeroTerminal />
-            </FadeIn>
-          </div>
-        </section>
+            <motion.div variants={fadeUp} className="mt-8 flex flex-col items-center justify-center gap-3 sm:flex-row">
+              <Link
+                href="/create"
+                className="group inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-black/15 bg-white px-7 py-2 text-sm font-semibold text-black transition hover:bg-blue-50"
+              >
+                Launch App
+                <ArrowRight className="h-4 w-4 transition group-hover:translate-x-0.5" />
+              </Link>
+              <button
+                onClick={() => setDemoOpen(true)}
+                className="inline-flex min-h-12 items-center justify-center gap-2 rounded-full border border-black/15 bg-white px-7 py-2 text-sm font-semibold text-black transition hover:bg-blue-50"
+              >
+                <Play className="h-4 w-4" />
+                Watch 5-min demo
+              </button>
+            </motion.div>
 
-        {/* ── Track alignment bento ── */}
-        <section className="mx-auto max-w-7xl px-5 py-16 lg:px-10">
+            <PoweredByBar />
+          </motion.div>
+        </LandingSection>
+
+        {/* ── Track alignment ── */}
+        <LandingSection tone="sky">
           <FadeIn>
-            <div className="mb-10 flex flex-col items-start gap-3 md:flex-row md:items-end md:justify-between">
-              <div className="max-w-2xl">
-                <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
-                  Built for the Walrus Track
-                </p>
-                <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                  Six requirements. Six receipts.
-                </h2>
-              </div>
-              <p className="max-w-md text-sm leading-6 text-steel">
-                Every track criterion mapped to a live capability in the codebase — not slideware.
-              </p>
-            </div>
+            <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
+              Built for the Walrus Track
+            </p>
+            <h2 className="mt-3 max-w-3xl text-3xl font-extrabold tracking-tight text-pearl md:text-4xl lg:text-5xl">
+              Six Requirements. Six Receipts.
+            </h2>
           </FadeIn>
           <motion.div
-            className="grid gap-4 md:grid-cols-2 lg:grid-cols-3"
+            className="mt-10 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3 lg:gap-5"
             variants={staggerContainer}
             initial="hidden"
             whileInView="visible"
             viewport={{ once: true }}
           >
-            {trackAlignment.map((t) => {
-              const Icon = t.icon;
-              return (
-                <motion.div
-                  key={t.title}
-                  variants={fadeUp}
-                  className="group relative overflow-hidden rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-6 backdrop-blur transition hover:border-sui/30 hover:bg-white/[0.05]"
-                >
-                  <div className="absolute -right-12 -top-12 h-32 w-32 rounded-full bg-sui/10 blur-2xl opacity-0 transition group-hover:opacity-100" />
-                  <div className="relative">
-                    <div className="flex items-center justify-between">
-                      <span className="flex h-10 w-10 items-center justify-center rounded-xl bg-sui/12 text-sui">
-                        <Icon className="h-5 w-5" />
-                      </span>
-                      <span className="font-mono text-[10px] uppercase tracking-wider text-emerald-400/80">
-                        ✓ shipped
-                      </span>
-                    </div>
-                    <h3 className="mt-5 text-lg font-bold text-pearl">{t.title}</h3>
-                    <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-sui/80">{t.sub}</p>
-                    <p className="mt-3 text-sm leading-6 text-steel">{t.body}</p>
-                  </div>
-                </motion.div>
-              );
-            })}
+            {trackAlignment.map((t) => (
+              <motion.div
+                key={t.title}
+                variants={fadeUp}
+                className={cn("flex aspect-square flex-col rounded-3xl p-6 md:p-7", t.cardClass)}
+              >
+                <span className={cn("mb-5 block h-3 w-3 shrink-0 rounded-full", t.dotClass)} aria-hidden="true" />
+                <h3 className="text-lg font-bold tracking-tight md:text-xl">{t.title}</h3>
+                <p className="mt-3 flex-1 text-sm leading-6 opacity-90 md:text-[15px] md:leading-7">{t.body}</p>
+              </motion.div>
+            ))}
           </motion.div>
-        </section>
+        </LandingSection>
 
         {/* ── The Problem ── */}
-        <section className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection tone="ice" className="landing-section-problem">
           <FadeIn>
-            <div className="relative overflow-hidden rounded-[2rem] border border-red-500/15 bg-gradient-to-br from-red-500/[0.06] via-transparent to-red-500/[0.03] px-8 py-12 md:px-12">
-              <div className="absolute inset-0 opacity-30"
-                style={{
-                  backgroundImage: "radial-gradient(circle at 20% 20%, rgba(239,68,68,0.15), transparent 40%)",
-                }}
-              />
+            <div className="problem-panel relative overflow-hidden rounded-[2rem] bg-white px-8 py-12 md:px-14 md:py-16">
               <div className="relative">
-                <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-red-400">
+                <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-[#d64545]">
                   The problem
                 </p>
-                <h2 className="mt-4 max-w-3xl text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
+                <h2 className="problem-headline mt-4 font-extrabold tracking-tight text-pearl">
                   AI agents forget. Global trade pays the price.
                 </h2>
-                <p className="mt-4 max-w-2xl text-base leading-7 text-steel">
+                <p className="mt-5 max-w-2xl text-base leading-7 text-steel">
                   Most agentic systems are stateless wrappers around an LLM. They can read a document — but they
                   can&apos;t remember the one you uploaded last quarter. In trade finance, that gap costs billions.
                 </p>
-                <div className="mt-10 grid gap-6 md:grid-cols-3">
-                  {[
-                    {
-                      stat: "$42B+",
-                      label: "trade finance fraud annually",
-                      detail:
-                        "Bills of lading forged in minutes. The same document pledged to multiple banks. No agent remembers what's real.",
-                    },
-                    {
-                      stat: "5–7 days",
-                      label: "average customs clearance delay",
-                      detail:
-                        "Paperwork scattered across email threads. Errors found on arrival. Each tool starts from zero.",
-                    },
-                    {
-                      stat: "12+ parties",
-                      label: "touch a single shipment",
-                      detail:
-                        "Exporters, importers, freight forwarders, banks, customs — each working from a different copy.",
-                    },
-                  ].map((item) => (
-                    <div key={item.stat} className="border-l-2 border-red-500/30 pl-5">
-                      <p className="text-4xl font-extrabold text-red-400">{item.stat}</p>
-                      <p className="mt-1 text-sm font-bold text-pearl">{item.label}</p>
-                      <p className="mt-3 text-sm leading-6 text-steel">{item.detail}</p>
-                    </div>
-                  ))}
-                </div>
+              </div>
+
+              <div className="relative mt-12 grid gap-10 md:mt-14 md:grid-cols-3 md:gap-0">
+                {problemStats.map((item, index) => (
+                  <div
+                    key={item.stat}
+                    className={cn(
+                      "md:px-8",
+                      index === 0 ? "md:pl-0" : "md:border-l md:border-[#f5d0d0]"
+                    )}
+                  >
+                    <p className="text-4xl font-extrabold tracking-tight text-[#d64545] md:text-5xl">
+                      {item.stat}
+                    </p>
+                    <p className="mt-2 text-base font-bold text-pearl">{item.label}</p>
+                    <p className="mt-3 text-sm leading-6 text-steel">{item.detail}</p>
+                  </div>
+                ))}
               </div>
             </div>
           </FadeIn>
-        </section>
+        </LandingSection>
 
         {/* ── Memory in action ── */}
-        <section id="memory" className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection id="memory" tone="mid">
           <FadeIn>
             <div className="mb-10 max-w-3xl">
               <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-amber-400">
@@ -857,10 +881,10 @@ export function LandingPage() {
               </div>
             </Panel>
           </FadeIn>
-        </section>
+        </LandingSection>
 
         {/* ── Agents ── */}
-        <section id="agents" className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection id="agents" tone="light">
           <FadeIn>
             <div className="mb-10 max-w-3xl">
               <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
@@ -886,7 +910,7 @@ export function LandingPage() {
               <motion.div
                 key={agent.name}
                 variants={fadeUp}
-                className="group relative overflow-hidden rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-6 backdrop-blur transition hover:-translate-y-0.5 hover:border-sui/30"
+                className="group relative overflow-hidden rounded-[1.4rem] border border-blue-100/80 bg-white/85 p-6 backdrop-blur transition hover:-translate-y-0.5 hover:border-sui/30"
               >
                 <div className="flex items-center justify-between">
                   <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-sui/20 bg-sui/8 text-2xl">
@@ -900,10 +924,10 @@ export function LandingPage() {
               </motion.div>
             ))}
           </motion.div>
-        </section>
+        </LandingSection>
 
         {/* ── Tech Stack ── */}
-        <section id="tech" className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection id="tech" tone="light">
           <FadeIn>
             <div className="mb-10 max-w-3xl">
               <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
@@ -925,7 +949,7 @@ export function LandingPage() {
               <motion.div
                 key={tech.name}
                 variants={fadeUp}
-                className="group relative overflow-hidden rounded-[1.6rem] border border-white/10 bg-white/[0.03] p-7 backdrop-blur transition hover:border-white/20"
+                className="group relative overflow-hidden rounded-[1.6rem] border border-blue-100/80 bg-white/85 p-7 backdrop-blur transition hover:border-white/20"
                 style={{
                   boxShadow: `inset 0 1px 0 rgba(255,255,255,0.04)`,
                 }}
@@ -970,49 +994,26 @@ export function LandingPage() {
               </motion.div>
             ))}
           </motion.div>
-        </section>
+        </LandingSection>
 
         {/* ── How It Works ── */}
-        <section id="how-it-works" className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection id="how-it-works" tone="sky">
           <FadeIn>
-            <div className="mb-10 max-w-3xl">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
-                Pipeline
-              </p>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                Create → extract → mint → monitor
+            <div className="mb-8 max-w-4xl md:mb-10">
+              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">Pipeline</p>
+              <h2 className="mt-3 text-4xl font-extrabold tracking-tight text-pearl md:text-5xl lg:text-6xl">
+                How SuiShip works
               </h2>
+              <p className="mt-4 text-lg text-steel md:text-xl">Create → extract → mint → monitor</p>
             </div>
           </FadeIn>
-          <motion.div
-            className="grid gap-4 lg:grid-cols-4"
-            variants={staggerContainer}
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true }}
-          >
-            {workflow.map((item, i) => (
-              <motion.div
-                key={item.step}
-                variants={fadeUp}
-                className="relative rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-6 backdrop-blur"
-              >
-                {i < workflow.length - 1 && (
-                  <div className="absolute right-0 top-1/2 hidden h-px w-6 -translate-y-1/2 translate-x-3 bg-gradient-to-r from-sui/40 to-transparent lg:block" />
-                )}
-                <div className="flex items-center justify-between">
-                  <span className="font-mono text-[11px] font-bold text-sui">{item.step}</span>
-                  <GitBranch className="h-3.5 w-3.5 text-steel/30" />
-                </div>
-                <h3 className="mt-4 text-lg font-bold text-pearl">{item.title}</h3>
-                <p className="mt-3 text-sm leading-6 text-steel">{item.detail}</p>
-              </motion.div>
-            ))}
-          </motion.div>
-        </section>
+          <FadeIn delay={0.08}>
+            <PipelineFlow />
+          </FadeIn>
+        </LandingSection>
 
         {/* ── Use Cases ── */}
-        <section className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection tone="ice">
           <FadeIn>
             <div className="mb-10 max-w-3xl">
               <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
@@ -1034,7 +1035,7 @@ export function LandingPage() {
               <motion.div
                 key={audience.title}
                 variants={fadeUp}
-                className="rounded-[1.4rem] border border-white/8 bg-white/[0.03] p-6 backdrop-blur transition hover:border-sui/25"
+                className="rounded-[1.4rem] border border-blue-100/80 bg-white/85 p-6 backdrop-blur transition hover:border-sui/25"
               >
                 <Sparkles className="h-5 w-5 text-sui" />
                 <h3 className="mt-4 text-lg font-bold text-pearl">{audience.title}</h3>
@@ -1042,10 +1043,10 @@ export function LandingPage() {
               </motion.div>
             ))}
           </motion.div>
-        </section>
+        </LandingSection>
 
         {/* ── Core Features ── */}
-        <section id="features" className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection id="features" tone="mid">
           <FadeIn>
             <div className="mb-10 max-w-3xl">
               <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
@@ -1076,10 +1077,10 @@ export function LandingPage() {
               );
             })}
           </motion.div>
-        </section>
+        </LandingSection>
 
         {/* ── For Builders ── */}
-        <section id="builders" className="mx-auto max-w-7xl px-5 py-14 lg:px-10">
+        <LandingSection id="builders" tone="sky">
           <FadeIn>
             <Panel className="overflow-hidden">
               <div className="grid gap-10 lg:grid-cols-[1fr_1.2fr] lg:items-start">
@@ -1106,7 +1107,7 @@ export function LandingPage() {
                       return (
                         <div
                           key={item.label}
-                          className="flex items-start gap-4 rounded-2xl border border-white/8 bg-white/[0.03] p-4 backdrop-blur"
+                          className="flex items-start gap-4 rounded-2xl border border-blue-100/80 bg-white/85 p-4 backdrop-blur"
                         >
                           <span className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-sui/12 text-sui">
                             <Icon className="h-5 w-5" />
@@ -1166,10 +1167,10 @@ export function LandingPage() {
               </div>
             </Panel>
           </FadeIn>
-        </section>
+        </LandingSection>
 
         {/* ── Final CTA ── */}
-        <section className="mx-auto max-w-7xl px-5 pb-24 pt-6 lg:px-10">
+        <LandingSection tone="ice" innerClassName="pb-24 pt-6">
           <FadeIn>
             <div className="relative overflow-hidden rounded-[2rem] blue-gradient px-8 py-16 text-center shadow-glow md:px-12">
               <div
@@ -1212,11 +1213,11 @@ export function LandingPage() {
               </div>
             </div>
           </FadeIn>
-        </section>
+        </LandingSection>
       </main>
 
       {/* ── Footer ── */}
-      <footer className="border-t border-white/8 px-5 py-10 lg:px-10">
+      <footer className="landing-section-sky border-t border-blue-100 px-5 py-10 lg:px-10">
         <div className="mx-auto max-w-7xl">
           <div className="flex flex-col items-start justify-between gap-6 md:flex-row md:items-center">
             <div>

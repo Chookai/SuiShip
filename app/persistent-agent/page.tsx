@@ -7,7 +7,6 @@ import {
   Clock,
   Loader2,
   MapPin,
-  Radio,
   RefreshCw,
   Route,
   Satellite,
@@ -117,27 +116,23 @@ export default function PersistentAgentPage() {
 
   return (
     <div className="mx-auto max-w-[1400px] px-5 py-8 lg:px-10">
-      <div className="mb-6 flex flex-col justify-between gap-4 lg:flex-row lg:items-end">
-        <div>
-          <div className="mb-2 inline-flex items-center gap-2 rounded-full border border-sui/25 bg-sui/10 px-3 py-1 text-sm font-bold text-sui">
-            <Radio className="h-4 w-4" />
-            Persistent AIS Agent
-          </div>
+      <div className="mb-6">
+        <div className="flex flex-col justify-between gap-4 lg:flex-row lg:items-center">
           <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Persistent Agent</h1>
-          <p className="mt-3 max-w-3xl text-steel">
-            Track live shipment locations, detect paused AIS issues, and wake the issue agent when intervention is needed.
-          </p>
+          <div className="flex flex-wrap gap-2">
+            <Button variant="secondary" onClick={() => load()} disabled={loading || checking}>
+              {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+              Refresh
+            </Button>
+            <Button onClick={checkLive} disabled={checking}>
+              {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Satellite className="h-4 w-4" />}
+              Check Live AIS
+            </Button>
+          </div>
         </div>
-        <div className="flex flex-wrap gap-2">
-          <Button variant="secondary" onClick={() => load()} disabled={loading || checking}>
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
-            Refresh
-          </Button>
-          <Button onClick={checkLive} disabled={checking}>
-            {checking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Satellite className="h-4 w-4" />}
-            Check Live AIS
-          </Button>
-        </div>
+        <p className="mt-2 w-full text-xs text-steel sm:text-sm lg:whitespace-nowrap">
+          Track live shipment locations, detect paused AIS issues, and wake the issue agent when intervention is needed.
+        </p>
       </div>
 
       <div className="mb-5 grid gap-4 md:grid-cols-3">
