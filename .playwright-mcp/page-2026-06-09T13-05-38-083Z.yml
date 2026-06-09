@@ -1,0 +1,73 @@
+- generic [active] [ref=e1]:
+  - generic [ref=e2]:
+    - complementary [ref=e3]:
+      - navigation [ref=e4]:
+        - link "Dashboard" [ref=e5] [cursor=pointer]:
+          - /url: /dashboard
+          - generic [ref=e6]:
+            - img [ref=e8]
+            - generic [ref=e13]: Dashboard
+        - link "Shipments" [ref=e14] [cursor=pointer]:
+          - /url: /shipments
+          - generic [ref=e15]:
+            - img [ref=e17]
+            - generic [ref=e21]: Shipments
+        - link "Create" [ref=e22] [cursor=pointer]:
+          - /url: /create
+          - generic [ref=e23]:
+            - img [ref=e25]
+            - generic [ref=e28]: Create
+        - link "Persistent Agent" [ref=e29] [cursor=pointer]:
+          - /url: /persistent-agent
+          - generic [ref=e30]:
+            - img [ref=e32]
+            - generic [ref=e34]: Persistent Agent
+    - generic [ref=e35]:
+      - banner [ref=e36]:
+        - generic [ref=e37]:
+          - link "SuiShip home" [ref=e39] [cursor=pointer]:
+            - /url: /
+            - img "SuiShip" [ref=e40]
+          - generic [ref=e41]:
+            - button "Notifications" [ref=e43] [cursor=pointer]:
+              - img [ref=e44]
+            - generic [ref=e48]:
+              - link "Acme Robotics LLC" [ref=e49] [cursor=pointer]:
+                - /url: /profile
+                - paragraph [ref=e51]: Acme Robotics LLC
+              - button "Switch company" [ref=e52] [cursor=pointer]:
+                - img [ref=e53]
+      - main [ref=e56]:
+        - generic [ref=e57]:
+          - heading "Create Shipment" [level=1] [ref=e58]
+          - generic [ref=e59]:
+            - generic [ref=e60]:
+              - paragraph [ref=e61]: Progress
+              - generic [ref=e62]:
+                - generic [ref=e63]:
+                  - button "Workflow" [ref=e65] [cursor=pointer]: "1"
+                  - button "Workflow" [ref=e67] [cursor=pointer]
+                - generic [ref=e68]:
+                  - button "Trade parties" [disabled] [ref=e70]: "2"
+                  - button "Trade parties" [disabled] [ref=e72]
+                - generic [ref=e73]:
+                  - button "Document upload" [disabled] [ref=e75]: "3"
+                  - button "Document upload" [disabled] [ref=e77]
+                - generic [ref=e78]:
+                  - button "Details" [disabled] [ref=e80]: "4"
+                  - button "Details" [disabled] [ref=e81]
+            - generic [ref=e82]:
+              - generic [ref=e83]:
+                - generic [ref=e84]:
+                  - img [ref=e85]
+                  - heading "Workflow" [level=2] [ref=e89]
+                - generic [ref=e90]:
+                  - paragraph [ref=e91]: "You are:"
+                  - generic [ref=e92]:
+                    - button "Importer" [ref=e93] [cursor=pointer]
+                    - button "Exporter" [ref=e94] [cursor=pointer]
+              - generic [ref=e95]:
+                - button "Back" [disabled] [ref=e96]
+                - button "Next step" [ref=e97] [cursor=pointer]
+  - button "Open Next.js Dev Tools" [ref=e103] [cursor=pointer]:
+    - img [ref=e104]
