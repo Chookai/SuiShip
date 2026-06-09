@@ -175,7 +175,7 @@ export default function PersistentAgentPage() {
             <Satellite className="mt-0.5 h-5 w-5 text-sui" />
             <div>
               <p className="font-black text-pearl">No monitored shipments configured.</p>
-              <p className="mt-1 text-sm font-semibold text-steel">The default SF-2026-LIVE simulation should appear after migrations run.</p>
+              <p className="mt-1 text-sm font-semibold text-steel">Monitored shipments will appear here once a simulation is running.</p>
             </div>
           </div>
         </Panel>

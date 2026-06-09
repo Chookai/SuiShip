@@ -316,7 +316,6 @@ export async function analyzePersistentAgentIssue(
 export function listPersistentAgentShipments(
   db: Database.Database = getDb()
 ): PersistentAgentShipmentRow[] {
-  ensureMonitoredShipment(DEFAULT_MONITORED_SIMULATION, db);
   const monitors = db.prepare(`
     SELECT * FROM persistent_agent_monitored_shipments
     ORDER BY created_at ASC, simulation_id ASC

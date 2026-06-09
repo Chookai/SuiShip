@@ -47,8 +47,3 @@ CREATE TABLE IF NOT EXISTS persistent_agent_alerts (
 
 CREATE INDEX IF NOT EXISTS idx_persistent_agent_alerts_latest
   ON persistent_agent_alerts(simulation_id, status, updated_at DESC);
-
-INSERT OR IGNORE INTO persistent_agent_monitored_shipments
-  (simulation_id, shipment_id, source_url, display_name, last_check_status)
-VALUES
-  ('SF-2026-LIVE', 'SF-2026-LIVE', 'http://localhost:8081/mock/ais/simulations/SF-2026-LIVE', 'SF-2026-LIVE', 'pending');
