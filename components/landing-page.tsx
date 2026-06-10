@@ -9,7 +9,6 @@ import {
   BrainCircuit,
   ExternalLink,
   FileCheck2,
-  Fingerprint,
   ArrowDown,
   Globe2,
   Infinity as InfinityIcon,
@@ -24,21 +23,21 @@ import {
   Shield,
   Ship,
   Sparkles,
-  Terminal,
   Workflow,
   X,
   Zap,
 } from "lucide-react";
-import { motion, useScroll, useTransform, type Variants } from "framer-motion";
+import { motion, type Variants } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
-import { useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useId, useRef, useState } from "react";
 import memwalLogo from "@/asset/memwal_logo.svg";
 import sealLogo from "@/asset/seal_logo.svg";
 import suiLogo from "@/asset/sui_logo.svg";
 import suishipLogo from "@/asset/suiship_logo.png";
 import suishipName from "@/asset/suiship_name.png";
 import walrusLogo from "@/asset/walrus_logo.svg";
+import walrusMascot from "@/asset/walrus-mascot.avif";
 import { Panel } from "@/components/ui";
 import { cn } from "@/lib/utils";
 
@@ -79,9 +78,19 @@ function LandingSection({
   }[tone];
 
   return (
-    <section id={id} className={cn(toneClass, "relative overflow-hidden", className)}>
+    <section
+      id={id}
+      className={cn(toneClass, "landing-section-fullpage relative flex min-h-dvh flex-col overflow-hidden", className)}
+    >
       {background}
-      <div className={cn("relative z-10 mx-auto max-w-7xl px-5 py-16 lg:px-10", innerClassName)}>{children}</div>
+      <div
+        className={cn(
+          "relative z-10 mx-auto flex w-full max-w-7xl flex-1 flex-col items-center justify-center px-5 py-16 lg:px-10",
+          innerClassName
+        )}
+      >
+        {children}
+      </div>
     </section>
   );
 }
@@ -92,44 +101,41 @@ function HeroSectionGlow() {
 
 function PipelineFlow() {
   return (
-    <div className="pipeline-board overflow-hidden rounded-[2rem] border border-[#1a2744] bg-[#0b1220] p-5 md:p-8 lg:p-10">
-      <div className="flex flex-col lg:flex-row lg:items-stretch">
-        {workflow.map((item, index) => {
-          const Icon = item.icon;
-          return (
-            <div key={item.step} className="flex flex-1 flex-col lg:flex-row lg:items-stretch">
-              <div className="pipeline-node flex flex-1 flex-col rounded-[1.25rem] bg-[#f7f4ee] p-6 md:p-7 lg:min-h-[220px]">
-                <div className="flex items-start justify-between gap-4">
-                  <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl bg-white shadow-sm md:h-16 md:w-16">
-                    <Icon className="h-7 w-7 text-sui md:h-8 md:w-8" strokeWidth={1.75} />
-                  </div>
-                  <span className="font-mono text-3xl font-extrabold leading-none text-[#0b1220]/10 md:text-4xl">
-                    {item.step}
-                  </span>
+    <div className="flex flex-col lg:flex-row lg:items-stretch">
+      {workflow.map((item, index) => {
+        const Icon = item.icon;
+        return (
+          <Fragment key={item.step}>
+            <div className="flex min-w-0 flex-1 flex-col rounded-[1.75rem] border border-blue-100/80 bg-white p-6 shadow-[0_16px_40px_rgba(77,162,255,0.08)] md:p-7">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex h-14 w-14 shrink-0 items-center justify-center rounded-2xl border border-sui/20 bg-sui/10 text-sui md:h-16 md:w-16">
+                  <Icon className="h-7 w-7 md:h-8 md:w-8" strokeWidth={1.75} />
                 </div>
-                <h3 className="mt-6 text-xl font-extrabold tracking-tight text-[#0b1220] md:text-2xl">
-                  {item.title}
-                </h3>
-                <p className="mt-3 text-sm leading-6 text-[#5a6d8f] md:text-[15px] md:leading-7">{item.detail}</p>
+                <span className="font-mono text-3xl font-extrabold leading-none text-pearl/10 md:text-4xl">
+                  {item.step}
+                </span>
               </div>
-
-              {index < workflow.length - 1 ? (
-                <>
-                  <div className="pipeline-connector flex items-center justify-center py-3 lg:hidden" aria-hidden="true">
-                    <ArrowDown className="h-5 w-5 text-sui/70" strokeWidth={2} />
-                  </div>
-                  <div className="pipeline-connector hidden w-10 shrink-0 items-center justify-center xl:w-14 lg:flex" aria-hidden="true">
-                    <div className="flex w-full items-center gap-1">
-                      <div className="h-px flex-1 bg-sui/35" />
-                      <ArrowRight className="h-4 w-4 shrink-0 text-sui" strokeWidth={2.5} />
-                    </div>
-                  </div>
-                </>
-              ) : null}
+              <h3 className="mt-6 whitespace-nowrap text-sm font-extrabold tracking-tight text-pearl sm:text-base lg:text-lg xl:text-xl">
+                {item.title}
+              </h3>
             </div>
-          );
-        })}
-      </div>
+
+            {index < workflow.length - 1 ? (
+              <>
+                <div className="flex shrink-0 items-center justify-center py-3 lg:hidden" aria-hidden="true">
+                  <ArrowDown className="h-5 w-5 text-sui/70" strokeWidth={2} />
+                </div>
+                <div className="hidden w-10 shrink-0 items-center justify-center lg:flex xl:w-14" aria-hidden="true">
+                  <div className="flex w-full items-center gap-1">
+                    <div className="h-px flex-1 bg-sui/35" />
+                    <ArrowRight className="h-4 w-4 shrink-0 text-sui" strokeWidth={2.5} />
+                  </div>
+                </div>
+              </>
+            ) : null}
+          </Fragment>
+        );
+      })}
     </div>
   );
 }
@@ -259,7 +265,8 @@ const navLinks = [
   { label: "Builders", href: "#builders" },
 ];
 
-const landingNavLinkClass = "landing-nav-link rounded-xl px-3 py-2 text-sm font-semibold";
+const landingNavLinkClass =
+  "landing-nav-link rounded-xl px-4 py-2.5 text-base font-semibold lg:px-5 lg:py-3 lg:text-lg";
 
 const trackAlignment = [
   {
@@ -385,30 +392,10 @@ const coreFeatures = [
 ];
 
 const workflow = [
-  {
-    step: "01",
-    title: "Create",
-    detail: "Trade parties, route, cargo, PDF set.",
-    icon: Ship,
-  },
-  {
-    step: "02",
-    title: "Extract & validate",
-    detail: "Haiku extraction → validation agent → MemWal recall → verdict.",
-    icon: ScanSearch,
-  },
-  {
-    step: "03",
-    title: "Mint",
-    detail: "Sui passport with hashes, blob refs, risk score, verification score.",
-    icon: LockKeyhole,
-  },
-  {
-    step: "04",
-    title: "Collaborate & monitor",
-    detail: "Chat agent, endorsements, QR link, persistent vessel monitoring.",
-    icon: Radar,
-  },
+  { step: "01", title: "Create", icon: Ship },
+  { step: "02", title: "Extract & validate", icon: ScanSearch },
+  { step: "03", title: "Mint", icon: LockKeyhole },
+  { step: "04", title: "Collaborate & monitor", icon: Radar },
 ] as const;
 
 const techStack = [
@@ -451,13 +438,42 @@ const techStack = [
 ];
 
 const agents = [
-  { name: "Extraction", model: "Claude Haiku", role: "Async field extraction from trade PDFs.", emoji: "📄" },
-  { name: "Validation", model: "Claude Haiku", role: "Cross-document comparison and verdict.", emoji: "✅" },
-  { name: "Risk", model: "Claude Sonnet", role: "Trade-finance risk correlation.", emoji: "🛡️" },
-  { name: "Chatbot", model: "Claude Sonnet", role: "Tool-calling Q&A gated by on-chain endorsements via SEAL.", emoji: "💬" },
-  { name: "Persistent", model: "Event-driven", role: "AIS polling, in-transit drift events.", emoji: "📡" },
-  { name: "Memory", model: "MemWal", role: "Cross-shipment context I/O. Reads decrypted only after SEAL verifies endorsement.", emoji: "🧠" },
-];
+  {
+    name: "Extraction",
+    role: "Async field extraction from trade PDFs.",
+    icon: ScanSearch,
+  },
+  {
+    name: "Validation",
+    role: "Cross-document comparison and verdict.",
+    icon: FileCheck2,
+  },
+  {
+    name: "Risk",
+    role: "Trade-finance risk correlation.",
+    icon: Shield,
+  },
+  {
+    name: "Chatbot",
+    role: "Tool-calling Q&A gated by on-chain endorsements via SEAL.",
+    icon: MessageSquare,
+  },
+  {
+    name: "Persistent",
+    role: "AIS polling, in-transit drift events.",
+    icon: Radar,
+  },
+  {
+    name: "Memory",
+    role: "Cross-shipment context I/O. Reads decrypted only after SEAL verifies endorsement.",
+    icon: BrainCircuit,
+  },
+] as const;
+
+const AGENT_ORBIT = agents.map((_, index) => {
+  const angle = (index / agents.length) * Math.PI * 2 - Math.PI / 2;
+  return { angle, x: Math.cos(angle), y: Math.sin(angle) };
+});
 
 const audiences = [
   { title: "Exporters", body: "Package documents once, prove consistency, share a verifiable passport with every counterparty." },
@@ -493,18 +509,281 @@ const builderEndpoints = [
   },
 ];
 
+function AgentBrainGlobe({
+  activeIndex,
+  onSelect,
+}: {
+  activeIndex: number;
+  onSelect: (index: number) => void;
+}) {
+  const gradientId = `agentGlobeCore-${useId().replace(/:/g, "")}`;
+  const cx = 200;
+  const cy = 200;
+  const orbitRadius = 128;
+  const hubRadius = 54;
+  const nodeRadius = 26;
+  const numberRadius = 172;
+
+  return (
+    <div className="agent-globe relative mx-auto aspect-square w-full max-w-[min(100%,34rem)] md:max-w-2xl lg:max-w-[36rem]">
+      <svg viewBox="0 0 400 400" className="h-full w-full" role="img" aria-label="Agent network">
+        <defs>
+          <radialGradient id={gradientId} cx="50%" cy="45%" r="55%">
+            <stop offset="0%" stopColor="#87c8ff" />
+            <stop offset="55%" stopColor="#4da2ff" />
+            <stop offset="100%" stopColor="#1e6fd9" />
+          </radialGradient>
+          <filter id="agentGlobeGlow" x="-50%" y="-50%" width="200%" height="200%">
+            <feGaussianBlur stdDeviation="6" result="blur" />
+            <feMerge>
+              <feMergeNode in="blur" />
+              <feMergeNode in="SourceGraphic" />
+            </feMerge>
+          </filter>
+        </defs>
+
+        {[150, 118, 86].map((r) => (
+          <circle
+            key={r}
+            cx={cx}
+            cy={cy}
+            r={r}
+            fill="none"
+            stroke="rgba(77, 162, 255, 0.14)"
+            strokeWidth="1"
+          />
+        ))}
+        {[-36, -18, 0, 18, 36].map((offset) => (
+          <ellipse
+            key={offset}
+            cx={cx}
+            cy={cy + offset}
+            rx={148}
+            ry={28}
+            fill="none"
+            stroke="rgba(77, 162, 255, 0.1)"
+            strokeWidth="1"
+          />
+        ))}
+
+        <circle cx={cx} cy={cy} r={hubRadius} fill={`url(#${gradientId})`} filter="url(#agentGlobeGlow)" />
+
+        {AGENT_ORBIT.map((node, index) => {
+          const nx = cx + node.x * orbitRadius;
+          const ny = cy + node.y * orbitRadius;
+          const isActive = index === activeIndex;
+          const x1 = cx + node.x * hubRadius;
+          const y1 = cy + node.y * hubRadius;
+
+          return (
+            <line
+              key={`link-${agents[index].name}`}
+              x1={x1}
+              y1={y1}
+              x2={nx}
+              y2={ny}
+              stroke={isActive ? "#4da2ff" : "rgba(77, 162, 255, 0.24)"}
+              strokeWidth={isActive ? 2.5 : 1.5}
+              strokeLinecap="round"
+              strokeDasharray={isActive ? undefined : "5 6"}
+            />
+          );
+        })}
+
+        <circle cx={cx} cy={cy} r={hubRadius} fill="none" stroke="rgba(255,255,255,0.35)" strokeWidth="1.5" />
+
+        {AGENT_ORBIT.map((node, index) => {
+          const isActive = index === activeIndex;
+          const lx = cx + node.x * numberRadius;
+          const ly = cy + node.y * numberRadius;
+
+          return (
+            <text
+              key={`num-${agents[index].name}`}
+              x={lx}
+              y={ly}
+              textAnchor="middle"
+              dominantBaseline="central"
+              fontSize="14"
+              fontFamily="ui-monospace, monospace"
+              fontWeight="700"
+              fill={isActive ? "#4da2ff" : "rgba(90, 109, 143, 0.45)"}
+              style={{ pointerEvents: "none" }}
+            >
+              {String(index + 1).padStart(2, "0")}
+            </text>
+          );
+        })}
+
+      </svg>
+
+      <div className="absolute inset-0">
+        {AGENT_ORBIT.map((node, index) => {
+          const agent = agents[index];
+          const Icon = agent.icon;
+          const isActive = index === activeIndex;
+          const left = 50 + node.x * 32;
+          const top = 50 + node.y * 32;
+
+          return (
+            <button
+              key={agent.name}
+              type="button"
+              aria-label={`${agent.name} agent`}
+              aria-pressed={isActive}
+              onClick={() => onSelect(index)}
+              className={cn(
+                "absolute flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-full border bg-white shadow-sm transition",
+                isActive
+                  ? "h-16 w-16 border-sui text-sui md:h-[4.5rem] md:w-[4.5rem] lg:h-20 lg:w-20"
+                  : "h-14 w-14 border-blue-100/80 text-steel hover:border-sui/25 md:h-16 md:w-16 lg:h-[4.25rem] lg:w-[4.25rem]"
+              )}
+              style={{ left: `${left}%`, top: `${top}%` }}
+            >
+              <Icon className="h-6 w-6 md:h-7 md:w-7 lg:h-8 lg:w-8" strokeWidth={1.75} />
+            </button>
+          );
+        })}
+      </div>
+
+      <div className="pointer-events-none absolute left-1/2 top-1/2 flex h-[27%] w-[27%] -translate-x-1/2 -translate-y-1/2 flex-col items-center justify-center text-center">
+        <Image
+          src={walrusMascot}
+          alt=""
+          className="h-14 w-14 object-contain md:h-16 md:w-16 lg:h-[4.5rem] lg:w-[4.5rem]"
+          priority
+        />
+        <span className="mt-1 font-mono text-[10px] font-bold uppercase tracking-[0.16em] text-white md:text-xs">
+          MemWal
+        </span>
+      </div>
+    </div>
+  );
+}
+
+function AgentDetailCard({ activeIndex }: { activeIndex: number }) {
+  const agent = agents[activeIndex];
+  const Icon = agent.icon;
+
+  return (
+    <motion.div
+      key={agent.name}
+      initial={{ opacity: 0, y: 16 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.35, ease: [0.22, 1, 0.36, 1] }}
+      className="rounded-[2rem] border border-blue-100/80 bg-white p-10 shadow-[0_24px_60px_rgba(77,162,255,0.1)] md:p-12 lg:p-14"
+    >
+      <div className="flex items-start justify-between gap-4">
+        <div className="flex h-16 w-16 items-center justify-center rounded-2xl border border-sui/20 bg-sui/10 text-sui md:h-[4.5rem] md:w-[4.5rem] lg:h-20 lg:w-20">
+          <Icon className="h-8 w-8 md:h-9 md:w-9 lg:h-10 lg:w-10" strokeWidth={1.75} />
+        </div>
+        <span className="font-mono text-xs text-steel/50 md:text-sm">
+          agent_{String(activeIndex + 1).padStart(2, "0")}
+        </span>
+      </div>
+      <h3 className="mt-8 text-4xl font-extrabold tracking-tight text-pearl md:text-5xl lg:text-6xl">{agent.name} agent</h3>
+      <p className="mt-6 text-lg leading-8 text-steel md:text-xl md:leading-9 lg:text-2xl lg:leading-10">{agent.role}</p>
+    </motion.div>
+  );
+}
+
+function AgentsOrchestrationPanel() {
+  const containerRef = useRef<HTMLDivElement>(null);
+  const [activeIndex, setActiveIndex] = useState(0);
+  const [progress, setProgress] = useState(0);
+
+  const selectAgent = useCallback((index: number) => {
+    const container = containerRef.current;
+    if (!container) {
+      setActiveIndex(index);
+      return;
+    }
+
+    const scrollRange = container.offsetHeight - window.innerHeight;
+    if (scrollRange <= 0) {
+      setActiveIndex(index);
+      return;
+    }
+
+    const targetY = container.offsetTop + (index / Math.max(agents.length - 1, 1)) * scrollRange;
+    window.scrollTo({ top: targetY, behavior: "smooth" });
+  }, []);
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+
+    const updateFromScroll = () => {
+      const rect = container.getBoundingClientRect();
+      const scrollRange = container.offsetHeight - window.innerHeight;
+      if (scrollRange <= 0) return;
+
+      const scrolled = Math.min(scrollRange, Math.max(0, -rect.top));
+      const nextProgress = scrolled / scrollRange;
+      const nextIndex = Math.min(
+        agents.length - 1,
+        Math.max(0, Math.round(nextProgress * (agents.length - 1)))
+      );
+
+      setProgress(nextProgress);
+      setActiveIndex(nextIndex);
+    };
+
+    updateFromScroll();
+    window.addEventListener("scroll", updateFromScroll, { passive: true });
+    window.addEventListener("resize", updateFromScroll);
+    return () => {
+      window.removeEventListener("scroll", updateFromScroll);
+      window.removeEventListener("resize", updateFromScroll);
+    };
+  }, []);
+
+  return (
+    <div
+      ref={containerRef}
+      className="relative -mx-5 lg:-mx-10"
+      style={{ height: `calc(${agents.length * 55}vh + 4rem)` }}
+    >
+      <div className="sticky top-16 z-10 flex min-h-[calc(100vh-4rem)] items-center py-8 lg:top-20">
+        <div className="mx-auto grid w-full max-w-[90rem] gap-12 px-5 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:gap-20 lg:px-10 xl:gap-24">
+          <div className="flex flex-col items-center lg:items-end">
+            <AgentBrainGlobe activeIndex={activeIndex} onSelect={selectAgent} />
+            <div className="mt-8 w-full max-w-lg lg:max-w-xl">
+              <div className="mb-3 flex items-center justify-between font-mono text-xs uppercase tracking-[0.2em] text-steel md:text-sm">
+                <span>Agent network</span>
+                <span>
+                  {String(activeIndex + 1).padStart(2, "0")} / {String(agents.length).padStart(2, "0")}
+                </span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-blue-100 md:h-2">
+                <div
+                  className="h-full rounded-full bg-sui transition-[width] duration-300 ease-out"
+                  style={{ width: `${Math.max(8, progress * 100)}%` }}
+                />
+              </div>
+            </div>
+          </div>
+
+          <div className="relative min-h-[380px] md:min-h-[420px] lg:min-h-[480px]">
+            <AgentDetailCard activeIndex={activeIndex} />
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ─── Live hero terminal ────────────────────────────────────────────────────
 
 const heroTraceLines: Array<{
   agent: string;
   call: string;
   result: string;
-  tone: "info" | "warn" | "critical" | "ok" | "seal";
+  tone: "info" | "warn" | "critical" | "ok";
 }> = [
   { agent: "extraction", call: "parse(bol_BL-MEM-001.pdf)", result: "→ 14 fields extracted", tone: "info" },
   { agent: "memory", call: "recall_party('acme-robotics-llc')", result: "→ 2 prior records", tone: "info" },
   { agent: "memory", call: "recall_fingerprint('BL-MEM-001')", result: "→ DUPLICATE", tone: "critical" },
-  { agent: "seal", call: "verify_endorsement(role=importer)", result: "→ share released (2/3)", tone: "seal" },
   { agent: "validation", call: "compare(invoice ↔ bol)", result: "→ IBAN drift detected", tone: "warn" },
   { agent: "risk", call: "score(payment_diversion)", result: "→ 0.94 confidence", tone: "critical" },
   { agent: "validation", call: "flag('duplicate_document')", result: "→ written to MemWal", tone: "critical" },
@@ -516,7 +795,6 @@ const heroToneStyles = {
   warn: { agent: "text-[#fbbf24]", result: "text-[#fcd34d]" },
   critical: { agent: "text-[#f87171]", result: "text-[#fca5a5]" },
   ok: { agent: "text-[#34d399]", result: "text-[#6ee7b7]" },
-  seal: { agent: "text-[#c4b5fd]", result: "text-[#ddd6fe]" },
 } as const;
 
 function MacTrafficLights() {
@@ -525,6 +803,75 @@ function MacTrafficLights() {
       <span className="mac-dot mac-dot-red" />
       <span className="mac-dot mac-dot-yellow" />
       <span className="mac-dot mac-dot-green" />
+    </div>
+  );
+}
+
+function MemoryTerminal() {
+  const [visible, setVisible] = useState(0);
+
+  useEffect(() => {
+    if (visible >= memoryEvents.length) {
+      const reset = setTimeout(() => setVisible(0), 4000);
+      return () => clearTimeout(reset);
+    }
+    const t = setTimeout(() => setVisible((v) => v + 1), 520);
+    return () => clearTimeout(t);
+  }, [visible]);
+
+  return (
+    <div className="hero-terminal mx-auto w-full max-w-5xl text-left">
+      <div className="hero-terminal-titlebar">
+        <MacTrafficLights />
+        <span className="ml-3 truncate font-mono text-[11px] text-[#8b949e]">memwal — acme-robotics</span>
+      </div>
+
+      <div className="hero-terminal-body flex min-h-[380px] flex-col px-4 py-3.5 font-mono text-[12px] leading-[1.55] sm:min-h-[420px] sm:px-5 sm:text-[13px]">
+        <div className="shrink-0 space-y-1">
+          <p className="text-[#f2f2f2]">
+            <span className="text-[#32d74b]">memwal@walrus</span>
+            <span className="text-[#8b949e]">:</span>
+            <span className="text-[#58a6ff]">~</span>
+            <span className="text-[#f2f2f2]"> $ memwal ledger tail --exporter acme-robotics --days 14</span>
+          </p>
+          <p className="text-[#8b949e]">5 writes · 2 reads · walrus://0x4a…f7</p>
+        </div>
+
+        <div className="mt-3 flex-1 space-y-1.5">
+          {memoryEvents.map((event, i) => {
+            const isVisible = i < visible;
+            const isWrite = event.op === "WRITE";
+
+            return (
+              <div
+                key={`${event.t}-${event.key}`}
+                className={cn(
+                  "grid grid-cols-[3.25rem_4.5rem_3.75rem_minmax(0,1fr)] items-baseline gap-x-3 transition-opacity duration-200 sm:grid-cols-[3.5rem_5rem_4rem_minmax(0,1fr)_auto] sm:whitespace-nowrap",
+                  isVisible ? "opacity-100" : "opacity-0"
+                )}
+              >
+                <span className="text-[#8b949e]">{event.t}</span>
+                <span className="font-semibold uppercase text-[#58a6ff]">{event.agent}</span>
+                <span className={isWrite ? "text-[#3fb950]" : "text-[#d29922]"}>{event.op}</span>
+                <span className="text-[#f2f2f2]">{event.key}</span>
+                <span className="hidden text-[#8b949e] sm:inline">→ {event.note}</span>
+              </div>
+            );
+          })}
+        </div>
+
+        <div
+          className={cn(
+            "mt-3 shrink-0 border-l-2 border-[#ff7b72] bg-[#ff7b72]/10 px-3 py-2 transition-opacity duration-200",
+            visible >= memoryEvents.length ? "opacity-100" : "opacity-0"
+          )}
+        >
+          <p className="text-[12px] leading-5 sm:text-[13px] sm:whitespace-nowrap">
+            <span className="font-bold text-[#ff7b72]">FRAUD CAUGHT</span>
+            <span className="text-[#c9d1d9]"> — duplicate BOL · IBAN drift · 14-day MemWal recall</span>
+          </p>
+        </div>
+      </div>
     </div>
   );
 }
@@ -547,7 +894,7 @@ function HeroTerminal() {
         <MacTrafficLights />
       </div>
 
-      <div className="hero-terminal-body flex h-[358px] flex-col px-4 py-3.5 font-mono text-[12px] leading-[1.55] sm:px-5 sm:text-[13px]">
+      <div className="hero-terminal-body flex h-[336px] flex-col px-4 py-3.5 font-mono text-[12px] leading-[1.55] sm:px-5 sm:text-[13px]">
         <div className="shrink-0 space-y-1">
           <p className="text-[#f2f2f2]">
             <span className="text-[#32d74b]">suiship@agents</span>
@@ -647,48 +994,59 @@ function DemoModal({ open, onClose }: { open: boolean; onClose: () => void }) {
 // ─── Nav ───────────────────────────────────────────────────────────────────
 
 function LandingNav({ onWatchDemo }: { onWatchDemo: () => void }) {
-  const { scrollY } = useScroll();
-  const bgOpacity = useTransform(scrollY, [0, 60], [0, 0.85]);
-  const borderOpacity = useTransform(scrollY, [0, 60], [0, 0.18]);
+  const [scrolled, setScrolled] = useState(false);
+
+  useEffect(() => {
+    const onScroll = () => setScrolled(window.scrollY > 8);
+    onScroll();
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
 
   return (
-    <motion.header
-      className="landing-nav-header sticky top-0 z-50 px-5 py-4 backdrop-blur-xl lg:px-10"
-      style={{
-        backgroundColor: `rgba(248, 251, 255, ${bgOpacity})`,
-        borderBottom: `1px solid rgba(77, 162, 255, ${borderOpacity})`,
-      }}
+    <header
+      className={cn(
+        "landing-nav-header sticky top-0 z-50 px-5 py-5 backdrop-blur-xl transition-[background-color,border-color] duration-200 md:py-6 lg:px-10",
+        scrolled
+          ? "border-b border-blue-100/80 bg-[#f8fbff]/85"
+          : "border-b border-transparent bg-transparent"
+      )}
     >
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-6">
-        <Link href="/" className="flex min-w-0 items-center gap-3" aria-label="SuiShip home">
-          <Image src={suishipLogo} alt="" className="h-11 w-11 shrink-0 object-contain" priority />
-          <Image src={suishipName} alt="SuiShip" className="mt-1 h-8 w-auto min-w-[112px] object-contain" priority />
+      <div className="mx-auto flex max-w-[90rem] items-center justify-between gap-8">
+        <Link href="/" className="flex min-w-0 items-center gap-4" aria-label="SuiShip home">
+          <Image src={suishipLogo} alt="" className="h-14 w-14 shrink-0 object-contain md:h-16 md:w-16" priority />
+          <Image
+            src={suishipName}
+            alt="SuiShip"
+            className="mt-1 h-10 w-auto min-w-[140px] object-contain md:h-12 md:min-w-[168px]"
+            priority
+          />
         </Link>
-        <nav className="hidden items-center gap-1 lg:flex">
+        <nav className="hidden items-center gap-2 lg:flex">
           {navLinks.map((link) => (
             <a key={link.href} href={link.href} className={landingNavLinkClass}>
               {link.label}
             </a>
           ))}
         </nav>
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-3 md:gap-4">
           <button
             onClick={onWatchDemo}
-            className={`${landingNavLinkClass} hidden items-center gap-1.5 sm:flex`}
+            className={`${landingNavLinkClass} hidden items-center gap-2 sm:flex`}
           >
-            <Play className="h-3.5 w-3.5" />
+            <Play className="h-4 w-4 md:h-5 md:w-5" />
             Demo
           </button>
           <Link
             href="/create"
-            className="inline-flex min-h-10 shrink-0 items-center justify-center gap-2 rounded-2xl px-4 py-2 text-sm font-semibold blue-gradient text-white shadow-glow transition hover:brightness-105"
+            className="inline-flex min-h-12 shrink-0 items-center justify-center gap-2.5 rounded-2xl px-5 py-2.5 text-base font-semibold blue-gradient text-white shadow-glow transition hover:brightness-105 md:min-h-[3.25rem] md:px-6 md:py-3 md:text-lg"
           >
             Launch App
-            <ArrowRight className="h-4 w-4" />
+            <ArrowRight className="h-5 w-5" />
           </Link>
         </div>
       </div>
-    </motion.header>
+    </header>
   );
 }
 
@@ -698,7 +1056,7 @@ export function LandingPage() {
   const [demoOpen, setDemoOpen] = useState(false);
 
   return (
-    <div className="min-h-screen bg-[#f8fbff]">
+    <div className="marketing-site-scale min-h-screen bg-[#f8fbff]">
       <DemoModal open={demoOpen} onClose={() => setDemoOpen(false)} />
       <LandingNav onWatchDemo={() => setDemoOpen(true)} />
 
@@ -717,7 +1075,7 @@ export function LandingPage() {
             >
               Agents that <ThinkingRemember />
               <br />
-              get <SharperHighlight /> over time.
+              shipment documents, and get <SharperHighlight /> over time.
             </motion.h1>
 
             <motion.p
@@ -755,12 +1113,9 @@ export function LandingPage() {
 
         {/* ── Track alignment ── */}
         <LandingSection tone="sky">
-          <FadeIn>
-            <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
-              Built for the Walrus Track
-            </p>
-            <h2 className="mt-3 max-w-3xl text-3xl font-extrabold tracking-tight text-pearl md:text-4xl lg:text-5xl">
-              Six Requirements. Six Receipts.
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline landing-section-headline-single text-center font-extrabold tracking-tight text-pearl">
+              SIX REQUIREMENTS. SIX RECEIPTS.
             </h2>
           </FadeIn>
           <motion.div
@@ -786,22 +1141,15 @@ export function LandingPage() {
 
         {/* ── The Problem ── */}
         <LandingSection tone="ice" className="landing-section-problem">
-          <FadeIn>
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline flex w-full flex-col items-center text-center font-extrabold tracking-tight text-pearl">
+              <span className="landing-section-headline-line">AI AGENTS FORGET.</span>
+              <span className="landing-section-headline-line">GLOBAL TRADE PAYS THE PRICE.</span>
+            </h2>
+          </FadeIn>
+          <FadeIn className="mt-10 w-full">
             <div className="problem-panel relative overflow-hidden rounded-[2rem] bg-white px-8 py-12 md:px-14 md:py-16">
-              <div className="relative">
-                <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-[#d64545]">
-                  The problem
-                </p>
-                <h2 className="problem-headline mt-4 font-extrabold tracking-tight text-pearl">
-                  AI agents forget. Global trade pays the price.
-                </h2>
-                <p className="mt-5 max-w-2xl text-base leading-7 text-steel">
-                  Most agentic systems are stateless wrappers around an LLM. They can read a document — but they
-                  can&apos;t remember the one you uploaded last quarter. In trade finance, that gap costs billions.
-                </p>
-              </div>
-
-              <div className="relative mt-12 grid gap-10 md:mt-14 md:grid-cols-3 md:gap-0">
+              <div className="relative grid gap-10 md:grid-cols-3 md:gap-0">
                 {problemStats.map((item, index) => (
                   <div
                     key={item.stat}
@@ -823,106 +1171,30 @@ export function LandingPage() {
         </LandingSection>
 
         {/* ── Memory in action ── */}
-        <LandingSection id="memory" tone="mid">
-          <FadeIn>
-            <div className="mb-10 max-w-3xl">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-amber-400">
-                Memory in action
-              </p>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                The agent that remembers <span className="text-amber-400">14 days ago</span>
-              </h2>
-              <p className="mt-4 text-base leading-7 text-steel">
-                A walkthrough of one MemWal write/read sequence — same exporter, two shipments, a buried fingerprint
-                that no stateless agent would catch.
-              </p>
-            </div>
+        <LandingSection id="memory" tone="mid" className="overflow-x-clip">
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline flex flex-col items-center text-center font-extrabold tracking-tight text-pearl">
+              <span className="landing-section-headline-line">THE AGENT THAT REMEMBERS</span>
+              <span className="landing-section-headline-line">14 DAYS AGO.</span>
+            </h2>
           </FadeIn>
-          <FadeIn>
-            <Panel className="overflow-hidden p-0">
-              <div className="grid lg:grid-cols-[1fr_1.4fr]">
-                <div className="border-b border-white/8 p-6 lg:border-b-0 lg:border-r">
-                  <span className="inline-flex items-center gap-1.5 rounded-full border border-amber-500/25 bg-amber-500/10 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-amber-400">
-                    <Fingerprint className="h-3 w-3" />
-                    memwal://acme-robotics
-                  </span>
-                  <h3 className="mt-5 text-xl font-bold text-pearl">Persistent memory ledger</h3>
-                  <p className="mt-3 text-sm leading-6 text-steel">
-                    Every write is durable on Walrus. Every read is addressable by any agent in the loop. The fraud
-                    catch on the right is what happens when memory survives the session.
-                  </p>
-                  <div className="mt-6 grid gap-3 text-xs">
-                    {[
-                      { k: "Writes", v: "5 records, 14 days" },
-                      { k: "Reads", v: "2 by validation agent" },
-                      { k: "Hits", v: "1 duplicate, 1 IBAN diff" },
-                      { k: "Cost", v: "0 re-uploads" },
-                    ].map((kv) => (
-                      <div key={kv.k} className="flex items-center justify-between border-b border-white/5 pb-2 font-mono">
-                        <span className="text-steel/60">{kv.k}</span>
-                        <span className="text-pearl">{kv.v}</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="p-6">
-                  <div className="space-y-2 font-mono text-[11.5px]">
-                    {memoryEvents.map((e, i) => (
-                      <motion.div
-                        key={i}
-                        initial={{ opacity: 0, x: -10 }}
-                        whileInView={{ opacity: 1, x: 0 }}
-                        viewport={{ once: true }}
-                        transition={{ delay: i * 0.06, duration: 0.35 }}
-                        className={`grid grid-cols-[60px_64px_1fr] items-start gap-2 rounded-lg border px-3 py-2 ${
-                          e.op === "WRITE"
-                            ? "border-emerald-500/15 bg-emerald-500/5"
-                            : "border-amber-500/20 bg-amber-500/5"
-                        }`}
-                      >
-                        <span className="text-steel/50">{e.t}</span>
-                        <span
-                          className={`rounded px-1.5 py-0.5 text-center text-[10px] font-bold ${
-                            e.op === "WRITE" ? "bg-emerald-500/15 text-emerald-400" : "bg-amber-500/15 text-amber-400"
-                          }`}
-                        >
-                          {e.op}
-                        </span>
-                        <div>
-                          <div className="text-pearl">{e.key}</div>
-                          <div className="text-steel/60">{e.note}</div>
-                        </div>
-                      </motion.div>
-                    ))}
-                  </div>
-                </div>
-              </div>
-            </Panel>
+          <FadeIn className="mt-10 w-full">
+            <MemoryTerminal />
           </FadeIn>
         </LandingSection>
 
         {/* ── Endorsement-gated memory ── */}
         <LandingSection id="access" tone="navy">
-          <FadeIn>
-            <div className="mb-10 max-w-3xl">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-[#A78BFA]">
-                Endorsement-gated memory
-              </p>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                Memory you can prove. Access you can revoke.
-              </h2>
-              <p className="mt-4 text-base leading-7 text-steel">
-                Persistent memory is only safe if it&apos;s access-controlled. SEAL key servers verify
-                each party&apos;s on-chain endorsement before releasing the decryption share — so the
-                chatbot only recalls what your role and your signature entitle you to see.
-              </p>
-            </div>
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline flex flex-col items-center text-center font-extrabold tracking-tight text-pearl">
+              <span className="landing-section-headline-line">MEMORY YOU CAN PROVE.</span>
+              <span className="landing-section-headline-line">ACCESS YOU CAN REVOKE.</span>
+            </h2>
           </FadeIn>
 
-          <FadeIn>
+          <FadeIn className="mt-10 w-full">
             <Panel className="overflow-hidden p-0">
               <div className="grid lg:grid-cols-[1.1fr_1fr]">
-                {/* Left: the gate flow */}
                 <div className="border-b border-white/8 p-6 lg:border-b-0 lg:border-r lg:p-8">
                   <span className="inline-flex items-center gap-1.5 rounded-full border border-[#A78BFA]/30 bg-[#A78BFA]/10 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-[#A78BFA]">
                     <LockKeyhole className="h-3 w-3" />
@@ -966,7 +1238,6 @@ export function LandingPage() {
                   </ol>
                 </div>
 
-                {/* Right: role matrix */}
                 <div className="p-6 lg:p-8">
                   <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-steel/60">
                     Same shipment. Three roles. Three views.
@@ -1063,62 +1334,32 @@ export function LandingPage() {
         </LandingSection>
 
         {/* ── Agents ── */}
-        <LandingSection id="agents" tone="light">
-          <FadeIn>
-            <div className="mb-10 max-w-3xl">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
-                Multi-agent orchestration
-              </p>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                Six agents. One shared brain.
+        <section
+          id="agents"
+          className="landing-section-light landing-section-fullpage relative flex min-h-dvh flex-col overflow-visible"
+        >
+          <div className="mx-auto flex w-full max-w-[90rem] flex-1 flex-col items-center justify-center px-5 py-16 lg:px-10">
+            <FadeIn className="flex w-full justify-center">
+              <h2 className="landing-section-headline landing-section-headline-single text-center font-extrabold tracking-tight text-pearl">
+                SIX AGENTS. ONE SHARED BRAIN.
               </h2>
-              <p className="mt-4 text-base leading-7 text-steel">
-                Each agent has a narrow job and a wide mouth — it talks to the others through a Walrus-backed
-                context. No agent rebuilds state. No prompt re-explains the company.
-              </p>
+            </FadeIn>
+            <div className="mt-10 w-full">
+              <AgentsOrchestrationPanel />
             </div>
-          </FadeIn>
-          <motion.div
-            className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
-            variants={staggerContainer}
-            initial="hidden"
-            whileInView="visible"
-            viewport={{ once: true }}
-          >
-            {agents.map((agent, i) => (
-              <motion.div
-                key={agent.name}
-                variants={fadeUp}
-                className="group relative overflow-hidden rounded-[1.4rem] border border-blue-100/80 bg-white/85 p-6 backdrop-blur transition hover:-translate-y-0.5 hover:border-sui/30"
-              >
-                <div className="flex items-center justify-between">
-                  <span className="flex h-12 w-12 items-center justify-center rounded-2xl border border-sui/20 bg-sui/8 text-2xl">
-                    {agent.emoji}
-                  </span>
-                  <span className="font-mono text-[10px] text-steel/40">agent_{String(i + 1).padStart(2, "0")}</span>
-                </div>
-                <h3 className="mt-5 text-lg font-bold text-pearl">{agent.name} agent</h3>
-                <p className="mt-1 font-mono text-[10px] uppercase tracking-wider text-sui/80">{agent.model}</p>
-                <p className="mt-3 text-sm leading-6 text-steel">{agent.role}</p>
-              </motion.div>
-            ))}
-          </motion.div>
-        </LandingSection>
+          </div>
+        </section>
 
         {/* ── Tech Stack ── */}
         <LandingSection id="tech" tone="light">
-          <FadeIn>
-            <div className="mb-10 max-w-3xl">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
-                Architecture
-              </p>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                Four Sui-native layers. Zero glue code.
-              </h2>
-            </div>
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline flex flex-col items-center text-center font-extrabold tracking-tight text-pearl">
+              <span className="landing-section-headline-line">FOUR SUI-NATIVE LAYERS.</span>
+              <span className="landing-section-headline-line">ZERO GLUE CODE.</span>
+            </h2>
           </FadeIn>
           <motion.div
-            className="grid gap-4 md:grid-cols-2"
+            className="mt-10 grid w-full gap-4 md:grid-cols-2"
             variants={staggerContainer}
             initial="hidden"
             whileInView="visible"
@@ -1178,34 +1419,33 @@ export function LandingPage() {
 
         {/* ── How It Works ── */}
         <LandingSection id="how-it-works" tone="sky">
-          <FadeIn>
-            <div className="mb-8 max-w-4xl md:mb-10">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">Pipeline</p>
-              <h2 className="mt-3 text-4xl font-extrabold tracking-tight text-pearl md:text-5xl lg:text-6xl">
-                How SuiShip works
-              </h2>
-              <p className="mt-4 text-lg text-steel md:text-xl">Create → extract → mint → monitor</p>
-            </div>
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline landing-section-headline-single text-center font-extrabold tracking-tight text-pearl">
+              HOW SUISHIP WORKS.
+            </h2>
           </FadeIn>
-          <FadeIn delay={0.08}>
-            <PipelineFlow />
-          </FadeIn>
+          <motion.div
+            className="mt-10 w-full"
+            variants={staggerContainer}
+            initial="hidden"
+            whileInView="visible"
+            viewport={{ once: true }}
+          >
+            <motion.div variants={fadeUp}>
+              <PipelineFlow />
+            </motion.div>
+          </motion.div>
         </LandingSection>
 
         {/* ── Use Cases ── */}
         <LandingSection tone="ice">
-          <FadeIn>
-            <div className="mb-10 max-w-3xl">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
-                Roles
-              </p>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                Built for every party in the chain
-              </h2>
-            </div>
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline landing-section-headline-single text-center font-extrabold tracking-tight text-pearl">
+              BUILT FOR EVERY PARTY IN THE CHAIN.
+            </h2>
           </FadeIn>
           <motion.div
-            className="grid gap-4 md:grid-cols-2 xl:grid-cols-4"
+            className="mt-10 grid w-full gap-4 md:grid-cols-2 xl:grid-cols-4"
             variants={staggerContainer}
             initial="hidden"
             whileInView="visible"
@@ -1227,18 +1467,13 @@ export function LandingPage() {
 
         {/* ── Core Features ── */}
         <LandingSection id="features" tone="mid">
-          <FadeIn>
-            <div className="mb-10 max-w-3xl">
-              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-sui">
-                Full capability surface
-              </p>
-              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                Twelve capabilities, all shipped
-              </h2>
-            </div>
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline landing-section-headline-single text-center font-extrabold tracking-tight text-pearl">
+              TWELVE CAPABILITIES. ALL SHIPPED.
+            </h2>
           </FadeIn>
           <motion.div
-            className="grid gap-4 md:grid-cols-2 xl:grid-cols-3"
+            className="mt-10 grid w-full gap-4 md:grid-cols-2 xl:grid-cols-3"
             variants={staggerContainer}
             initial="hidden"
             whileInView="visible"
@@ -1261,18 +1496,17 @@ export function LandingPage() {
 
         {/* ── For Builders ── */}
         <LandingSection id="builders" tone="sky">
-          <FadeIn>
+          <FadeIn className="flex w-full justify-center">
+            <h2 className="landing-section-headline flex flex-col items-center text-center font-extrabold tracking-tight text-pearl">
+              <span className="landing-section-headline-line">PLUG OUR MEMORY LAYER</span>
+              <span className="landing-section-headline-line">INTO YOUR AGENTS.</span>
+            </h2>
+          </FadeIn>
+          <FadeIn className="mt-10 w-full">
             <Panel className="overflow-hidden">
               <div className="grid gap-10 lg:grid-cols-[1fr_1.2fr] lg:items-start">
                 <div>
-                  <div className="mb-4 inline-flex items-center gap-2 rounded-full border border-sui/20 bg-sui/8 px-3 py-1 font-mono text-[11px] font-bold uppercase tracking-wider text-sui">
-                    <Terminal className="h-3.5 w-3.5" />
-                    For builders
-                  </div>
-                  <h2 className="text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
-                    Plug our memory layer into your agents
-                  </h2>
-                  <p className="mt-4 text-sm leading-7 text-steel">
+                  <p className="text-sm leading-7 text-steel">
                     Every pipeline stage is a standalone REST endpoint. Mint passports, run validation, start chats,
                     trigger risk scans — or use our MemWal patterns as a reference for adding persistent memory to
                     your own agent framework.
@@ -1350,8 +1584,8 @@ export function LandingPage() {
         </LandingSection>
 
         {/* ── Final CTA ── */}
-        <LandingSection tone="ice" innerClassName="pb-24 pt-6">
-          <FadeIn>
+        <LandingSection tone="ice">
+          <FadeIn className="w-full">
             <div className="relative overflow-hidden rounded-[2rem] blue-gradient px-8 py-16 text-center shadow-glow md:px-12">
               <div
                 className="absolute inset-0 opacity-20"
