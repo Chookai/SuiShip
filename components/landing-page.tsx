@@ -470,6 +470,45 @@ const agents = [
   },
 ] as const;
 
+function getAgentStickyTop() {
+  return window.matchMedia("(min-width: 1024px)").matches ? 80 : 64;
+}
+
+function getAgentStepPx() {
+  return Math.max(320, window.innerHeight - getAgentStickyTop());
+}
+
+function getAgentScrollMetrics(container: HTMLElement, sticky: HTMLElement | null) {
+  const stickyTop = getAgentStickyTop();
+  const stickyHeight = sticky?.offsetHeight ?? window.innerHeight - stickyTop;
+  const stepPx = getAgentStepPx();
+  const measuredRange = Math.max(0, container.offsetHeight - stickyHeight);
+  const scrollRange = measuredRange > 0 ? measuredRange : stepPx * agents.length;
+  const rect = container.getBoundingClientRect();
+  const scrolled = Math.min(scrollRange, Math.max(0, stickyTop - rect.top));
+  const progress = scrollRange > 0 ? scrolled / scrollRange : 0;
+  const activeIndex = Math.min(
+    agents.length - 1,
+    stepPx > 0 ? Math.floor(scrolled / stepPx) : 0
+  );
+  const pinStartScrollY = rect.top + window.scrollY - stickyTop;
+  const sectionEndScrollY = pinStartScrollY + scrollRange;
+  const agentSixComplete = scrolled >= scrollRange - 2;
+
+  return {
+    stickyTop,
+    stickyHeight,
+    stepPx,
+    scrollRange,
+    scrolled,
+    progress,
+    activeIndex,
+    pinStartScrollY,
+    sectionEndScrollY,
+    agentSixComplete,
+  };
+}
+
 const AGENT_ORBIT = agents.map((_, index) => {
   const angle = (index / agents.length) * Math.PI * 2 - Math.PI / 2;
   return { angle, x: Math.cos(angle), y: Math.sin(angle) };
@@ -687,65 +726,104 @@ function AgentDetailCard({ activeIndex }: { activeIndex: number }) {
   );
 }
 
+function isAgentsPinActive(container: HTMLElement, stickyTop: number) {
+  const rect = container.getBoundingClientRect();
+  return rect.top <= stickyTop + 2 && rect.bottom > stickyTop + 160;
+}
+
 function AgentsOrchestrationPanel() {
   const containerRef = useRef<HTMLDivElement>(null);
+  const stickyRef = useRef<HTMLDivElement>(null);
   const [activeIndex, setActiveIndex] = useState(0);
   const [progress, setProgress] = useState(0);
+  const hasCompletedTourRef = useRef(false);
+  const clampingRef = useRef(false);
+
+  const syncContainerHeight = useCallback(() => {
+    const container = containerRef.current;
+    const sticky = stickyRef.current;
+    if (!container || !sticky) return;
+
+    const stepPx = getAgentStepPx();
+    container.style.height = `${stepPx * agents.length + sticky.offsetHeight}px`;
+  }, []);
 
   const selectAgent = useCallback((index: number) => {
     const container = containerRef.current;
+    const sticky = stickyRef.current;
     if (!container) {
       setActiveIndex(index);
       return;
     }
 
-    const scrollRange = container.offsetHeight - window.innerHeight;
-    if (scrollRange <= 0) {
+    const { stepPx, pinStartScrollY } = getAgentScrollMetrics(container, sticky);
+    if (stepPx <= 0) {
       setActiveIndex(index);
       return;
     }
 
-    const targetY = container.offsetTop + (index / Math.max(agents.length - 1, 1)) * scrollRange;
+    const targetY = pinStartScrollY + stepPx * index + stepPx * 0.5;
     window.scrollTo({ top: targetY, behavior: "smooth" });
   }, []);
 
   useEffect(() => {
     const container = containerRef.current;
-    if (!container) return;
+    const sticky = stickyRef.current;
+    if (!container || !sticky) return;
 
     const updateFromScroll = () => {
-      const rect = container.getBoundingClientRect();
-      const scrollRange = container.offsetHeight - window.innerHeight;
-      if (scrollRange <= 0) return;
-
-      const scrolled = Math.min(scrollRange, Math.max(0, -rect.top));
-      const nextProgress = scrolled / scrollRange;
-      const nextIndex = Math.min(
-        agents.length - 1,
-        Math.max(0, Math.round(nextProgress * (agents.length - 1)))
-      );
-
-      setProgress(nextProgress);
-      setActiveIndex(nextIndex);
+      const metrics = getAgentScrollMetrics(container, sticky);
+      if (metrics.agentSixComplete) {
+        hasCompletedTourRef.current = true;
+      }
+      setProgress(metrics.progress);
+      setActiveIndex(metrics.activeIndex);
     };
 
+    const onResize = () => {
+      syncContainerHeight();
+      updateFromScroll();
+    };
+
+    const clampForwardEscape = () => {
+      if (clampingRef.current || hasCompletedTourRef.current) return;
+
+      const metrics = getAgentScrollMetrics(container, sticky);
+      if (metrics.scrollRange <= 0 || metrics.agentSixComplete) return;
+      if (!isAgentsPinActive(container, metrics.stickyTop)) return;
+
+      if (window.scrollY > metrics.sectionEndScrollY + 1) {
+        clampingRef.current = true;
+        window.scrollTo({ top: metrics.sectionEndScrollY, behavior: "auto" });
+        clampingRef.current = false;
+      }
+    };
+
+    syncContainerHeight();
     updateFromScroll();
     window.addEventListener("scroll", updateFromScroll, { passive: true });
-    window.addEventListener("resize", updateFromScroll);
+    window.addEventListener("scroll", clampForwardEscape, { passive: true });
+    window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("scroll", updateFromScroll);
-      window.removeEventListener("resize", updateFromScroll);
+      window.removeEventListener("scroll", clampForwardEscape);
+      window.removeEventListener("resize", onResize);
     };
-  }, []);
+  }, [syncContainerHeight]);
 
   return (
-    <div
-      ref={containerRef}
-      className="relative -mx-5 lg:-mx-10"
-      style={{ height: `calc(${agents.length * 55}vh + 4rem)` }}
-    >
-      <div className="sticky top-16 z-10 flex min-h-[calc(100vh-4rem)] items-center py-8 lg:top-20">
-        <div className="mx-auto grid w-full max-w-[90rem] gap-12 px-5 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:gap-20 lg:px-10 xl:gap-24">
+    <div ref={containerRef} className="relative -mx-5 lg:-mx-10">
+      <div
+        ref={stickyRef}
+        className="sticky top-16 z-20 flex h-[calc(100vh-4rem)] flex-col justify-center overflow-hidden bg-[#f8fbff] py-8 lg:top-20"
+      >
+        <FadeIn className="flex w-full justify-center px-5 lg:px-10">
+          <h2 className="landing-section-headline landing-section-headline-single text-center font-extrabold tracking-tight text-pearl">
+            SIX AGENTS. ONE SHARED BRAIN.
+          </h2>
+        </FadeIn>
+
+        <div className="mx-auto mt-10 grid w-full max-w-[90rem] gap-12 px-5 lg:grid-cols-[1.1fr_1fr] lg:items-center lg:gap-20 lg:px-10 xl:gap-24">
           <div className="flex flex-col items-center lg:items-end">
             <AgentBrainGlobe activeIndex={activeIndex} onSelect={selectAgent} />
             <div className="mt-8 w-full max-w-lg lg:max-w-xl">
@@ -779,11 +857,12 @@ const heroTraceLines: Array<{
   agent: string;
   call: string;
   result: string;
-  tone: "info" | "warn" | "critical" | "ok";
+  tone: "info" | "warn" | "critical" | "ok" | "seal";
 }> = [
   { agent: "extraction", call: "parse(bol_BL-MEM-001.pdf)", result: "→ 14 fields extracted", tone: "info" },
   { agent: "memory", call: "recall_party('acme-robotics-llc')", result: "→ 2 prior records", tone: "info" },
   { agent: "memory", call: "recall_fingerprint('BL-MEM-001')", result: "→ DUPLICATE", tone: "critical" },
+  { agent: "seal", call: "verify_endorsement(role=importer)", result: "→ share released (2/3)", tone: "seal" },
   { agent: "validation", call: "compare(invoice ↔ bol)", result: "→ IBAN drift detected", tone: "warn" },
   { agent: "risk", call: "score(payment_diversion)", result: "→ 0.94 confidence", tone: "critical" },
   { agent: "validation", call: "flag('duplicate_document')", result: "→ written to MemWal", tone: "critical" },
@@ -795,6 +874,7 @@ const heroToneStyles = {
   warn: { agent: "text-[#fbbf24]", result: "text-[#fcd34d]" },
   critical: { agent: "text-[#f87171]", result: "text-[#fca5a5]" },
   ok: { agent: "text-[#34d399]", result: "text-[#6ee7b7]" },
+  seal: { agent: "text-[#c4b5fd]", result: "text-[#ddd6fe]" },
 } as const;
 
 function MacTrafficLights() {
@@ -1334,19 +1414,9 @@ export function LandingPage() {
         </LandingSection>
 
         {/* ── Agents ── */}
-        <section
-          id="agents"
-          className="landing-section-light landing-section-fullpage relative flex min-h-dvh flex-col overflow-visible"
-        >
-          <div className="mx-auto flex w-full max-w-[90rem] flex-1 flex-col items-center justify-center px-5 py-16 lg:px-10">
-            <FadeIn className="flex w-full justify-center">
-              <h2 className="landing-section-headline landing-section-headline-single text-center font-extrabold tracking-tight text-pearl">
-                SIX AGENTS. ONE SHARED BRAIN.
-              </h2>
-            </FadeIn>
-            <div className="mt-10 w-full">
-              <AgentsOrchestrationPanel />
-            </div>
+        <section id="agents" className="landing-section-light relative overflow-clip">
+          <div className="mx-auto w-full max-w-[90rem] pt-8 lg:pt-10">
+            <AgentsOrchestrationPanel />
           </div>
         </section>
 
