@@ -33,6 +33,7 @@ import { motion, useScroll, useTransform, type Variants } from "framer-motion";
 import Image from "next/image";
 import Link from "next/link";
 import { useEffect, useRef, useState } from "react";
+import memwalLogo from "@/asset/memwal_logo.svg";
 import sealLogo from "@/asset/seal_logo.svg";
 import suiLogo from "@/asset/sui_logo.svg";
 import suishipLogo from "@/asset/suiship_logo.png";
@@ -158,25 +159,31 @@ function SharperHighlight() {
 }
 
 const poweredByLogos = [
-  { src: walrusLogo, alt: "Walrus", label: "Walrus" },
-  { src: sealLogo, alt: "SEAL", label: "SEAL" },
-  { src: suiLogo, alt: "Sui", label: "Sui" },
+  { src: suiLogo, alt: "Sui", label: "Sui", className: "h-7 md:h-8" },
+  { src: walrusLogo, alt: "Walrus", label: "Walrus", className: "h-6 md:h-7" },
+  { src: sealLogo, alt: "SEAL", label: "SEAL", className: "h-5 md:h-6" },
+  { src: memwalLogo, alt: "MemWal", label: "MemWal", className: "h-5 md:h-[22px]" },
 ] as const;
 
 function PoweredByBar() {
   return (
     <motion.div
       variants={fadeUp}
-      className="mt-14 flex flex-col items-center gap-5 border-t border-black/5 pt-10"
+      className="mt-14 flex flex-col items-center gap-6 border-t border-black/5 pt-10"
     >
-      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-steel">Powered by</p>
-      <div className="flex flex-wrap items-center justify-center gap-10 md:gap-14">
+      <p className="text-xs font-semibold uppercase tracking-[0.22em] text-steel">
+        Powered by the Sui stack
+      </p>
+      <div className="flex flex-wrap items-center justify-center gap-x-10 gap-y-7 md:gap-x-16">
         {poweredByLogos.map((logo) => (
           <div key={logo.label} className="flex items-center justify-center">
             <Image
               src={logo.src}
               alt={logo.alt}
-              className="h-8 w-auto object-contain opacity-80 transition hover:opacity-100 md:h-9"
+              className={cn(
+                "w-auto object-contain opacity-65 transition duration-300 hover:opacity-100 hover:[transform:translateY(-1px)]",
+                logo.className
+              )}
             />
           </div>
         ))}
@@ -247,6 +254,7 @@ function TechBackground() {
 const navLinks = [
   { label: "Agents", href: "#agents" },
   { label: "Memory", href: "#memory" },
+  { label: "Access", href: "#access" },
   { label: "Architecture", href: "#tech" },
   { label: "Builders", href: "#builders" },
 ];
@@ -406,6 +414,8 @@ const workflow = [
 const techStack = [
   {
     name: "Sui",
+    logo: suiLogo,
+    logoClass: "h-8 md:h-9",
     accent: "#4DA2FF",
     tagline: "Object-centric blockchain",
     body: "Sub-second finality. Each shipment mints a ShipmentPassport object with immutable hashes and Walrus refs.",
@@ -413,6 +423,8 @@ const techStack = [
   },
   {
     name: "Walrus",
+    logo: walrusLogo,
+    logoClass: "h-6 md:h-7",
     accent: "#5FD3BC",
     tagline: "Decentralized blob storage",
     body: "Erasure-coded storage for PDFs, validation reports, risk artifacts. Refs anchored on Sui for verifiability.",
@@ -420,6 +432,8 @@ const techStack = [
   },
   {
     name: "SEAL",
+    logo: sealLogo,
+    logoClass: "h-6 md:h-7",
     accent: "#A78BFA",
     tagline: "Threshold encryption",
     body: "Key servers verify on-chain endorsement status before releasing decryption shares. No custodian required.",
@@ -427,6 +441,8 @@ const techStack = [
   },
   {
     name: "MemWal",
+    logo: memwalLogo,
+    logoClass: "h-5 md:h-6",
     accent: "#F59E0B",
     tagline: "Persistent semantic memory",
     body: "Agent memory layer over Walrus. Recalls exporter baselines and prior fingerprints across shipments.",
@@ -438,9 +454,9 @@ const agents = [
   { name: "Extraction", model: "Claude Haiku", role: "Async field extraction from trade PDFs.", emoji: "📄" },
   { name: "Validation", model: "Claude Haiku", role: "Cross-document comparison and verdict.", emoji: "✅" },
   { name: "Risk", model: "Claude Sonnet", role: "Trade-finance risk correlation.", emoji: "🛡️" },
-  { name: "Chatbot", model: "Claude Sonnet", role: "Role-gated tool-calling Q&A.", emoji: "💬" },
+  { name: "Chatbot", model: "Claude Sonnet", role: "Tool-calling Q&A gated by on-chain endorsements via SEAL.", emoji: "💬" },
   { name: "Persistent", model: "Event-driven", role: "AIS polling, in-transit drift events.", emoji: "📡" },
-  { name: "Memory", model: "MemWal", role: "Cross-shipment context I/O.", emoji: "🧠" },
+  { name: "Memory", model: "MemWal", role: "Cross-shipment context I/O. Reads decrypted only after SEAL verifies endorsement.", emoji: "🧠" },
 ];
 
 const audiences = [
@@ -483,11 +499,12 @@ const heroTraceLines: Array<{
   agent: string;
   call: string;
   result: string;
-  tone: "info" | "warn" | "critical" | "ok";
+  tone: "info" | "warn" | "critical" | "ok" | "seal";
 }> = [
   { agent: "extraction", call: "parse(bol_BL-MEM-001.pdf)", result: "→ 14 fields extracted", tone: "info" },
   { agent: "memory", call: "recall_party('acme-robotics-llc')", result: "→ 2 prior records", tone: "info" },
   { agent: "memory", call: "recall_fingerprint('BL-MEM-001')", result: "→ DUPLICATE", tone: "critical" },
+  { agent: "seal", call: "verify_endorsement(role=importer)", result: "→ share released (2/3)", tone: "seal" },
   { agent: "validation", call: "compare(invoice ↔ bol)", result: "→ IBAN drift detected", tone: "warn" },
   { agent: "risk", call: "score(payment_diversion)", result: "→ 0.94 confidence", tone: "critical" },
   { agent: "validation", call: "flag('duplicate_document')", result: "→ written to MemWal", tone: "critical" },
@@ -499,6 +516,7 @@ const heroToneStyles = {
   warn: { agent: "text-[#fbbf24]", result: "text-[#fcd34d]" },
   critical: { agent: "text-[#f87171]", result: "text-[#fca5a5]" },
   ok: { agent: "text-[#34d399]", result: "text-[#6ee7b7]" },
+  seal: { agent: "text-[#c4b5fd]", result: "text-[#ddd6fe]" },
 } as const;
 
 function MacTrafficLights() {
@@ -529,7 +547,7 @@ function HeroTerminal() {
         <MacTrafficLights />
       </div>
 
-      <div className="hero-terminal-body flex h-[336px] flex-col px-4 py-3.5 font-mono text-[12px] leading-[1.55] sm:px-5 sm:text-[13px]">
+      <div className="hero-terminal-body flex h-[358px] flex-col px-4 py-3.5 font-mono text-[12px] leading-[1.55] sm:px-5 sm:text-[13px]">
         <div className="shrink-0 space-y-1">
           <p className="text-[#f2f2f2]">
             <span className="text-[#32d74b]">suiship@agents</span>
@@ -883,6 +901,167 @@ export function LandingPage() {
           </FadeIn>
         </LandingSection>
 
+        {/* ── Endorsement-gated memory ── */}
+        <LandingSection id="access" tone="navy">
+          <FadeIn>
+            <div className="mb-10 max-w-3xl">
+              <p className="font-mono text-[11px] font-bold uppercase tracking-[0.2em] text-[#A78BFA]">
+                Endorsement-gated memory
+              </p>
+              <h2 className="mt-3 text-3xl font-extrabold tracking-tight text-pearl md:text-4xl">
+                Memory you can prove. Access you can revoke.
+              </h2>
+              <p className="mt-4 text-base leading-7 text-steel">
+                Persistent memory is only safe if it&apos;s access-controlled. SEAL key servers verify
+                each party&apos;s on-chain endorsement before releasing the decryption share — so the
+                chatbot only recalls what your role and your signature entitle you to see.
+              </p>
+            </div>
+          </FadeIn>
+
+          <FadeIn>
+            <Panel className="overflow-hidden p-0">
+              <div className="grid lg:grid-cols-[1.1fr_1fr]">
+                {/* Left: the gate flow */}
+                <div className="border-b border-white/8 p-6 lg:border-b-0 lg:border-r lg:p-8">
+                  <span className="inline-flex items-center gap-1.5 rounded-full border border-[#A78BFA]/30 bg-[#A78BFA]/10 px-2.5 py-1 font-mono text-[10px] font-bold uppercase tracking-wider text-[#A78BFA]">
+                    <LockKeyhole className="h-3 w-3" />
+                    seal://policy/SHP-9921
+                  </span>
+                  <h3 className="mt-5 text-xl font-bold text-pearl">Four-step decryption gate</h3>
+
+                  <ol className="mt-6 space-y-4">
+                    {[
+                      {
+                        step: "01",
+                        title: "Chat request",
+                        detail: "Importer asks the chatbot: 'show me prior IBAN history for this exporter'.",
+                      },
+                      {
+                        step: "02",
+                        title: "Sui endorsement check",
+                        detail: "SEAL key servers query the ShipmentPassport object. Is the caller endorsed as Importer for SHP-9921?",
+                      },
+                      {
+                        step: "03",
+                        title: "Threshold release (2-of-3)",
+                        detail: "If endorsed, two of three key servers release decryption shares for the role-scoped MemWal slice.",
+                      },
+                      {
+                        step: "04",
+                        title: "Scoped recall",
+                        detail: "The chatbot decrypts only the fields the Importer role can see. Bank-account history? Yes. Margin data? Redacted.",
+                      },
+                    ].map((s) => (
+                      <li key={s.step} className="grid grid-cols-[44px_1fr] items-start gap-4">
+                        <span className="flex h-10 w-10 items-center justify-center rounded-xl border border-[#A78BFA]/25 bg-[#A78BFA]/10 font-mono text-xs font-bold text-[#A78BFA]">
+                          {s.step}
+                        </span>
+                        <div>
+                          <p className="font-semibold text-pearl">{s.title}</p>
+                          <p className="mt-1 text-sm leading-6 text-steel">{s.detail}</p>
+                        </div>
+                      </li>
+                    ))}
+                  </ol>
+                </div>
+
+                {/* Right: role matrix */}
+                <div className="p-6 lg:p-8">
+                  <p className="font-mono text-[10px] font-bold uppercase tracking-wider text-steel/60">
+                    Same shipment. Three roles. Three views.
+                  </p>
+
+                  <div className="mt-5 space-y-3">
+                    {[
+                      {
+                        role: "Exporter",
+                        endorsement: "shipment.created",
+                        emoji: "🏭",
+                        accent: "#4DA2FF",
+                        grants: [
+                          { label: "Document fingerprints", ok: true },
+                          { label: "Own IBAN history", ok: true },
+                          { label: "Importer margin data", ok: false },
+                          { label: "Customs valuation notes", ok: false },
+                        ],
+                      },
+                      {
+                        role: "Importer",
+                        endorsement: "shipment.approved",
+                        emoji: "📦",
+                        accent: "#5FD3BC",
+                        grants: [
+                          { label: "Document fingerprints", ok: true },
+                          { label: "Exporter IBAN history", ok: true },
+                          { label: "Risk findings (full)", ok: true },
+                          { label: "Forwarder cost basis", ok: false },
+                        ],
+                      },
+                      {
+                        role: "Customs",
+                        endorsement: "forwarder.handoff",
+                        emoji: "🛃",
+                        accent: "#A78BFA",
+                        grants: [
+                          { label: "HS codes + valuation", ok: true },
+                          { label: "Authenticity proof", ok: true },
+                          { label: "Commercial terms", ok: false },
+                          { label: "Internal risk score", ok: false },
+                        ],
+                      },
+                    ].map((r) => (
+                      <div
+                        key={r.role}
+                        className="rounded-2xl border border-white/8 bg-white/[0.03] p-4 backdrop-blur"
+                      >
+                        <div className="flex items-center justify-between">
+                          <div className="flex items-center gap-3">
+                            <span
+                              className="flex h-9 w-9 items-center justify-center rounded-xl text-lg"
+                              style={{ background: `${r.accent}18`, border: `1px solid ${r.accent}30` }}
+                            >
+                              {r.emoji}
+                            </span>
+                            <div>
+                              <p className="font-bold text-pearl">{r.role}</p>
+                              <p className="font-mono text-[10px] uppercase tracking-wider" style={{ color: r.accent }}>
+                                endorsement: {r.endorsement}
+                              </p>
+                            </div>
+                          </div>
+                          <span
+                            className="rounded-full border px-2 py-0.5 font-mono text-[9px] uppercase tracking-wider"
+                            style={{ borderColor: `${r.accent}30`, color: r.accent }}
+                          >
+                            on-chain ✓
+                          </span>
+                        </div>
+                        <ul className="mt-3 grid grid-cols-2 gap-x-3 gap-y-1.5 font-mono text-[11px]">
+                          {r.grants.map((g) => (
+                            <li key={g.label} className="flex items-center gap-1.5">
+                              <span
+                                className={`flex h-3.5 w-3.5 items-center justify-center rounded-full text-[8px] font-bold ${
+                                  g.ok ? "bg-emerald-500/20 text-emerald-400" : "bg-red-500/15 text-red-400"
+                                }`}
+                              >
+                                {g.ok ? "✓" : "×"}
+                              </span>
+                              <span className={g.ok ? "text-steel" : "text-steel/40 line-through"}>
+                                {g.label}
+                              </span>
+                            </li>
+                          ))}
+                        </ul>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </Panel>
+          </FadeIn>
+        </LandingSection>
+
         {/* ── Agents ── */}
         <LandingSection id="agents" tone="light">
           <FadeIn>
@@ -959,27 +1138,22 @@ export function LandingPage() {
                   style={{ backgroundColor: tech.accent }}
                 />
                 <div className="relative">
-                  <div className="flex items-start justify-between">
-                    <div className="flex items-center gap-4">
-                      <span
-                        className="flex h-12 w-12 items-center justify-center rounded-2xl text-base font-extrabold"
-                        style={{
-                          backgroundColor: `${tech.accent}18`,
-                          color: tech.accent,
-                          border: `1px solid ${tech.accent}30`,
-                        }}
-                      >
-                        {tech.name[0]}
-                      </span>
-                      <div>
-                        <p className="text-lg font-extrabold text-pearl">{tech.name}</p>
-                        <p className="font-mono text-[11px] font-semibold uppercase tracking-wider" style={{ color: tech.accent }}>
-                          {tech.tagline}
-                        </p>
-                      </div>
+                  <div className="flex items-start justify-between gap-4">
+                    <div
+                      className="flex h-14 items-center rounded-2xl px-4"
+                      style={{
+                        backgroundColor: `${tech.accent}12`,
+                        border: `1px solid ${tech.accent}28`,
+                      }}
+                    >
+                      <Image
+                        src={tech.logo}
+                        alt={tech.name}
+                        className={cn("w-auto object-contain", tech.logoClass)}
+                      />
                     </div>
                     <span
-                      className="rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider"
+                      className="mt-1 shrink-0 rounded-full border px-2.5 py-1 font-mono text-[10px] uppercase tracking-wider"
                       style={{
                         borderColor: `${tech.accent}30`,
                         color: tech.accent,
@@ -989,7 +1163,13 @@ export function LandingPage() {
                       {tech.metric}
                     </span>
                   </div>
-                  <p className="mt-6 text-sm leading-7 text-steel">{tech.body}</p>
+                  <p
+                    className="mt-5 font-mono text-[11px] font-semibold uppercase tracking-wider"
+                    style={{ color: tech.accent }}
+                  >
+                    {tech.tagline}
+                  </p>
+                  <p className="mt-3 text-sm leading-7 text-steel">{tech.body}</p>
                 </div>
               </motion.div>
             ))}
