@@ -1,5 +1,6 @@
 "use client";
 
+import { useCurrentAccount } from "@mysten/dapp-kit";
 import {
   AlertCircle,
   Building2,
@@ -39,14 +40,15 @@ import {
 import type { CompanyProfile } from "@/components/role-context";
 import { applyExtractionToShipmentForm } from "@/lib/apply-extraction-to-shipment-form";
 
-const steps = ["Trade parties", "Document upload", "Details"];
-const visibleStepIndexes = [0, 1, 2];
-const lastVisibleStep = 2;
-const detailsStepIndex = 2;
+const steps = ["Workflow", "Trade parties", "Document upload", "Details"];
+const visibleStepIndexes = [0, 1, 2, 3];
+const lastVisibleStep = 3;
+const detailsStepIndex = 3;
 
-function workflowFromRole(role: string): WorkflowKey {
-  return role === "Importer" ? "importer" : "exporter";
-}
+const workflowTitles: Record<WorkflowKey, string> = {
+  importer: "Importer",
+  exporter: "Exporter"
+};
 
 // These four map exactly to the document types Haiku can detect and extract.
 // Customs Declaration is NOT included — the AI cannot classify it (no schema for it).
@@ -104,10 +106,13 @@ function displayDocumentName(name: string, mode?: string) {
 
 export default function CreateShipmentPage() {
   const router = useRouter();
+  const currentAccount = useCurrentAccount();
   const { role, profile, profiles } = useRole();
   const { addShipment, updateShipment } = useShipments();
 
-  const workflow = useMemo(() => workflowFromRole(role), [role]);
+  const defaultWorkflow: WorkflowKey = "exporter";
+
+  const [workflow, setWorkflow] = useState<WorkflowKey>(defaultWorkflow);
   const [activeStep, setActiveStep] = useState(0);
   const [maxUnlockedStep, setMaxUnlockedStep] = useState(0);
   const [shipmentRecordId, setShipmentRecordId] = useState<string | null>(null);
@@ -125,10 +130,7 @@ export default function CreateShipmentPage() {
   const [freightForwarder, setFreightForwarder] = useState("");
   const [notifyPartyEnabled, setNotifyPartyEnabled] = useState(false);
   const [notifyParty, setNotifyParty] = useState({ company: "", contact: "", email: "", phone: "", taxId: "" });
-  const [details, setDetails] = useState(() => ({
-    ...initialShipmentDetails,
-    shipmentId: generateShipmentId(workflowFromRole("Exporter")),
-  }));
+  const [details, setDetails] = useState({ ...initialShipmentDetails, shipmentId: generateShipmentId(defaultWorkflow) });
   const [cargo, setCargo] = useState(initialCargo);
 
   const initialDocs = useMemo<DocumentRequirement[]>(
@@ -233,11 +235,12 @@ export default function CreateShipmentPage() {
   }
 
   function isStepComplete(stepIndex: number): boolean {
-    if (stepIndex === 0) return isStep1Complete;
-    if (stepIndex === 1) {
+    if (stepIndex === 0) return true;
+    if (stepIndex === 1) return isStep1Complete;
+    if (stepIndex === 2) {
       return extractionStatus === "complete" && docs.some((doc) => doc.uploaded);
     }
-    if (stepIndex === 2) return isDetailsComplete;
+    if (stepIndex === 3) return isDetailsComplete;
     return true;
   }
 
@@ -248,6 +251,7 @@ export default function CreateShipmentPage() {
       createdAt: now,
       updatedAt: now,
       createdBy: workflow,
+      initiatorAddress: currentAccount?.address,
       workflow,
       status,
       importer,
@@ -618,13 +622,13 @@ export default function CreateShipmentPage() {
 
   function goNext() {
     if (!isStepComplete(activeStep)) {
-      if (activeStep === 1) return;
+      if (activeStep === 2) return;
       const message =
-        activeStep === 0
+        activeStep === 1
           ? "Please fill in company, contact, and email for both importer and exporter before continuing."
-          : activeStep === 1
+          : activeStep === 2
             ? "Upload documents and wait for AI extraction to finish before continuing."
-            : activeStep === 2
+            : activeStep === 3
               ? "Please complete the required shipment and cargo details before continuing."
               : "Please complete this step before continuing.";
       setError(message);
@@ -638,12 +642,11 @@ export default function CreateShipmentPage() {
     setActiveStep(nextStep);
   }
 
+  const workflowOptions = useMemo<WorkflowKey[]>(() => ["importer", "exporter"], []);
+
   return (
     <div className="mx-auto max-w-[1500px] px-5 py-8 lg:px-10">
       <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
-      <p className="mt-2 text-sm font-semibold text-steel">
-        Creating as {role === "Importer" ? "Importer" : "Exporter"} · {profile.company}
-      </p>
 
       <div className="mt-8 grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Panel className="hidden h-fit xl:block">
@@ -746,6 +749,32 @@ export default function CreateShipmentPage() {
             </div>
 
             {activeStep === 0 && (
+              <div className="grid gap-4">
+                <p className="text-sm font-bold text-pearl">You are:</p>
+                <div className="grid gap-4 md:grid-cols-2">
+                  {workflowOptions.map((key) => {
+                  const active = workflow === key;
+                  return (
+                    <button
+                      key={key}
+                      type="button"
+                      onClick={() => setWorkflow(key)}
+                      className={cn(
+                        "flex min-h-24 items-center justify-center rounded-2xl border p-5 text-center text-xl font-extrabold transition",
+                        active
+                          ? "border-[#4DA2FF] bg-[#4DA2FF] text-white shadow-glow"
+                          : "border-blue-100 bg-white text-pearl hover:border-[#4DA2FF]/50"
+                      )}
+                    >
+                      {workflowTitles[key]}
+                    </button>
+                  );
+                })}
+                </div>
+              </div>
+            )}
+
+            {activeStep === 1 && (
               <div className="grid gap-6">
                 {workflow === "importer" ? (
                   <>
@@ -804,7 +833,7 @@ export default function CreateShipmentPage() {
               </div>
             )}
 
-            {activeStep === 1 && (
+            {activeStep === 2 && (
               <DocumentUploadStep
                 docs={docs}
                 transportMode={details.transportMode}
@@ -816,7 +845,7 @@ export default function CreateShipmentPage() {
               />
             )}
 
-            {activeStep === 2 && (
+            {activeStep === 3 && (
               <div className="grid gap-6">
                 <div>
                   <p className="mb-3 text-xs font-bold uppercase tracking-widest text-steel">Shipment</p>
@@ -883,7 +912,7 @@ export default function CreateShipmentPage() {
 
           </Panel>
 
-          {error && activeStep === 2 && (
+          {error && activeStep === 3 && (
             <p className="flex items-center gap-2 rounded-2xl border border-red-200 bg-red-50 p-3 text-sm font-bold text-red-600">
               <XCircle className="h-4 w-4 shrink-0" />
               {error}

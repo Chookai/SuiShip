@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeMintSequence } from "@/lib/mint-sequence";
+import { resolveMintOwnerAddress } from "@/lib/party-slush-accounts";
 import { getShipmentById } from "@/lib/shipments-server";
 
 export const runtime = "nodejs";
@@ -10,14 +11,16 @@ export async function POST(
 ) {
   try {
     const { id: shipmentId } = await params;
-    const body = (await request.json()) as { ownerAddress?: string };
-    const ownerAddress = body.ownerAddress;
-    if (!ownerAddress || typeof ownerAddress !== "string" || ownerAddress.trim() === "") {
-      return NextResponse.json(
-        { error: "ownerAddress is required in the request body" },
-        { status: 400 }
-      );
+    const shipment = getShipmentById(shipmentId);
+    if (!shipment) {
+      return NextResponse.json({ error: "Shipment not found" }, { status: 404 });
     }
+
+    const body = (await request.json().catch(() => ({}))) as { ownerAddress?: string };
+    const ownerAddress =
+      typeof body.ownerAddress === "string" && body.ownerAddress.trim().length > 0
+        ? body.ownerAddress.trim()
+        : resolveMintOwnerAddress(shipment.workflow);
 
     const result = await executeMintSequence(shipmentId, ownerAddress);
 

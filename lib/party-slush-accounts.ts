@@ -106,6 +106,18 @@ export function resolveOnChainPartyAddresses(initiator: string): OnChainPartyAdd
   return { importerAddress, exporterAddress, initiator };
 }
 
+/** Mint owner for passport creation — uses party slush when configured, else server key. */
+export function resolveMintOwnerAddress(workflow: "importer" | "exporter"): string {
+  const serverKey = process.env.SUI_PRIVATE_KEY?.trim();
+  if (!serverKey) {
+    throw new Error("SUI_PRIVATE_KEY not set");
+  }
+  const serverAddr = parseEd25519Keypair(serverKey).toSuiAddress();
+  const slushParties = resolveOnChainPartyAddresses(serverAddr);
+  if (!slushParties) return serverAddr;
+  return workflow === "importer" ? slushParties.importerAddress : slushParties.exporterAddress;
+}
+
 export function generatePartySlushKeypair(): { address: string; secretKey: string } {
   const keypair = Ed25519Keypair.generate();
   const secretKey = keypair.getSecretKey();

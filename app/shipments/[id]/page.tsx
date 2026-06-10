@@ -1,6 +1,5 @@
 "use client";
 
-import { useCurrentAccount } from "@mysten/dapp-kit";
 import {
   AlertCircle,
   ArrowLeft,
@@ -169,7 +168,6 @@ function StoredShipmentView({
   onUpdate: (patch: Partial<ShipmentRecord>) => void;
 }) {
   const router = useRouter();
-  const currentAccount = useCurrentAccount();
   const { role: actorRole } = useRole();
   const [documentPhase, setDocumentPhase] = useState<"idle" | "extracting" | "validating" | "minting">("idle");
   const [panelRefreshNonce, setPanelRefreshNonce] = useState(0);
@@ -431,11 +429,6 @@ function StoredShipmentView({
       setWorkflowError("Run document extraction successfully before final storage.");
       return;
     }
-    if (!currentAccount?.address) {
-      setWorkflowError("Connect your Sui wallet before creating the passport.");
-      return;
-    }
-
     try {
       const readinessRes = await fetch(
         `/api/shipments/${encodeURIComponent(shipment.id)}/mint/readiness`
@@ -515,7 +508,7 @@ function StoredShipmentView({
       const mintRes = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/mint`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ ownerAddress: currentAccount.address }),
+        body: JSON.stringify({}),
       });
       const mintPayload = await parseJsonResponse(mintRes);
       if (!mintRes.ok) {
