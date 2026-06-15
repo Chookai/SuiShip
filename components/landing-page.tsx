@@ -1057,13 +1057,13 @@ function DemoModal({ open, onClose }: { open: boolean; onClose: () => void }) {
           <X className="h-4 w-4" />
         </button>
         <div className="aspect-video w-full overflow-hidden rounded-2xl bg-[#080d1a]">
-          <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-            <Play className="h-14 w-14 text-sui/60" />
-            <p className="text-sm font-semibold text-steel">Demo video coming soon</p>
-            <p className="max-w-xs text-xs text-steel/60">
-              Replace with your YouTube embed in <code className="text-sui/80">components/landing-page.tsx</code>
-            </p>
-          </div>
+          <iframe
+            className="h-full w-full"
+            src="https://www.youtube.com/embed/QyDfBLK_Zzw?autoplay=1&rel=0"
+            title="SuiShip demo"
+            allow="autoplay; encrypted-media; picture-in-picture; web-share"
+            allowFullScreen
+          />
         </div>
       </motion.div>
     </div>
