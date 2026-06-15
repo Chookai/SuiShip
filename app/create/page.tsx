@@ -705,19 +705,22 @@ export default function CreateShipmentPage() {
     <div className="mx-auto max-w-[1500px] px-5 py-8 lg:px-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
-        <Button
-          variant="secondary"
-          onClick={handleRefreshMemwal}
-          disabled={refreshing}
-          title="Spin up a brand-new MemWal account with seeded company profiles and no document memory"
-        >
-          {refreshing ? (
-            <Loader2 className="h-4 w-4 animate-spin" />
-          ) : (
-            <RefreshCw className="h-4 w-4" />
-          )}
-          {refreshing ? "Refreshing (up to ~2 min)…" : "Refresh"}
-        </Button>
+        {/* Dev-only: the refresh route rewrites .env.local and is disabled in production. */}
+        {process.env.NODE_ENV !== "production" && (
+          <Button
+            variant="secondary"
+            onClick={handleRefreshMemwal}
+            disabled={refreshing}
+            title="Spin up a brand-new MemWal account with seeded company profiles and no document memory"
+          >
+            {refreshing ? (
+              <Loader2 className="h-4 w-4 animate-spin" />
+            ) : (
+              <RefreshCw className="h-4 w-4" />
+            )}
+            {refreshing ? "Refreshing (up to ~2 min)…" : "Refresh"}
+          </Button>
+        )}
       </div>
       {refreshMessage && (
         <p
