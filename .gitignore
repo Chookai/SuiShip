@@ -22,6 +22,8 @@ suiship.db-shm
 # Internal working docs — not for public consumption
 PROD_AUDIT.md
 idea.md
+# Contains real secrets for deployment — never commit
+DEPLOY_ENV.md
 plan.md
 DEMO_VIDEO_PLAN.md
 
