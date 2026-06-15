@@ -1,0 +1,88 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 998 >>
+stream
+BT
+/F1 10 Tf
+13 TL
+50 780 Td
+/F1 16 Tf
+(Commercial Invoice) Tj
+T*
+/F1 10 Tf
+(Invoice Number: INV-MEM-001) Tj
+T*
+(Invoice Date: 2026-05-20) Tj
+T*
+(Exporter / Shipper: Acme Robotics LLC) Tj
+T*
+(Exporter Tax ID: US-123456789) Tj
+T*
+(Exporter Address: 123 Harbor Way, Los Angeles, CA 90012, United States) Tj
+T*
+(Importer / Consignee: Shanghai Smart Imports Co Ltd) Tj
+T*
+(Importer Tax ID: CN-987654321) Tj
+T*
+(Importer Address: 88 Pudong Avenue, Shanghai, China) Tj
+T*
+(Currency: USD) Tj
+T*
+(Payment Terms: BANK REF ABC-8842) Tj
+T*
+(Incoterms: FOB) Tj
+T*
+(Carrier: Pacific Star Lines) Tj
+T*
+(Sender Reference / BOL Number: BL-MEM-001) Tj
+T*
+(Line 1 Description: Industrial tablet computers) Tj
+T*
+(HS Code: 8471.30) Tj
+T*
+(Country of Origin: United States) Tj
+T*
+(Quantity: 100 PCS) Tj
+T*
+(Unit Value: 500) Tj
+T*
+(Subtotal: 50000) Tj
+T*
+(Total Net Weight: 1000 kg) Tj
+T*
+(Total Gross Weight: 1200 kg) Tj
+T*
+(Total Pieces: 100) Tj
+T*
+(Declared Value: 50000) Tj
+T*
+(Total Invoice Amount: 50000) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1360
+%%EOF

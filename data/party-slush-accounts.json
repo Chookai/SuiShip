@@ -1,0 +1,21 @@
+{
+  "network": "testnet",
+  "updatedAt": "2026-05-31T04:01:06.559Z",
+  "accounts": [
+    {
+      "role": "Exporter",
+      "company": "Acme Robotics LLC",
+      "address": "0x18abcaecff6590ad0942698381785af5f3f425a5541856c90b8a29a84fb2bb51"
+    },
+    {
+      "role": "Importer",
+      "company": "Shanghai Smart Imports Co Ltd",
+      "address": "0x2cbcba5b3af3c17f6553ab6b0a3693a1a877c1beaf1d03f71a58174fe45df1de"
+    },
+    {
+      "role": "Freight Forwarder",
+      "company": "Freight Forwarder",
+      "address": "0x9ca5d8445270c4a44fe3b798e3c9a0049166ce0fba60e86a43de7afeeca1059b"
+    }
+  ]
+}

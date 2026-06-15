@@ -1,0 +1,68 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R] /Count 1 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R >> >> /Contents 5 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica >>
+endobj
+5 0 obj
+<< /Length 688 >>
+stream
+BT
+/F1 10 Tf
+13 TL
+50 780 Td
+/F1 16 Tf
+(Packing List) Tj
+T*
+/F1 10 Tf
+(Packing List Number: PL-INV-MEM-002) Tj
+T*
+(Invoice Number: INV-MEM-002) Tj
+T*
+(Ship Date: 2026-05-21) Tj
+T*
+(Exporter / Shipper: Acme Robotics LLC) Tj
+T*
+(Exporter Tax ID: US-123456789) Tj
+T*
+(Exporter Address: 123 Harbor Way, Los Angeles, CA 90012, United States) Tj
+T*
+(Importer / Consignee: Shanghai Smart Imports Co Ltd) Tj
+T*
+(Importer Tax ID: CN-987654321) Tj
+T*
+(Importer Address: 88 Pudong Avenue, Shanghai, China) Tj
+T*
+(Goods Description: Integrated circuit modules) Tj
+T*
+(HS Code: 8542.31) Tj
+T*
+(Total Packages: 100 Cartons) Tj
+T*
+(Total Net Weight: 1000 kg) Tj
+T*
+(Total Gross Weight: 1200 kg) Tj
+T*
+ET
+endstream
+endobj
+xref
+0 6
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000115 00000 n 
+0000000241 00000 n 
+0000000311 00000 n 
+trailer
+<< /Size 6 /Root 1 0 R >>
+startxref
+1050
+%%EOF
