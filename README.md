@@ -1,5 +1,7 @@
 <p align="center">
-  <img src="asset/suiship_name.png" alt="SuiShip" width="320" />
+  <img src="asset/suiship_logo.png" alt="SuiShip logo" height="72" />
+  &nbsp;&nbsp;
+  <img src="asset/suiship_name.png" alt="SuiShip" height="72" />
 </p>
 
 <p align="center"><strong>AI-powered shipment document passports on the Sui blockchain.</strong></p>
