@@ -1,6 +1,18 @@
-# SuiShip
+<p align="center">
+  <img src="asset/suiship_name.png" alt="SuiShip" width="320" />
+</p>
 
-**AI-powered shipment document passports on the Sui blockchain.**
+<p align="center"><strong>AI-powered shipment document passports on the Sui blockchain.</strong></p>
+
+## 🎬 Demo
+
+<p align="center">
+  <a href="https://youtu.be/QyDfBLK_Zzw">
+    <img src="https://img.youtube.com/vi/QyDfBLK_Zzw/maxresdefault.jpg" alt="Watch the SuiShip demo" width="640" />
+  </a>
+</p>
+
+<p align="center"><a href="https://youtu.be/QyDfBLK_Zzw">▶ Watch the 5-minute demo</a></p>
 
 SuiShip turns a pile of shipping documents (bill of lading, commercial invoice, packing list, certificate of origin) into a verifiable on-chain passport. Claude AI agents extract fields, cross-validate documents, detect trade-finance risk, and produce a tamper-evident record anchored on Sui. Built as a hackathon prototype for the Sui ecosystem.
 
