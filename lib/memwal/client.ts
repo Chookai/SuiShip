@@ -4,6 +4,7 @@ import pino from "pino";
 const logger = pino({ name: "memwal-client" });
 const DEFAULT_MEMWAL_RELAYER_URL = "https://relayer.staging.memwal.ai";
 const REMEMBER_MAX_ATTEMPTS = 3;
+const MEMWAL_MAX_ATTEMPTS = 3;
 
 // Lazy-loaded so Next.js doesn't try to bundle it for client components
 let _MemWalClass: typeof import("@mysten-incubation/memwal").MemWal | null = null;
@@ -71,30 +72,18 @@ export async function memwalRememberAndWait(
   });
 
   try {
-    for (let attempt = 1; attempt <= REMEMBER_MAX_ATTEMPTS; attempt += 1) {
-      try {
-        const accepted = await client.remember(text, namespace);
-        logger.info({ jobId: accepted.job_id, namespace, attempt }, "MemWal remember accepted");
+    return await runRetriableMemWalOperation("remember", namespace, async (attempt) => {
+      const accepted = await client.remember(text, namespace);
+      logger.info({ jobId: accepted.job_id, namespace, attempt }, "MemWal remember accepted");
 
-        const result = await client.waitForRememberJob(accepted.job_id, {
-          pollIntervalMs: 1500,
-          timeoutMs,
-        });
+      const result = await client.waitForRememberJob(accepted.job_id, {
+        pollIntervalMs: 1500,
+        timeoutMs,
+      });
 
-        logger.info({ jobId: result.id, blobId: result.blob_id, namespace, attempt }, "MemWal remember complete");
-        return { jobId: result.id, blobId: result.blob_id, namespace: result.namespace };
-      } catch (err) {
-        if (attempt >= REMEMBER_MAX_ATTEMPTS || !isRetriableMemWalError(err)) {
-          throw err;
-        }
-
-        const delayMs = getRetryDelayMs(err) ?? attempt * 1500;
-        logger.warn({ err, namespace, attempt, delayMs }, "MemWal remember failed transiently — retrying");
-        await sleep(delayMs);
-      }
-    }
-
-    throw new Error("MemWal remember exhausted retries");
+      logger.info({ jobId: result.id, blobId: result.blob_id, namespace, attempt }, "MemWal remember complete");
+      return { jobId: result.id, blobId: result.blob_id, namespace: result.namespace };
+    }, { maxAttempts: REMEMBER_MAX_ATTEMPTS });
   } finally {
     client.destroy();
   }
@@ -224,7 +213,11 @@ export async function memwalRecall(
   });
 
   try {
-    const result = await client.recall(query, limit, namespace);
+    const result = await runRetriableMemWalOperation(
+      "recall",
+      namespace,
+      () => client.recall(query, limit, namespace)
+    );
     logger.info({ query, namespace, count: result.results.length }, "MemWal recall complete");
     return result.results.map((r) => ({
       blobId: r.blob_id,
@@ -274,6 +267,35 @@ export function isMemWalConfigured(): boolean {
   const key = process.env.MEMWAL_ED25519_KEY;
   const accountId = process.env.MEMWAL_ACCOUNT_ID;
   return !!(key && accountId && !key.startsWith("your-") && !accountId.startsWith("0xTODO"));
+}
+
+export async function runRetriableMemWalOperation<T>(
+  operationName: string,
+  namespace: string,
+  operation: (attempt: number) => Promise<T>,
+  options: {
+    maxAttempts?: number;
+    sleepFn?: (ms: number) => Promise<void>;
+  } = {}
+): Promise<T> {
+  const maxAttempts = options.maxAttempts ?? MEMWAL_MAX_ATTEMPTS;
+  const sleepFn = options.sleepFn ?? sleep;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      return await operation(attempt);
+    } catch (err) {
+      if (attempt >= maxAttempts || !isRetriableMemWalError(err)) {
+        throw err;
+      }
+
+      const delayMs = getRetryDelayMs(err) ?? attempt * 1500;
+      logger.warn({ err, namespace, attempt, delayMs, operationName }, "MemWal operation failed transiently — retrying");
+      await sleepFn(delayMs);
+    }
+  }
+
+  throw new Error(`MemWal ${operationName} exhausted retries`);
 }
 
 function mockWriteResult(namespace: string): MemWalWriteResult {

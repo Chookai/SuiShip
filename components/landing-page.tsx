@@ -39,6 +39,7 @@ import suishipName from "@/asset/suiship_name.png";
 import walrusLogo from "@/asset/walrus_logo.svg";
 import walrusMascot from "@/asset/walrus-mascot.avif";
 import { Panel } from "@/components/ui";
+import { SiteHeader } from "@/components/site-header";
 import { cn } from "@/lib/utils";
 
 // ─── Animation variants ────────────────────────────────────────────────────
@@ -263,10 +264,8 @@ const navLinks = [
   { label: "Access", href: "#access" },
   { label: "Architecture", href: "#tech" },
   { label: "Builders", href: "#builders" },
+  { label: "Market", href: "/market" },
 ];
-
-const landingNavLinkClass =
-  "landing-nav-link rounded-xl px-4 py-2.5 text-base font-semibold lg:px-5 lg:py-3 lg:text-lg";
 
 const trackAlignment = [
   {
@@ -1071,65 +1070,6 @@ function DemoModal({ open, onClose }: { open: boolean; onClose: () => void }) {
   );
 }
 
-// ─── Nav ───────────────────────────────────────────────────────────────────
-
-function LandingNav({ onWatchDemo }: { onWatchDemo: () => void }) {
-  const [scrolled, setScrolled] = useState(false);
-
-  useEffect(() => {
-    const onScroll = () => setScrolled(window.scrollY > 8);
-    onScroll();
-    window.addEventListener("scroll", onScroll, { passive: true });
-    return () => window.removeEventListener("scroll", onScroll);
-  }, []);
-
-  return (
-    <header
-      className={cn(
-        "landing-nav-header sticky top-0 z-50 px-5 py-5 backdrop-blur-xl transition-[background-color,border-color] duration-200 md:py-6 lg:px-10",
-        scrolled
-          ? "border-b border-blue-100/80 bg-[#f8fbff]/85"
-          : "border-b border-transparent bg-transparent"
-      )}
-    >
-      <div className="mx-auto flex max-w-[90rem] items-center justify-between gap-8">
-        <Link href="/" className="flex min-w-0 items-center gap-4" aria-label="SuiShip home">
-          <Image src={suishipLogo} alt="" className="h-14 w-14 shrink-0 object-contain md:h-16 md:w-16" priority />
-          <Image
-            src={suishipName}
-            alt="SuiShip"
-            className="mt-1 h-10 w-auto min-w-[140px] object-contain md:h-12 md:min-w-[168px]"
-            priority
-          />
-        </Link>
-        <nav className="hidden items-center gap-2 lg:flex">
-          {navLinks.map((link) => (
-            <a key={link.href} href={link.href} className={landingNavLinkClass}>
-              {link.label}
-            </a>
-          ))}
-        </nav>
-        <div className="flex items-center gap-3 md:gap-4">
-          <button
-            onClick={onWatchDemo}
-            className={`${landingNavLinkClass} hidden items-center gap-2 sm:flex`}
-          >
-            <Play className="h-4 w-4 md:h-5 md:w-5" />
-            Demo
-          </button>
-          <Link
-            href="/create"
-            className="inline-flex min-h-12 shrink-0 items-center justify-center gap-2.5 rounded-2xl px-5 py-2.5 text-base font-semibold blue-gradient text-white shadow-glow transition hover:brightness-105 md:min-h-[3.25rem] md:px-6 md:py-3 md:text-lg"
-          >
-            Launch App
-            <ArrowRight className="h-5 w-5" />
-          </Link>
-        </div>
-      </div>
-    </header>
-  );
-}
-
 // ─── Main component ────────────────────────────────────────────────────────
 
 export function LandingPage() {
@@ -1138,7 +1078,7 @@ export function LandingPage() {
   return (
     <div className="marketing-site-scale min-h-screen bg-[#f8fbff]">
       <DemoModal open={demoOpen} onClose={() => setDemoOpen(false)} />
-      <LandingNav onWatchDemo={() => setDemoOpen(true)} />
+      <SiteHeader onWatchDemo={() => setDemoOpen(true)} />
 
       <main>
         {/* ── Hero ── */}

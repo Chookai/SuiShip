@@ -56,7 +56,7 @@ export type RejectedRiskCandidate = {
 export type RiskScanResult = {
   id: string;
   shipmentId: string;
-  status: "completed" | "failed";
+  status: "scanning" | "completed" | "failed";
   findings: RiskFinding[];
   generatedAt: string;
   memwalConfigured: boolean;

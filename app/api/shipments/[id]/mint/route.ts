@@ -29,8 +29,8 @@ export async function POST(
       return NextResponse.json(result, { status: statusCode });
     }
 
-    const shipment = getShipmentById(shipmentId);
-    return NextResponse.json(shipment ?? result);
+    const refreshedShipment = getShipmentById(shipmentId);
+    return NextResponse.json(refreshedShipment ?? result);
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
   }

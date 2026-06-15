@@ -27,9 +27,10 @@ export function RiskAgentPanel({
   const [running, setRunning] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const legacyRefreshAttempted = useRef(false);
+  const pollAttempts = useRef(0);
 
-  const load = useCallback(async () => {
-    setLoading(true);
+  const load = useCallback(async (opts?: { silent?: boolean }) => {
+    if (!opts?.silent) setLoading(true);
     setError(null);
     try {
       const response = await fetch(`/api/shipments/${encodeURIComponent(shipment.id)}/risk-scan`);
@@ -43,13 +44,28 @@ export function RiskAgentPanel({
     } catch (err) {
       setError(err instanceof Error ? err.message : "Could not load risk scan");
     } finally {
-      setLoading(false);
+      if (!opts?.silent) setLoading(false);
     }
   }, [shipment.id]);
 
   useEffect(() => {
+    pollAttempts.current = 0;
     void load();
   }, [load, refreshKey]);
+
+  // Poll while a scan is in progress, or briefly when none exists yet so a
+  // freshly-kicked background scan (e.g. right after shipment creation) gets a
+  // chance to publish its row. Silent loads avoid flicker on the live panel.
+  useEffect(() => {
+    const scanning = scan?.status === "scanning";
+    const awaitingFirstScan = scan === null && !error && pollAttempts.current < 8;
+    if (!scanning && !awaitingFirstScan) return;
+    const timer = setTimeout(() => {
+      pollAttempts.current += 1;
+      void load({ silent: true });
+    }, 3000);
+    return () => clearTimeout(timer);
+  }, [scan, error, load]);
 
   async function runScan() {
     setRunning(true);
@@ -72,7 +88,9 @@ export function RiskAgentPanel({
   }
 
   const counts = useMemo(() => summarizeCounts(scan?.findings ?? []), [scan?.findings]);
+  const isScanning = scan?.status === "scanning";
   const hasLegacyFindings = Boolean(
+    !isScanning &&
     scan?.findings.length && scan.findings.some((finding) => !finding.correlation)
   );
 
@@ -87,12 +105,14 @@ export function RiskAgentPanel({
     <div className="space-y-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <p className="text-sm font-semibold text-steel">
-          {scan
+          {isScanning
+            ? "Risk Agent is scanning…"
+            : scan
             ? `Last scan ${new Date(scan.generatedAt).toLocaleString()}`
             : "No risk scan has been recorded yet."}
         </p>
-        <Button onClick={runScan} disabled={running}>
-          {running ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+        <Button onClick={runScan} disabled={running || isScanning}>
+          {running || isScanning ? <Loader2 className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
           Refresh Risk Scan
         </Button>
       </div>
@@ -110,7 +130,7 @@ export function RiskAgentPanel({
         </div>
       ) : null}
 
-      {scan ? (
+      {scan && !isScanning ? (
         <div className="grid gap-3 sm:grid-cols-3">
           <Metric label="Critical" value={counts.critical} tone="critical" />
           <Metric label="Warnings" value={counts.warning} tone="warning" />
@@ -118,7 +138,17 @@ export function RiskAgentPanel({
         </div>
       ) : null}
 
-      {loading ? (
+      {isScanning ? (
+        <div className="flex items-start gap-3 rounded-xl border border-blue-100 bg-blue-50 p-4">
+          <Loader2 className="mt-0.5 h-5 w-5 animate-spin text-sui" />
+          <div>
+            <p className="font-black text-pearl">Risk Agent is scanning live + remembered risk signals…</p>
+            <p className="mt-1 text-sm font-semibold text-steel">
+              Cross-checking the shipment route, carrier, and parties against MemWal risk memory and public web signals. Findings appear here automatically.
+            </p>
+          </div>
+        </div>
+      ) : loading ? (
         <div className="flex items-center gap-2 rounded-xl border border-blue-100 bg-blue-50 p-4 text-sm font-semibold text-steel">
           <Loader2 className="h-4 w-4 animate-spin text-sui" />
           Loading risk scan...
@@ -128,6 +158,16 @@ export function RiskAgentPanel({
           {scan.findings.map((finding) => (
             <RiskFindingCard key={finding.id} finding={finding} />
           ))}
+        </div>
+      ) : scan?.status === "failed" ? (
+        <div className="flex items-start gap-3 rounded-xl border border-amber-100 bg-amber-50 p-4">
+          <AlertTriangle className="mt-0.5 h-5 w-5 shrink-0 text-amber-600" />
+          <div>
+            <p className="font-black text-pearl">Risk scan could not complete.</p>
+            <p className="mt-1 text-sm font-semibold text-steel">
+              {scan.error ?? "The risk agent hit an error while checking external signals."} Use Refresh Risk Scan to try again.
+            </p>
+          </div>
         </div>
       ) : (
         <div className="rounded-xl border border-emerald-100 bg-emerald-50 p-4">

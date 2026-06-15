@@ -1,8 +1,17 @@
-import { NextRequest, NextResponse } from "next/server";
+import { NextRequest, NextResponse, after } from "next/server";
 import { getDb } from "@/lib/db";
 import { getLatestRiskScan, runRiskScanForShipment } from "@/lib/agents/risk-agent";
 
 export const runtime = "nodejs";
+
+async function readBackgroundFlag(request: NextRequest): Promise<boolean> {
+  try {
+    const body = (await request.json()) as { background?: unknown } | null;
+    return body?.background === true;
+  } catch {
+    return false;
+  }
+}
 
 export async function GET(
   _request: NextRequest,
@@ -25,12 +34,27 @@ export async function GET(
 }
 
 export async function POST(
-  _request: NextRequest,
+  request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const { id: shipmentId } = await params;
     const db = getDb();
+
+    // Background mode: kick the scan off after responding so callers (e.g. the
+    // create flow) can trigger it and navigate away without waiting for the
+    // full MemWal + live-search pipeline to finish.
+    if (await readBackgroundFlag(request)) {
+      after(async () => {
+        try {
+          await runRiskScanForShipment(shipmentId, db);
+        } catch {
+          // Scan failures are persisted by runRiskScanForShipment; nothing to surface here.
+        }
+      });
+      return NextResponse.json({ shipmentId, status: "scanning" }, { status: 202 });
+    }
+
     const scan = await runRiskScanForShipment(shipmentId, db);
     const status = scan.status === "failed" ? 502 : 200;
     return NextResponse.json(scan, { status });

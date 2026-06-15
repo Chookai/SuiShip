@@ -6,6 +6,18 @@ SuiShip turns a pile of shipping documents (bill of lading, commercial invoice, 
 
 ---
 
+## Why it matters
+
+Trade documents are still the weak link in global commerce: trade-finance fraud costs **~$42B/year**, the trade-finance gap sits at **~$2.5T**, and customs clearance can take **5–7 days**. SuiShip attacks this by turning messy shipment documents into a verifiable, finance-ready passport.
+
+- **Market** — a **~$54B** trade & supply-chain software opportunity, with a **~$9B** serviceable slice for AI + blockchain verification.
+- **Revenue** — per-shipment passport fees, SaaS workspaces, memory APIs, risk scans, and verification for banks and customs.
+- **Vision** — extend the passport into automated customs clearance, where compliance, payments, and trust move together in real time.
+
+See the full breakdown on the in-app [`/market`](app/market/page.tsx) page.
+
+---
+
 ## What works out of the box (mock mode)
 
 No external keys needed beyond `ANTHROPIC_API_KEY`:
@@ -22,14 +34,16 @@ No external keys needed beyond `ANTHROPIC_API_KEY`:
 | Provenance panel | Custody chain of endorsements per party role |
 | QR code | Shareable shipment passport link |
 | Customs viewer | `/customs` — search by tracking ID |
-| Party slush signing | Server-side endorsement signing for demo roles |
+| Market page | `/market` — commercial thesis, market sizing, and the five-stream revenue model |
+| Demo reset | **Refresh** button on `/create` — provisions a fresh MemWal account with seeded company profiles and no document memory, then resets the flow |
+| No-wallet minting & signing | Mint passports and sign endorsements without connecting a wallet — the server signs with demo party slush accounts |
 
 ---
 
 ## Quickstart
 
 ```bash
-git clone <repo-url>
+git clone https://github.com/zequann/suiShip.git
 cd suiShip
 npm install
 cp .env.example .env.local
@@ -48,7 +62,7 @@ npm run dev
 # Open http://localhost:3000
 ```
 
-Walk the demo: **Dashboard → Create Shipment → Upload Docs → Run AI Pipeline → View Passport → Chat**.
+Walk the demo: **Landing page (`/`) → Create Shipment (`/create`) → Upload Docs → Run AI Pipeline → Mint Passport → View Passport → Chat**.
 
 ---
 
@@ -141,10 +155,12 @@ graph TD
 
 ## Demo script (happy path)
 
+> **Tip:** To re-run the walkthrough from a clean slate (e.g. between judges), click **Refresh** at the top of `/create`. It provisions a fresh MemWal account with seeded company profiles and no document memory (takes up to ~2 min).
+
 1. **`/create`** — Fill in shipment details (Exporter: Acme Robotics, Importer: Shanghai Smart Imports, route: LA → Shanghai, cargo: industrial tablets)
 2. **Upload documents** — Use the provided demo PDFs or generate with `npm run demo:docs`
 3. **Run AI pipeline** — Click "Extract Fields" then "Validate Documents"
-4. **Mint passport** — Click "Mint Shipment Passport" (mock mode writes to SQLite; real mode writes to Sui)
+4. **Mint passport** — Click "Mint Shipment Passport" (no wallet connect needed — the server signs with demo party slush accounts; mock mode writes to SQLite, real mode writes to Sui)
 5. **View passport** — See the on-chain object ID, document hashes, Walrus URIs, QR code
 6. **Chatbot** — Switch roles (Exporter / Freight Forwarder / Importer) and ask questions about the shipment
 7. **Risk report** — `/risk-memory` shows correlated trade-finance risk signals
@@ -159,6 +175,7 @@ graph TD
 - **MemWal and Walrus** are optional; the app works fully without them in mock mode
 - **SEAL integration** (`SEAL_ENABLED=true`) is experimental
 - **No production auth** — the demo uses a mock role system; do not deploy as-is
+- **Light mode only** — the UI is locked to light mode (`forcedTheme="light"`) for demo consistency
 - **Party slush keys** in `data/party-slush-accounts.json` are testnet-only public addresses; generate fresh keys per environment with `npm run slush:setup`
 
 ---

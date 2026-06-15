@@ -104,8 +104,8 @@ export function buildShipmentMemoryFacts(shipment: ShipmentRecord, compactManife
     shipmentId: shipment.id,
     exporter: buildPartyFacts(
       "exporter",
-      shipment.exporter.company,
-      shipment.exporter.taxId,
+      firstString(invoice?.shipper_name, bol?.shipper_name, coo?.exporter_name, shipment.exporter.company) ?? shipment.exporter.company,
+      firstString(invoice?.shipper_tax_id, bol?.shipper_tax_id, coo?.exporter_tax_id, shipment.exporter.taxId),
       shipment.shipment.origin,
       firstAddress(invoice?.shipper_address, bol?.shipper_address, coo?.exporter_address, shipment.exporter.registeredAddress),
       firstString(invoice?.bank_beneficiary_name, shipment.exporter.bankBeneficiaryName),
@@ -115,8 +115,8 @@ export function buildShipmentMemoryFacts(shipment: ShipmentRecord, compactManife
     ),
     importer: buildPartyFacts(
       "importer",
-      shipment.importer.company,
-      shipment.importer.taxId,
+      firstString(invoice?.recipient_name, bol?.consignee_name, coo?.importer_name, shipment.importer.company) ?? shipment.importer.company,
+      firstString(invoice?.recipient_tax_id, bol?.consignee_tax_id, coo?.importer_tax_id, shipment.importer.taxId),
       shipment.shipment.destination,
       firstAddress(invoice?.recipient_address, bol?.consignee_address, coo?.importer_address)
     ),

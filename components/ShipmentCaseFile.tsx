@@ -781,7 +781,7 @@ function OverviewSection({
 type AgentTab = "document" | "risk";
 
 const AGENT_TABS: Array<{ id: AgentTab; label: string; icon: React.ElementType }> = [
-  { id: "document", label: "Document Agent", icon: FileText },
+  { id: "document", label: "Extraction, Validation and Memory Agents", icon: FileText },
   { id: "risk", label: "Risk Agent", icon: ShieldAlert },
 ];
 

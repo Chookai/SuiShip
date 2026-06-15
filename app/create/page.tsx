@@ -9,6 +9,7 @@ import {
   Loader2,
   Lock,
   Plus,
+  RefreshCw,
   Ship,
   Upload,
   UserCheck,
@@ -111,6 +112,7 @@ export default function CreateShipmentPage() {
   const { addShipment, updateShipment } = useShipments();
 
   const defaultWorkflow: WorkflowKey = "exporter";
+  const defaultFreightForwarder = profiles["Freight Forwarder"].company;
 
   const [workflow, setWorkflow] = useState<WorkflowKey>(defaultWorkflow);
   const [activeStep, setActiveStep] = useState(0);
@@ -123,11 +125,14 @@ export default function CreateShipmentPage() {
   const [extractionStatus, setExtractionStatus] = useState<"idle" | "extracting" | "complete" | "failed">("idle");
   const [extractResult, setExtractResult] = useState<AggregateResult | null>(null);
   const [formAutofilledFromDocs, setFormAutofilledFromDocs] = useState(false);
+  // Demo reset: spins up a brand-new MemWal account so a judge can re-run the flow clean.
+  const [refreshing, setRefreshing] = useState(false);
+  const [refreshMessage, setRefreshMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   const [importer, setImporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Importer));
   const [exporter, setExporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Exporter));
   const [broker, setBroker] = useState("");
-  const [freightForwarder, setFreightForwarder] = useState("");
+  const [freightForwarder, setFreightForwarder] = useState(defaultFreightForwarder);
   const [notifyPartyEnabled, setNotifyPartyEnabled] = useState(false);
   const [notifyParty, setNotifyParty] = useState({ company: "", contact: "", email: "", phone: "", taxId: "" });
   const [details, setDetails] = useState({ ...initialShipmentDetails, shipmentId: generateShipmentId(defaultWorkflow) });
@@ -165,6 +170,7 @@ export default function CreateShipmentPage() {
     setShipmentRecordId(null);
     setInviteToken(null);
     setCreatedInProgress(false);
+    setFreightForwarder(defaultFreightForwarder);
     setActiveStep(0);
     setMaxUnlockedStep(0);
     setDocs(initialDocs);
@@ -172,11 +178,62 @@ export default function CreateShipmentPage() {
     setExtractResult(null);
     setExtractionStatus("idle");
     setFormAutofilledFromDocs(false);
-  }, [workflow, profile, otherCompanyProfile, initialDocs]);
+  }, [workflow, profile, otherCompanyProfile, initialDocs, defaultFreightForwarder]);
 
   useEffect(() => {
     setError(null);
   }, [activeStep]);
+
+  // Mirror the workflow-reset effect to return the create flow to a clean slate
+  // (without touching workflow/profile), so the judge can re-upload attachments.
+  function resetCreateFlow() {
+    if (workflow === "importer") {
+      setImporter(partyFromProfile(profile));
+      setExporter(partyFromProfile(otherCompanyProfile));
+    } else {
+      setExporter(partyFromProfile(profile));
+      setImporter(partyFromProfile(otherCompanyProfile));
+    }
+    setDetails({ ...initialShipmentDetails, shipmentId: generateShipmentId(workflow) });
+    setCargo({ ...initialCargo });
+    setShipmentRecordId(null);
+    setInviteToken(null);
+    setCreatedInProgress(false);
+    setFreightForwarder(defaultFreightForwarder);
+    setActiveStep(0);
+    setMaxUnlockedStep(0);
+    setDocs(initialDocs);
+    setUploadedFiles([]);
+    setExtractResult(null);
+    setExtractionStatus("idle");
+    setFormAutofilledFromDocs(false);
+    setError(null);
+  }
+
+  async function handleRefreshMemwal() {
+    if (refreshing) return;
+    setRefreshing(true);
+    setRefreshMessage(null);
+    try {
+      const res = await fetch("/api/memwal/refresh", { method: "POST" });
+      const data = await res.json();
+      if (!res.ok || !data.success) {
+        throw new Error(data.error ?? `HTTP ${res.status}`);
+      }
+      resetCreateFlow();
+      setRefreshMessage({
+        tone: "success",
+        text: `Fresh MemWal account ready (${data.accountId}). Upload your attachments again.`,
+      });
+    } catch (err) {
+      setRefreshMessage({
+        tone: "error",
+        text: err instanceof Error ? err.message : "Refresh failed",
+      });
+    } finally {
+      setRefreshing(false);
+    }
+  }
 
   function updateParty(
     side: "importer" | "exporter",
@@ -646,7 +703,39 @@ export default function CreateShipmentPage() {
 
   return (
     <div className="mx-auto max-w-[1500px] px-5 py-8 lg:px-10">
-      <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
+        <Button
+          variant="secondary"
+          onClick={handleRefreshMemwal}
+          disabled={refreshing}
+          title="Spin up a brand-new MemWal account with seeded company profiles and no document memory"
+        >
+          {refreshing ? (
+            <Loader2 className="h-4 w-4 animate-spin" />
+          ) : (
+            <RefreshCw className="h-4 w-4" />
+          )}
+          {refreshing ? "Refreshing (up to ~2 min)…" : "Refresh"}
+        </Button>
+      </div>
+      {refreshMessage && (
+        <p
+          className={cn(
+            "mt-3 flex items-center gap-2 rounded-2xl p-3 text-sm font-bold",
+            refreshMessage.tone === "success"
+              ? "bg-emerald-50 text-emerald-600"
+              : "bg-red-50 text-red-600"
+          )}
+        >
+          {refreshMessage.tone === "success" ? (
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+          ) : (
+            <XCircle className="h-4 w-4 shrink-0" />
+          )}
+          {refreshMessage.text}
+        </p>
+      )}
 
       <div className="mt-8 grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Panel className="hidden h-fit xl:block">

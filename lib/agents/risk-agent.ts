@@ -3,6 +3,12 @@ import Anthropic from "@anthropic-ai/sdk";
 import type Database from "better-sqlite3";
 import { isMemWalConfigured, memwalRecall, memwalRememberAndWait, type MemWalRecallItem } from "../memwal/client";
 import { getShipmentById } from "../shipments-server";
+import {
+  getLatestAgentRun,
+  recordAgentStep,
+  updateAgentRun,
+  type AgentStepStatus,
+} from "../agent-runs";
 import { getAisPosition } from "../tracker-api/client";
 import type { ShipmentRecord } from "../shipments-store";
 import { enrichRiskFinding } from "../risk-eta-impact";
@@ -448,6 +454,29 @@ export async function seedRiskEventMemories(): Promise<{
   return { memwalConfigured: true, namespace: RISK_EVENTS_NAMESPACE, seeded, skipped, failed, memories: RISK_EVENT_MEMORIES };
 }
 
+// Append a Risk Agent entry to the shipment's existing workflow run so the
+// Agent Workflow Center shows the live scan alongside the Document/Validation
+// agents. Best-effort: never spawn a new run and never let UI bookkeeping
+// affect the scan itself.
+function recordRiskAgentTimeline(
+  db: Database.Database,
+  shipmentId: string,
+  status: AgentStepStatus,
+  stepName: string,
+  message: string
+): void {
+  try {
+    const run = getLatestAgentRun(shipmentId, db);
+    if (!run) return;
+    recordAgentStep({ runId: run.id, shipmentId, agentName: "Risk Agent", stepName, status, message }, db);
+    if (status !== "running") {
+      updateAgentRun(run.id, { currentStep: message }, db);
+    }
+  } catch {
+    // Timeline annotation is non-fatal.
+  }
+}
+
 export async function runRiskScanForShipment(
   shipmentId: string,
   db: Database.Database
@@ -463,20 +492,54 @@ export async function runRiskScanForShipment(
   let findings: RiskFinding[] = [];
   let rejectedCandidates: RejectedRiskCandidate[] = [];
 
+  // Publish an in-progress marker immediately so the Risk panel can render a
+  // live "scanning" state and poll for the result, and surface it on the agent
+  // timeline. The findings/error get filled in via the upsert below.
+  saveRiskScan(db, {
+    id: scanId,
+    shipmentId,
+    status: "scanning",
+    findings: [],
+    generatedAt: now,
+    memwalConfigured,
+    serpApiConfigured,
+    sourceMessages,
+  }, []);
+  recordRiskAgentTimeline(
+    db,
+    shipmentId,
+    "running",
+    "Scanning risk signals",
+    "Checking live web search and MemWal risk memory against shipment facts…"
+  );
+
   try {
     if (memwalConfigured) {
-      const verification = await verifyShipmentRiskMemories(shipment);
-      if (verification.missing.length > 0) {
-        sourceMessages.push(`MemWal synthetic risk verification missing expected event_id(s): ${verification.missing.join(", ")}.`);
-      } else {
-        sourceMessages.push(`MemWal synthetic risk verification found expected event_id(s): ${verification.found.join(", ")}.`);
+      try {
+        const verification = await verifyShipmentRiskMemories(shipment);
+        if (verification.missing.length > 0) {
+          sourceMessages.push(`MemWal synthetic risk verification missing expected event_id(s): ${verification.missing.join(", ")}.`);
+        } else {
+          sourceMessages.push(`MemWal synthetic risk verification found expected event_id(s): ${verification.found.join(", ")}.`);
+        }
+      } catch (err) {
+        sourceMessages.push(`MemWal risk verification unavailable: ${formatMemWalUnavailableReason(err)}.`);
       }
     }
 
-    const [memoryFindings, serpFindings] = await Promise.all([
+    const [memoryResult, serpResult] = await Promise.allSettled([
       recallRiskMemoryFindings(shipment),
       searchLiveRiskFindings(shipment),
     ]);
+    const memoryFindings = memoryResult.status === "fulfilled" ? memoryResult.value : [];
+    const serpFindings = serpResult.status === "fulfilled" ? serpResult.value : [];
+    if (memoryResult.status === "rejected") {
+      sourceMessages.push(`MemWal risk memory unavailable: ${formatMemWalUnavailableReason(memoryResult.reason)}.`);
+    }
+    if (serpResult.status === "rejected") {
+      const reason = serpResult.reason instanceof Error ? serpResult.reason.message : String(serpResult.reason);
+      sourceMessages.push(`Live risk search unavailable: ${reason}.`);
+    }
     const candidates = [...memoryFindings, ...serpFindings].slice(0, RISK_CORRELATION_CANDIDATE_LIMIT);
     const correlation = await judgeRiskCorrelation(shipment, candidates, sourceMessages);
     findings = correlation.accepted;
@@ -531,8 +594,16 @@ export async function runRiskScanForShipment(
       sourceMessages,
     };
     saveRiskScan(db, result, rejectedCandidates);
+    recordRiskAgentTimeline(
+      db,
+      shipmentId,
+      "completed",
+      "Risk scan complete",
+      `Risk scan complete — ${findings.length} risk finding(s).`
+    );
     return result;
   } catch (err) {
+    const errorMessage = err instanceof Error ? err.message : String(err);
     const result: RiskScanResult = {
       id: scanId,
       shipmentId,
@@ -542,9 +613,10 @@ export async function runRiskScanForShipment(
       memwalConfigured,
       serpApiConfigured,
       sourceMessages,
-      error: err instanceof Error ? err.message : String(err),
+      error: errorMessage,
     };
     saveRiskScan(db, result, rejectedCandidates);
+    recordRiskAgentTimeline(db, shipmentId, "failed", "Risk scan failed", errorMessage);
     return result;
   }
 }
@@ -641,6 +713,15 @@ function sanitizeCorrelation(verdict: RiskCorrelationVerdict): RiskCorrelation {
   };
 }
 
+function formatMemWalUnavailableReason(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  const retryAfter = message.match(/"retry_after_seconds"\s*:\s*(\d+)/i)?.[1];
+  if (/429|rate limit/i.test(message)) {
+    return retryAfter ? `rate limited; retry after ${retryAfter} seconds` : "rate limited";
+  }
+  return message;
+}
+
 async function recallRiskMemoryFindings(shipment: ShipmentRecord): Promise<RiskFinding[]> {
   if (!isMemWalConfigured()) return [];
   const query = [
@@ -727,11 +808,22 @@ function saveRiskScan(
   result: RiskScanResult,
   rejectedCandidates: RejectedRiskCandidate[]
 ): void {
+  // Upsert by id so an in-progress "scanning" row written at scan start can be
+  // finalized to completed/failed without a primary-key conflict. created_at is
+  // intentionally not updated, keeping the row newest from the moment it began.
   db.prepare(`
     INSERT INTO risk_scans
       (id, shipment_id, status, findings_json, source_messages_json,
        memwal_configured, serpapi_configured, error, created_at, rejected_candidates_json)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ON CONFLICT(id) DO UPDATE SET
+      status = excluded.status,
+      findings_json = excluded.findings_json,
+      source_messages_json = excluded.source_messages_json,
+      memwal_configured = excluded.memwal_configured,
+      serpapi_configured = excluded.serpapi_configured,
+      error = excluded.error,
+      rejected_candidates_json = excluded.rejected_candidates_json
   `).run(
     result.id,
     result.shipmentId,
@@ -948,7 +1040,7 @@ function portAlias(port?: string): string | null {
 type RiskScanRow = {
   id: string;
   shipment_id: string;
-  status: "completed" | "failed";
+  status: "scanning" | "completed" | "failed";
   findings_json: string;
   source_messages_json: string;
   memwal_configured: number;
