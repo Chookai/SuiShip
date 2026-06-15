@@ -161,12 +161,27 @@ graph TD
 
 ---
 
+## Test documents
+
+Ready-made document sets for testing live in [`test/`](test/) — just upload a folder's PDFs on `/create`. Each scenario covers a different path through the pipeline:
+
+| Scenario | Folder | What it exercises |
+|---|---|---|
+| A — Happy path | [`test/Scenario_A_happy_path/`](test/Scenario_A_happy_path/) | Clean, consistent docs that pass validation |
+| B — Validation mismatch | [`test/Scenario_B_validation_mismatch/`](test/Scenario_B_validation_mismatch/) | Cross-document field conflicts the validation agent should flag |
+| C — MemWal baseline | [`test/Scenario_C_memwal_baseline/`](test/Scenario_C_memwal_baseline/) | A trusted party with prior trade history in memory |
+| D — MemWal fraud | [`test/Scenario_D_memwal_fraud/`](test/Scenario_D_memwal_fraud/) | A risk signal that surfaces against remembered history |
+
+Each folder contains a bill of lading, commercial invoice, packing list, and certificate of origin.
+
+---
+
 ## Demo script (happy path)
 
 > **Tip:** To re-run the walkthrough from a clean slate (e.g. between judges), click **Refresh** at the top of `/create`. It provisions a fresh MemWal account with seeded company profiles and no document memory (takes up to ~2 min).
 
 1. **`/create`** — Fill in shipment details (Exporter: Acme Robotics, Importer: Shanghai Smart Imports, route: LA → Shanghai, cargo: industrial tablets)
-2. **Upload documents** — Use the provided demo PDFs or generate with `npm run demo:docs`
+2. **Upload documents** — Use the ready-made sample PDFs in [`test/`](test/) (see [Test documents](#test-documents) below) or generate fresh ones with `npm run demo:docs`
 3. **Run AI pipeline** — Click "Extract Fields" then "Validate Documents"
 4. **Mint passport** — Click "Mint Shipment Passport" (no wallet connect needed — the server signs with demo party slush accounts; mock mode writes to SQLite, real mode writes to Sui)
 5. **View passport** — See the on-chain object ID, document hashes, Walrus URIs, QR code
