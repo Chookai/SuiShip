@@ -8,7 +8,13 @@
 
 ## 🎬 Demo
 
-<p align="center"><a href="https://youtu.be/QyDfBLK_Zzw">▶ Watch the SuiShip demo</a></p>
+<p align="center">
+  <a href="https://suiship-production.up.railway.app"><strong>🚀 Try the live app</strong></a>
+  &nbsp;·&nbsp;
+  <a href="https://youtu.be/QyDfBLK_Zzw">▶ Watch the SuiShip demo</a>
+</p>
+
+> **Testing the live app?** Open [`/create`](https://suiship-production.up.railway.app/create) and use the **Generate test documents** panel to download a ready-to-upload document set — a clean one that passes or a fraud one that gets flagged. No setup, and you can run it as many times as you like.
 
 SuiShip turns a pile of shipping documents (bill of lading, commercial invoice, packing list, certificate of origin) into a verifiable on-chain passport. Claude AI agents extract fields, cross-validate documents, detect trade-finance risk, and produce a tamper-evident record anchored on Sui. Built as a hackathon prototype for the Sui ecosystem.
 
@@ -43,7 +49,7 @@ No external keys needed beyond `ANTHROPIC_API_KEY`:
 | QR code | Shareable shipment passport link |
 | Customs viewer | `/customs` — search by tracking ID |
 | Market page | `/market` — commercial thesis, market sizing, and the five-stream revenue model |
-| Demo reset | **Refresh** button on `/create` — provisions a fresh MemWal account with seeded company profiles and no document memory, then resets the flow |
+| Test document generator | **Generate test documents** panel on `/create` — one click downloads a ready-to-upload set of shipping PDFs (a clean set that passes, or a fraud set that gets flagged). Each set uses fresh document numbers so you can test repeatedly with no MemWal reset |
 | No-wallet minting & signing | Mint passports and sign endorsements without connecting a wallet — the server signs with demo party slush accounts |
 
 ---
@@ -163,25 +169,20 @@ graph TD
 
 ## Test documents
 
-Ready-made document sets for testing live in [`test/`](test/) — just upload a folder's PDFs on `/create`. Each scenario covers a different path through the pipeline:
+The fastest way to get valid documents is the in-app generator — nothing to download or manage by hand.
 
-| Scenario | Folder | What it exercises |
-|---|---|---|
-| A — Happy path | [`test/Scenario_A_happy_path/`](test/Scenario_A_happy_path/) | Clean, consistent docs that pass validation |
-| B — Validation mismatch | [`test/Scenario_B_validation_mismatch/`](test/Scenario_B_validation_mismatch/) | Cross-document field conflicts the validation agent should flag |
-| C — MemWal baseline | [`test/Scenario_C_memwal_baseline/`](test/Scenario_C_memwal_baseline/) | A trusted party with prior trade history in memory |
-| D — MemWal fraud | [`test/Scenario_D_memwal_fraud/`](test/Scenario_D_memwal_fraud/) | A risk signal that surfaces against remembered history |
+> **Generate on the fly.** The **Generate test documents** panel at the top of `/create` produces a fresh set on demand: **Clean shipment (passes)** or **Fraud shipment (gets flagged)**. Every set keeps the same recognizable parties but uses new document numbers, so you can run the demo as many times as you like with **no MemWal reset** — and the fraud set's seeded company profile makes the payment-diversion catch deterministic. Ideal for judges testing the deployed app.
 
-Each folder contains a bill of lading, commercial invoice, packing list, and certificate of origin.
+Prefer fixed fixtures? Ready-made sets also live in [`test/`](test/) — [`Scenario_A_happy_path`](test/Scenario_A_happy_path/), [`Scenario_B_validation_mismatch`](test/Scenario_B_validation_mismatch/), [`Scenario_C_memwal_baseline`](test/Scenario_C_memwal_baseline/), and [`Scenario_D_memwal_fraud`](test/Scenario_D_memwal_fraud/). Each folder holds a bill of lading, commercial invoice, packing list, and certificate of origin; regenerate them with `npm run demo:docs`.
 
 ---
 
 ## Demo script (happy path)
 
-> **Tip:** To re-run the walkthrough from a clean slate (e.g. between judges), click **Refresh** at the top of `/create`. It provisions a fresh MemWal account with seeded company profiles and no document memory (takes up to ~2 min).
+> **Tip:** The fastest way to get valid documents is the **Generate test documents** panel at the top of `/create` — click **Clean shipment (passes)**, unzip, and upload the four PDFs. Use **Fraud shipment (gets flagged)** to see the MemWal payment-diversion catch.
 
 1. **`/create`** — Fill in shipment details (Exporter: Acme Robotics, Importer: Shanghai Smart Imports, route: LA → Shanghai, cargo: industrial tablets)
-2. **Upload documents** — Use the ready-made sample PDFs in [`test/`](test/) (see [Test documents](#test-documents) below) or generate fresh ones with `npm run demo:docs`
+2. **Upload documents** — Click **Generate test documents → Clean shipment** and upload the downloaded PDFs, or use the ready-made samples in [`test/`](test/) (see [Test documents](#test-documents) above), or generate fixed fixtures with `npm run demo:docs`
 3. **Run AI pipeline** — Click "Extract Fields" then "Validate Documents"
 4. **Mint passport** — Click "Mint Shipment Passport" (no wallet connect needed — the server signs with demo party slush accounts; mock mode writes to SQLite, real mode writes to Sui)
 5. **View passport** — See the on-chain object ID, document hashes, Walrus URIs, QR code

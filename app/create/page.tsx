@@ -9,7 +9,6 @@ import {
   Loader2,
   Lock,
   Plus,
-  RefreshCw,
   Ship,
   Upload,
   UserCheck,
@@ -125,9 +124,9 @@ export default function CreateShipmentPage() {
   const [extractionStatus, setExtractionStatus] = useState<"idle" | "extracting" | "complete" | "failed">("idle");
   const [extractResult, setExtractResult] = useState<AggregateResult | null>(null);
   const [formAutofilledFromDocs, setFormAutofilledFromDocs] = useState(false);
-  // Demo reset: spins up a brand-new MemWal account so a judge can re-run the flow clean.
-  const [refreshing, setRefreshing] = useState(false);
-  const [refreshMessage, setRefreshMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
+  // Demo doc generator: hands judges a fresh, valid document set (no MemWal reset needed).
+  const [generatingVariant, setGeneratingVariant] = useState<"happy" | "fraud" | null>(null);
+  const [generateMessage, setGenerateMessage] = useState<{ tone: "success" | "error"; text: string } | null>(null);
 
   const [importer, setImporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Importer));
   const [exporter, setExporter] = useState<PartyFormState>(() => partyFromProfile(profiles.Exporter));
@@ -184,54 +183,44 @@ export default function CreateShipmentPage() {
     setError(null);
   }, [activeStep]);
 
-  // Mirror the workflow-reset effect to return the create flow to a clean slate
-  // (without touching workflow/profile), so the judge can re-upload attachments.
-  function resetCreateFlow() {
-    if (workflow === "importer") {
-      setImporter(partyFromProfile(profile));
-      setExporter(partyFromProfile(otherCompanyProfile));
-    } else {
-      setExporter(partyFromProfile(profile));
-      setImporter(partyFromProfile(otherCompanyProfile));
-    }
-    setDetails({ ...initialShipmentDetails, shipmentId: generateShipmentId(workflow) });
-    setCargo({ ...initialCargo });
-    setShipmentRecordId(null);
-    setInviteToken(null);
-    setCreatedInProgress(false);
-    setFreightForwarder(defaultFreightForwarder);
-    setActiveStep(0);
-    setMaxUnlockedStep(0);
-    setDocs(initialDocs);
-    setUploadedFiles([]);
-    setExtractResult(null);
-    setExtractionStatus("idle");
-    setFormAutofilledFromDocs(false);
-    setError(null);
-  }
-
-  async function handleRefreshMemwal() {
-    if (refreshing) return;
-    setRefreshing(true);
-    setRefreshMessage(null);
+  async function handleGenerateDocs(variant: "happy" | "fraud") {
+    if (generatingVariant) return;
+    setGeneratingVariant(variant);
+    setGenerateMessage(null);
     try {
-      const res = await fetch("/api/memwal/refresh", { method: "POST" });
-      const data = await res.json();
-      if (!res.ok || !data.success) {
-        throw new Error(data.error ?? `HTTP ${res.status}`);
+      const res = await fetch("/api/documents/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ variant }),
+      });
+      if (!res.ok) {
+        throw new Error(`HTTP ${res.status}`);
       }
-      resetCreateFlow();
-      setRefreshMessage({
+      const blob = await res.blob();
+      const sid = res.headers.get("X-Demo-Sid") ?? "";
+      const fileName = `suiship-${variant}-${sid || "set"}.zip`;
+      const url = URL.createObjectURL(blob);
+      const anchor = document.createElement("a");
+      anchor.href = url;
+      anchor.download = fileName;
+      document.body.appendChild(anchor);
+      anchor.click();
+      anchor.remove();
+      URL.revokeObjectURL(url);
+      setGenerateMessage({
         tone: "success",
-        text: `Fresh MemWal account ready (${data.accountId}). Upload your attachments again.`,
+        text:
+          variant === "fraud"
+            ? `Downloaded ${fileName}. Unzip and upload all four PDFs below — this set should be flagged for payment diversion.`
+            : `Downloaded ${fileName}. Unzip and upload all four PDFs below — this set should pass cleanly.`,
       });
     } catch (err) {
-      setRefreshMessage({
+      setGenerateMessage({
         tone: "error",
-        text: err instanceof Error ? err.message : "Refresh failed",
+        text: err instanceof Error ? err.message : "Failed to generate documents",
       });
     } finally {
-      setRefreshing(false);
+      setGeneratingVariant(null);
     }
   }
 
@@ -705,40 +694,67 @@ export default function CreateShipmentPage() {
     <div className="mx-auto max-w-[1500px] px-5 py-8 lg:px-10">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h1 className="text-4xl font-extrabold tracking-tight text-pearl">Create Shipment</h1>
-        {/* Dev-only: the refresh route rewrites .env.local and is disabled in production. */}
-        {process.env.NODE_ENV !== "production" && (
-          <Button
-            variant="secondary"
-            onClick={handleRefreshMemwal}
-            disabled={refreshing}
-            title="Spin up a brand-new MemWal account with seeded company profiles and no document memory"
-          >
-            {refreshing ? (
-              <Loader2 className="h-4 w-4 animate-spin" />
-            ) : (
-              <RefreshCw className="h-4 w-4" />
-            )}
-            {refreshing ? "Refreshing (up to ~2 min)…" : "Refresh"}
-          </Button>
-        )}
       </div>
-      {refreshMessage && (
-        <p
-          className={cn(
-            "mt-3 flex items-center gap-2 rounded-2xl p-3 text-sm font-bold",
-            refreshMessage.tone === "success"
-              ? "bg-emerald-50 text-emerald-600"
-              : "bg-red-50 text-red-600"
-          )}
-        >
-          {refreshMessage.tone === "success" ? (
-            <CheckCircle2 className="h-4 w-4 shrink-0" />
-          ) : (
-            <XCircle className="h-4 w-4 shrink-0" />
-          )}
-          {refreshMessage.text}
-        </p>
-      )}
+
+      <Panel className="mt-6">
+        <div className="flex flex-wrap items-start justify-between gap-4">
+          <div className="max-w-xl">
+            <p className="flex items-center gap-2 text-sm font-extrabold text-pearl">
+              <FilePlus2 className="h-4 w-4 text-azure" />
+              Generate test documents
+            </p>
+            <p className="mt-1 text-sm text-steel">
+              Download a fresh, ready-to-upload set of shipping PDFs. Each set uses new document
+              numbers, so you can test as many times as you like — no reset needed.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <Button
+              variant="secondary"
+              onClick={() => handleGenerateDocs("happy")}
+              disabled={generatingVariant !== null}
+              title="A clean, internally consistent shipment that should pass verification"
+            >
+              {generatingVariant === "happy" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <FilePlus2 className="h-4 w-4" />
+              )}
+              Clean shipment (passes)
+            </Button>
+            <Button
+              variant="secondary"
+              onClick={() => handleGenerateDocs("fraud")}
+              disabled={generatingVariant !== null}
+              title="A shipment whose invoice diverts payment to a new bank account — should be flagged"
+            >
+              {generatingVariant === "fraud" ? (
+                <Loader2 className="h-4 w-4 animate-spin" />
+              ) : (
+                <AlertCircle className="h-4 w-4" />
+              )}
+              Fraud shipment (gets flagged)
+            </Button>
+          </div>
+        </div>
+        {generateMessage && (
+          <p
+            className={cn(
+              "mt-3 flex items-center gap-2 rounded-2xl p-3 text-sm font-bold",
+              generateMessage.tone === "success"
+                ? "bg-emerald-50 text-emerald-600"
+                : "bg-red-50 text-red-600"
+            )}
+          >
+            {generateMessage.tone === "success" ? (
+              <CheckCircle2 className="h-4 w-4 shrink-0" />
+            ) : (
+              <XCircle className="h-4 w-4 shrink-0" />
+            )}
+            {generateMessage.text}
+          </p>
+        )}
+      </Panel>
 
       <div className="mt-8 grid gap-6 xl:grid-cols-[280px_minmax(0,1fr)]">
         <Panel className="hidden h-fit xl:block">
